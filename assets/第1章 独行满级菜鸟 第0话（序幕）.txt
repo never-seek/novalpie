@@ -1,0 +1,2673 @@
+<!DOCTYPE html>
+<!-- saved from url=(0039)https://novalpie.cc/book/354241/6340224 -->
+<html style="overscroll-behavior: none; --vh: 9.51px;"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, minimum-scale=1.0, user-scalable=yes, viewport-fit=cover"><link rel="preconnect" href="https://images.novelpia.com/" crossorigin="anonymous"><link rel="preconnect" href="https://novalpie.cc/" crossorigin="anonymous"><style>:where(.i-heroicons\:map){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M9 6.75V15m6-6v8.25m.503 3.499l4.875-2.438c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934a1.12 1.12 0 0 1-1.006 0L9.503 3.252a1.13 1.13 0 0 0-1.006 0L3.622 5.689A1.13 1.13 0 0 0 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934a1.12 1.12 0 0 1 1.006 0l4.994 2.497c.317.158.69.158 1.006 0'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:arrows-pointing-out){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:speaker-wave){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9 9 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25z'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:document-duplicate){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9 9 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9 9 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:chevron-down){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m19.5 8.25l-7.5 7.5l-7.5-7.5'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:chevron-up){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m4.5 15.75l7.5-7.5l7.5 7.5'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:paint-brush){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M9.53 16.122a3 3 0 0 0-5.78 1.128a2.25 2.25 0 0 1-2.4 2.245a4.5 4.5 0 0 0 8.4-2.245c0-.399-.078-.78-.22-1.128m0 0a16 16 0 0 0 3.388-1.62m-5.043-.025a16 16 0 0 1 1.622-3.395m3.42 3.42a16 16 0 0 0 4.764-4.648l3.876-5.814a1.151 1.151 0 0 0-1.597-1.597L14.146 6.32a16 16 0 0 0-4.649 4.764m3.42 3.42a6.78 6.78 0 0 0-3.42-3.42'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:cog-6-tooth){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cg fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5'%3E%3Cpath d='M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87q.11.06.22.127c.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a8 8 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a7 7 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a7 7 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a7 7 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124q.108-.066.22-.128c.332-.183.582-.495.644-.869z'/%3E%3Cpath d='M15 12a3 3 0 1 1-6 0a3 3 0 0 1 6 0'/%3E%3C/g%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:question-mark-circle){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M9.879 7.519c1.172-1.025 3.071-1.025 4.243 0c1.171 1.025 1.171 2.687 0 3.712q-.308.268-.67.442c-.746.361-1.452.999-1.452 1.827v.75M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0m-9 5.25h.008v.008H12z'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:x-mark){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 18L18 6M6 6l12 12'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:magnifying-glass){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m21 21l-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:chat-bubble-left-right){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193q-.51.041-1.02.072v3.091l-3-3q-2.031 0-4.02-.163a2.1 2.1 0 0 1-.825-.242m9.345-8.334a2 2 0 0 0-.476-.095a48.6 48.6 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.5 48.5 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402c-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235q.865.113 1.74.194V21l4.155-4.155'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:chevron-left){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M15.75 19.5L8.25 12l7.5-7.5'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:bookmark){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25L4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.5 48.5 0 0 1 11.186 0'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:chevron-right){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m8.25 4.5l7.5 7.5l-7.5 7.5'/%3E%3C/svg%3E")}</style><style>:where(.i-heroicons\:book-open){display:inline-block;width:1em;height:1em;background-color:currentColor;-webkit-mask-image:var(--svg);mask-image:var(--svg);-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;-webkit-mask-size:100% 100%;mask-size:100% 100%;--svg:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='24' height='24'%3E%3Cpath fill='none' stroke='black' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M12 6.042A8.97 8.97 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A9 9 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.97 8.97 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A9 9 0 0 0 18 18a8.97 8.97 0 0 0-6 2.292m0-14.25v14.25'/%3E%3C/svg%3E")}</style><link rel="stylesheet" href="./第1章 独行满级菜鸟 第0话（序幕）_files/entry.DhyJZcO8.css" crossorigin=""><link rel="modulepreload" as="script" crossorigin="" href="./第1章 独行满级菜鸟 第0话（序幕）_files/Br5IL3F5.js.下载"><link rel="modulepreload" as="script" crossorigin="" href="./第1章 独行满级菜鸟 第0话（序幕）_files/CS2aJTPz.js.下载"><link rel="dns-prefetch" href="https://images.novelpia.com/"><link rel="dns-prefetch" href="https://novalpie.cc/"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="theme-color" content="#4F46E5"><meta name="format-detection" content="telephone=no"><meta name="apple-touch-fullscreen" content="yes"><meta name="mobile-web-app-capable" content="yes"><link rel="icon" type="image/x-icon" href="https://novalpie.cc/book/354241/favicon.png"><script type="module" src="./第1章 独行满级菜鸟 第0话（序幕）_files/Br5IL3F5.js.下载" crossorigin=""></script><script type="module" src="./第1章 独行满级菜鸟 第0话（序幕）_files/CS2aJTPz.js.下载" crossorigin=""></script><script type="module">import.meta.url;import("_").catch(()=>1);(async function*(){})().next();window.__vite_is_modern_browser=true</script><script type="module">!function(){if(window.__vite_is_modern_browser)return;console.warn("vite: loading legacy chunks, syntax error above and the same error below should be ignored");var e=document.getElementById("vite-legacy-polyfill"),n=document.createElement("script");n.src=e.src,n.onload=function(){System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))},document.body.appendChild(n)}();</script><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/DYgXNEXv.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/B7EW3IBC.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/lPNCaV91.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/RfnptdFk.js"><link rel="stylesheet" crossorigin="" href="./第1章 独行满级菜鸟 第0话（序幕）_files/BottomSheet.D7S4o3Cc.css"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/BuOZLx5l.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/DVFLMcIS.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/BayFEoN2.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/BqfsXX76.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/C7J8j-M7.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/G0WFODFu.js"><link rel="stylesheet" crossorigin="" href="./第1章 独行满级菜鸟 第0话（序幕）_files/_chapterId_.CKj7bk1u.css"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/BYGNMQb7.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/D5uuW9Go.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/6fVjXYUs.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/DdthRRFU.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/Bggm5FKa.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/DvsSaUEb.js"><link rel="stylesheet" crossorigin="" href="./第1章 独行满级菜鸟 第0话（序幕）_files/default.DjrrWhxm.css"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/BGlapw7g.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/BBSrZiy0.js"><link rel="stylesheet" crossorigin="" href="./第1章 独行满级菜鸟 第0话（序幕）_files/ReaderSidebar.DQ-45s-w.css"><title>第1章 独行满级菜鸟 第0话（序幕）</title><script type="speculationrules" data-hid="speculationrules">{"prefetch":[{"source":"list","urls":[],"requires":["anonymous-client-ip-when-cross-origin"]}]}</script><script type="text/javascript">(function(){try{var savedTheme=localStorage.getItem('theme');var prefersDark=window.matchMedia('(prefers-color-scheme: dark)').matches;var theme=savedTheme||(prefersDark?'dark':'light');if(theme==='dark'){document.documentElement.classList.add('dark');}else{document.documentElement.classList.remove('dark');}window.__THEME_INIT__=theme;}catch(e){var prefersDark=window.matchMedia('(prefers-color-scheme: dark)').matches;if(prefersDark){document.documentElement.classList.add('dark');}}})();</script><script type="text/javascript">(function(){if(typeof document!=='undefined'){document.addEventListener('DOMContentLoaded',function(){document.body.style.overscrollBehaviorY='none';document.documentElement.style.overscrollBehaviorY='none';});}})();</script><meta name="referrer" content="no-referrer"><meta name="description" content="阅读第1章：独行满级菜鸟 第0话（序幕）"><meta name="keywords" content="小说阅读器,在线阅读,专业阅读,阅读工具"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/EpAxS6bn.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/eNKetLH5.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/CJFIRbMl.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/BN5u5BjI.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/BVbo3kDa.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/ByrSIHLP.js"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/BOhyrwWG.js"><link rel="stylesheet" crossorigin="" href="./第1章 独行满级菜鸟 第0话（序幕）_files/MarkdownRenderer.nTmNZaG0.css"><link rel="stylesheet" crossorigin="" href="./第1章 独行满级菜鸟 第0话（序幕）_files/MarkdownEditor.nSSngfGs.css"><link rel="modulepreload" as="script" crossorigin="" href="https://novalpie.cc/_nuxt/B1HOQohd.js"><link rel="stylesheet" crossorigin="" href="./第1章 独行满级菜鸟 第0话（序幕）_files/CommentSection.DgQkVyaZ.css"><style data-id="immersive-translate-input-injected-css">.immersive-translate-input {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 2147483647;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.immersive-translate-attach-loading::after {
+  content: " ";
+
+  --loading-color: #f78fb6;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: block;
+  margin: 12px auto;
+  position: relative;
+  color: white;
+  left: -100px;
+  box-sizing: border-box;
+  animation: immersiveTranslateShadowRolling 1.5s linear infinite;
+
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-2000%, -50%);
+  z-index: 100;
+}
+
+.immersive-translate-loading-spinner {
+  vertical-align: middle !important;
+  width: 10px !important;
+  height: 10px !important;
+  display: inline-block !important;
+  margin: 0 4px !important;
+  border: 2px rgba(221, 244, 255, 0.6) solid !important;
+  border-top: 2px rgba(0, 0, 0, 0.375) solid !important;
+  border-left: 2px rgba(0, 0, 0, 0.375) solid !important;
+  border-radius: 50% !important;
+  padding: 0 !important;
+  -webkit-animation: immersive-translate-loading-animation 0.6s infinite linear !important;
+  animation: immersive-translate-loading-animation 0.6s infinite linear !important;
+}
+
+@-webkit-keyframes immersive-translate-loading-animation {
+  from {
+    -webkit-transform: rotate(0deg);
+  }
+
+  to {
+    -webkit-transform: rotate(359deg);
+  }
+}
+
+@keyframes immersive-translate-loading-animation {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(359deg);
+  }
+}
+
+.immersive-translate-input-loading {
+  --loading-color: #f78fb6;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: block;
+  margin: 12px auto;
+  position: relative;
+  color: white;
+  left: -100px;
+  box-sizing: border-box;
+  animation: immersiveTranslateShadowRolling 1.5s linear infinite;
+}
+
+@keyframes immersiveTranslateShadowRolling {
+  0% {
+    box-shadow: 0px 0 rgba(255, 255, 255, 0), 0px 0 rgba(255, 255, 255, 0),
+      0px 0 rgba(255, 255, 255, 0), 0px 0 rgba(255, 255, 255, 0);
+  }
+
+  12% {
+    box-shadow: 100px 0 var(--loading-color), 0px 0 rgba(255, 255, 255, 0),
+      0px 0 rgba(255, 255, 255, 0), 0px 0 rgba(255, 255, 255, 0);
+  }
+
+  25% {
+    box-shadow: 110px 0 var(--loading-color), 100px 0 var(--loading-color),
+      0px 0 rgba(255, 255, 255, 0), 0px 0 rgba(255, 255, 255, 0);
+  }
+
+  36% {
+    box-shadow: 120px 0 var(--loading-color), 110px 0 var(--loading-color),
+      100px 0 var(--loading-color), 0px 0 rgba(255, 255, 255, 0);
+  }
+
+  50% {
+    box-shadow: 130px 0 var(--loading-color), 120px 0 var(--loading-color),
+      110px 0 var(--loading-color), 100px 0 var(--loading-color);
+  }
+
+  62% {
+    box-shadow: 200px 0 rgba(255, 255, 255, 0), 130px 0 var(--loading-color),
+      120px 0 var(--loading-color), 110px 0 var(--loading-color);
+  }
+
+  75% {
+    box-shadow: 200px 0 rgba(255, 255, 255, 0), 200px 0 rgba(255, 255, 255, 0),
+      130px 0 var(--loading-color), 120px 0 var(--loading-color);
+  }
+
+  87% {
+    box-shadow: 200px 0 rgba(255, 255, 255, 0), 200px 0 rgba(255, 255, 255, 0),
+      200px 0 rgba(255, 255, 255, 0), 130px 0 var(--loading-color);
+  }
+
+  100% {
+    box-shadow: 200px 0 rgba(255, 255, 255, 0), 200px 0 rgba(255, 255, 255, 0),
+      200px 0 rgba(255, 255, 255, 0), 200px 0 rgba(255, 255, 255, 0);
+  }
+}
+
+.immersive-translate-modal {
+  position: fixed;
+  z-index: 2147483647;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background-color: rgb(0, 0, 0);
+  background-color: rgba(0, 0, 0, 0.4);
+  font-size: 15px;
+}
+
+.immersive-translate-modal-content {
+  background-color: #fefefe;
+  margin: 10% auto;
+  padding: 40px 24px 24px;
+  border-radius: 12px;
+  width: 350px;
+  font-family: system-ui, -apple-system, "Segoe UI", "Roboto", "Ubuntu",
+    "Cantarell", "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+  position: relative;
+}
+
+@media screen and (max-width: 768px) {
+  .immersive-translate-modal-content {
+    margin: 25% auto !important;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .immersive-translate-modal-content {
+    width: 80vw !important;
+    margin: 20vh auto !important;
+    padding: 20px 12px 12px !important;
+  }
+
+  .immersive-translate-modal-title {
+    font-size: 14px !important;
+  }
+
+  .immersive-translate-modal-body {
+    font-size: 13px !important;
+    max-height: 60vh !important;
+  }
+
+  .immersive-translate-btn {
+    font-size: 13px !important;
+    padding: 8px 16px !important;
+    margin: 0 4px !important;
+  }
+
+  .immersive-translate-modal-footer {
+    gap: 6px !important;
+    margin-top: 16px !important;
+  }
+}
+
+.immersive-translate-modal .immersive-translate-modal-content-in-input {
+  max-width: 500px;
+}
+.immersive-translate-modal-content-in-input .immersive-translate-modal-body {
+  text-align: left;
+  max-height: unset;
+}
+
+.immersive-translate-modal-title {
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: #333333;
+}
+
+.immersive-translate-modal-body {
+  text-align: center;
+  font-size: 14px;
+  font-weight: 400;
+  color: #333333;
+  margin-top: 24px;
+}
+
+@media screen and (max-width: 768px) {
+  .immersive-translate-modal-body {
+    max-height: 250px;
+    overflow-y: auto;
+  }
+}
+
+.immersive-translate-close {
+  color: #666666;
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  font-size: 20px;
+  font-weight: bold;
+}
+
+.immersive-translate-close:hover,
+.immersive-translate-close:focus {
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.immersive-translate-modal-footer {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+
+.immersive-translate-btn {
+  width: fit-content;
+  color: #fff;
+  background-color: #ea4c89;
+  border: none;
+  font-size: 14px;
+  margin: 0 8px;
+  padding: 9px 30px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.immersive-translate-btn-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.immersive-translate-btn:hover {
+  background-color: #f082ac;
+}
+.immersive-translate-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.immersive-translate-btn:disabled:hover {
+  background-color: #ea4c89;
+}
+
+.immersive-translate-link-btn {
+  background-color: transparent;
+  color: #ea4c89;
+  border: none;
+  cursor: pointer;
+  height: 30px;
+  line-height: 30px;
+}
+
+.immersive-translate-cancel-btn {
+  /* gray color */
+  background-color: rgb(89, 107, 120);
+}
+
+.immersive-translate-cancel-btn:hover {
+  background-color: hsl(205, 20%, 32%);
+}
+
+.immersive-translate-action-btn {
+  background-color: transparent;
+  color: #ea4c89;
+  border: 1px solid #ea4c89;
+}
+
+.immersive-translate-btn svg {
+  margin-right: 5px;
+}
+
+.immersive-translate-link {
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-drag: none;
+  text-decoration: none;
+  color: #ea4c89;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+}
+
+.immersive-translate-primary-link {
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-drag: none;
+  text-decoration: none;
+  color: #ea4c89;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+}
+
+.immersive-translate-modal input[type="radio"] {
+  margin: 0 6px;
+  cursor: pointer;
+}
+
+.immersive-translate-modal label {
+  cursor: pointer;
+}
+
+.immersive-translate-close-action {
+  position: absolute;
+  top: 2px;
+  right: 0px;
+  cursor: pointer;
+}
+
+.imt-image-status {
+  background-color: rgba(0, 0, 0, 0.5) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 16px !important;
+}
+.imt-image-status img,
+.imt-image-status svg,
+.imt-img-loading {
+  width: 28px !important;
+  height: 28px !important;
+  margin: 0 0 8px 0 !important;
+  min-height: 28px !important;
+  min-width: 28px !important;
+  position: relative !important;
+}
+.imt-img-loading {
+  background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADgAAAA4CAMAAACfWMssAAAAtFBMVEUAAAD////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////oK74hAAAAPHRSTlMABBMIDyQXHwyBfFdDMSw+OjXCb+5RG51IvV/k0rOqlGRM6KKMhdvNyZBz9MaupmxpWyj437iYd/yJVNZeuUC7AAACt0lEQVRIx53T2XKiUBCA4QYOiyCbiAsuuGBcYtxiYtT3f6/pbqoYHVFO5r+iivpo6DpAWYpqeoFfr9f90DsYAuRSWkFnPO50OgR9PwiCUFcl2GEcx+N/YBh6pvKaefHlUgZd1zVe0NbYcQjGBfzrPE8Xz8aF+71D8gG6DHFPpc4a7xFiCDuhaWgKgGIJQ3d5IMGDrpS4S5KgpIm+en9f6PlAhKby4JwEIxlYJV9h5k5nee9GoxHJ2IDSNB0dwdad1NAxDJ/uXDHYmebdk4PdbkS58CIVHdYSUHTYYRWOJblWSyu2lmy3KNFVJNBhxcuGW4YBVCbYGRZwIooipHsNqjM4FbgOQqQqSKQQU9V8xmi1QlgHqQQ6DDBvRUVCDirs+EzGDGOQTCATgtYTnbCVLgsVgRE0T1QE0qHCFAht2z6dLvJQs3Lo2FQoDxWNUiBhaP4eRgwNkI+dAjVOA/kUrIDwf3CG8NfNOE0eiFotSuo+rBiq8tD9oY4Qzc6YJw99hl1wzpQvD7ef2M8QgnOGJfJw+EltQc+oX2yn907QB22WZcvlUpd143dqQu+8pCJZuGE4xCuPXJqqcs5sNpsI93Rmzym1k4Npk+oD1SH3/a3LOK/JpUBpWfqNySxWzCfNCUITuDG5dtuphrUJ1myeIE9bIsPiKrfqTai5WZxbhtNphYx6GEIHihyGFTI69lje/rxajdh0s0msZ0zYxyPLhYCb1CyHm9Qsd2H37Y3lugVwL9kNh8Ot8cha6fUNQ8nuXi5z9/ExsAO4zQrb/ev1yrCB7lGyQzgYDGuxq1toDN/JGvN+HyWNHKB7zEoK+PX11e12G431erGYzwmytAWU56fkMHY5JJnDRR2eZji3AwtIcrEV8Cojat/BdQ7XOwGV1e1hDjGGjXbdArm8uJZtCH5MbcctVX8A1WpqumJHwckAAAAASUVORK5CYII=");
+  background-size: 28px 28px;
+  animation: image-loading-rotate 1s linear infinite !important;
+}
+
+.imt-image-status span {
+  color: var(--bg-2, #fff) !important;
+  font-size: 14px !important;
+  line-height: 14px !important;
+  font-weight: 500 !important;
+  font-family: "PingFang SC", Arial, sans-serif !important;
+}
+
+.imt-primary-button {
+  display: flex;
+  padding: 12px 80px;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  background: #ea4c89;
+  color: #fff;
+  font-size: 16px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 24px;
+  border: none;
+  cursor: pointer;
+}
+
+.imt-retry-text {
+  color: #999;
+  text-align: center;
+  font-size: 14px;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 21px;
+  cursor: pointer;
+}
+
+.imt-action-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.imt-modal-content-text {
+  text-align: left;
+  color: #333;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+@keyframes image-loading-rotate {
+  from {
+    transform: rotate(360deg);
+  }
+  to {
+    transform: rotate(0deg);
+  }
+}
+
+.imt-linear-gradient-text {
+  background: linear-gradient(90deg, #00a6ff 0%, #c369ff 52.4%, #ff4590 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.imt-flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.imt-linear-black-btn {
+  border-radius: 50px;
+  background: linear-gradient(66deg, #222 19%, #696969 94.25%);
+  height: 48px;
+  width: 100%;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  justify-content: center;
+}
+</style></head><body style="overscroll-behavior: none;" class="reader-mode"><div id="__nuxt" data-v-app=""><div class="app-layout bg-primary" style="--layout-top: 0px;"><!----><!----><!----><main class="reader-main"><div data-v-ea7ce094="" class="reader-layout-wrapper theme-light" style="padding-top: 0px; padding-bottom: 0px; --custom-bg-color: #ffffff; --custom-text-color: #000000; --custom-sidebar-bg: #ffffff; --custom-sidebar-text: #000000; --custom-accent-color: #3b82f6;"><div data-v-ea7ce094="" class="reader-container theme-light"><div data-v-ea7ce094="" class="reader-header-bar-scroll"><div data-v-ea7ce094="" class="header-bar-content"><div data-v-ea7ce094="" class="header-spacer"></div><span data-v-ea7ce094="" class="header-title">我独自满级新手</span><div data-v-ea7ce094="" class="header-spacer"></div></div></div><main data-v-ea7ce094="" class="reader-main-scroll flex justify-center" style="top: 24px; bottom: calc(24px + var(--safe-bottom, 0px));"><article data-v-ea7ce094="" class="reader-content" style="font-size: 16px; line-height: 1.6; font-family: system-ui, -apple-system, sans-serif; max-width: 800px; font-weight: 400; letter-spacing: 0px; word-spacing: 0px;"><div data-v-ea7ce094="" id="chapter-6340224" class="chapter-item" data-chapter-id="6340224" data-chapter-title="独行满级菜鸟 第0话（序幕）"><div data-v-ea7ce094="" class="chapter-separator text-center"><h2 data-v-ea7ce094="" class="text-xl font-bold text-gray-500">独行满级菜鸟 第0话（序幕）</h2></div><div data-v-ea7ce094="">　　＂独自满级萌新＂第0话（序章）<br><br>　　序章＆塔之巅<br><br>　　序章<br><br>　　挑战次数79回。<br><br>　　全灭的各类公会讨伐队297支。<br><br>　　死亡人数315,850名。<br><br>　　所有这些数字都指向试图攀登『试炼之塔』48层失败的结果。<br><br>　　[剩余时间：0h:58m:33s]<br><br>　　泛着微光的状态栏闪烁起来。<br><br>　　时间正逐渐流逝。<br><br>　　-嚎叫的移动城堡：哈啊……已经没挑战者了呢。<br><br>　　-不明觉厉：连大公会都放弃了。老实说死的人太多了。<br><br>　　-我的酸橙树超赞：一小时后就是世界末日了。新闻都在倒计时了。GG。<br><br>　　-呼呼感受中：最后一天在这干嘛？弘大那边正开派对呢。不享受疯狂周五？<br><br>　　-兄弓书体哒：笑死家里蹲高潮了。这辈子没和女生说过话还疯狂周五呢。<br><br>　　[当前在线人数：87]<br><br>　　曾经数百万人在线的聊天室如今不足百人。<br><br>　　这是理所当然的。<br><br>　　因屡次失败，各大公会早已分崩离析。<br><br>　　就连独自挑战的人们也早已消失不见。<br><br>　　人类将永远止步于此，无法征服下一层。<br><br>　　就在所有人都这么想的时候——<br><br>　　呜呜呜！<br><br>　　沉寂已久的地域突然泛起蓝光。<br><br>　　这种现象唯有一种情况会出现。<br><br>　　[48层『红龙·德斯蒂亚』领域出现挑战者]<br><br>　　只有当新挑战者入场时才会发生。<br><br>　　地下城中出现了一名男子。<br><br>　　因使用面部扭曲魔法而看不清容貌。<br><br>　　但手中紧握着一把30厘米长的短剑。<br><br>　　绝对是玩家无疑。<br><br>　　-嚎叫的移动城堡：哦哦哦！<br><br>　　-攀登者123：居然还有挑战者！<br><br>　　-兄弓书体哒：哇。真的假的？这节骨眼还有人来？<br><br>　　-前闪现后瞬移：末世哥登场了。键盘没收一小时。<br><br>　　突如其来的变故让聊天室沸腾起来。<br><br>　　究竟时隔多久才有新的挑战者出现？<br><br>　　始终怀抱希望留守的观众们爆发出欢呼。<br><br>　　[当前观战人数：7,588]<br><br>　　消息瞬间通过社区和SNS传开了。<br><br>　　那些等待死亡降临的人们也半信半疑地涌了进来。<br><br>　　很快，所有目光都聚焦在挑战者身上。<br><br>　　-生带鱼1号：话说这是谁啊？看起来不像是排名玩家？<br><br>　　-我的莱姆超屌橙子树：资料全设成私密了，状态栏都看不到。<br><br>　　-攀登者123：该不会最后关头让菜鸟呜呜咽咽地进去送死吧？<br><br>　　-老油条鉴定所：卧槽。都闭嘴看那把短剑。<br><br>　　-我的莱姆超屌橙子树：长得跟摘椰子用的似的。新手期装备有啥好看的？<br><br>　　-老油条鉴定所：看颜色啊！看颜色！<br><br>　　随着某个观众的发言，所有人视线都转向了短剑。<br><br>　　如黑曜石般漆黑的剑刃。<br><br>　　而剑柄末端......<br><br>　　是『紫色』的。<br><br>　　红橙黄绿蓝靛紫。七种颜色。<br><br>　　其中等级最高，至今无人获得过的至高圣遗物。<br><br>　　咚咚！咚咚！咚咚！<br><br>　　围观者们的心脏剧烈跳动起来。<br><br>　　来了。<br><br>　　沉淀到快要腐烂的活化石！<br><br>　　＊＊＊<br><br>　　"咕噜噜......"<br><br>　　随着入侵者出现，巢穴中的红龙发出低沉咆哮。<br><br>　　三十米长的巨大身躯。<br><br>　　光是与之对峙就让人寒毛直竖。<br><br>　　"你们人类真是不懂放弃二字。牺牲了那么多还敢再来？"<br><br>　　德斯蒂亚俯视着入侵者。<br><br>　　傲慢的眼神。<br><br>　　仿佛所有生命都该臣服于它脚下。<br><br>　　当然，这份傲慢有着压倒性武力作为支撑。<br><br>　　但是。<br><br>　　"要做蜥蜴烧烤的话得提前准备点东西嘛。不过总算赶上了。"<br><br>　　男子坦然迎上那道视线。<br><br>　　这狂妄回答让德斯蒂亚皱起眉头。<br><br>　　"人类，你难道不知道同样是死，也有更痛苦的死法吗？"<br><br>　　"是吗？有本事就试试看啊。别光耍嘴皮子。"<br><br>　　"很好。反正和蝼蚁对话本就毫无意义。"<br><br>　　德斯蒂亚用利爪划破虚空。<br><br>　　"......！"<br><br>　　男子身体顿时一颤。<br><br>　　高阶束缚魔法已然发动。<br><br>　　"无聊的结局。"<br><br>　　高举的前爪朝着男子头顶挥下。<br><br>　　他的身影被阴影吞没。<br><br>　　就在这瞬间。<br><br>　　巨爪轰然坠落。<br><br>　　轰隆隆——！<br><br>　　地面咔嚓一声裂开蛛网般的缝隙。<br><br>　　碎石如同爆炸般向四周飞溅。<br><br>　　然而。<br><br>　　＂嗯？＂<br><br>　　理应感受到的触感并未传来。<br><br>　　那种骨骼碎裂血肉模糊的触感。<br><br>　　＂束缚之后接物理攻击……套路也太老套了吧？＂<br><br>　　德斯蒂亚背后突然响起男人的声音。<br><br>　　简直难以置信。<br><br>　　＂在技能发动前……就被破解了？＂<br><br>　　就在那电光火石间？<br><br>　　＂呵，看你起手式就猜到要放什么技能了。＂<br><br>　　＂少胡说八道！＂<br><br>　　德斯蒂亚完全直起庞大的身躯。<br><br>　　龙头几乎要撞上洞窟顶端。<br><br>　　＂接下来不会再有任何侥幸。＂<br><br>　　血盆大口中开始翻涌烈焰。<br><br>　　轰隆隆隆！<br><br>　　空气中的水分瞬间蒸发殆尽。<br><br>　　这是将敌人烧成灰烬的终极力量。<br><br>　　唯有龙族才拥有的权能。<br><br>　　＂果然是龙息啊。＂<br><br>　　男子低声自语。<br><br>　　此前讨伐队失败的原因，正是没人能挡住这道火柱。<br><br>　　轰隆隆！<br><br>　　愈发明亮的火光中。<br><br>　　再过片刻，压缩到极致的魔力就会爆发……<br><br>　　届时人类的肉体连残渣都不会剩下。<br><br>　　＂无处可逃。＂<br><br>　　整个地下城都笼罩在龙息的射程内。<br><br>　　但更重要的是。<br><br>　　＂我也没打算逃。＂<br><br>　　本就不是为逃亡而来。<br><br>　　更非赴死。<br><br>　　是为胜利而来。<br><br>　　为活着前往下一层。<br><br>　　为见证这个世界的尽头。<br><br>　　[正在读取『世界记忆』]<br><br>　　男子背后倾泻出璀璨光雾。<br><br>　　记录所有技能的无限书库。<br><br>　　承载世间真理的大图书馆。<br><br>　　这正是他所持有的能力。<br><br>　　＂召唤『地狱火』与『黑泪』。＂<br><br>　　简短宣言的同时。<br><br>　　呼啦！<br><br>　　左掌浮现直径一米的火球。<br><br>　　滴答！滴答！<br><br>　　右手的短剑尖端滴落黑色液体。<br><br>　　-豪尔的移动城堡：这不是地狱火吗？欧洲排名者玛丽亚的招牌技能！<br><br>　　-老油条鉴定所：剑上滴落的液体。那是15层『恸哭魔女』持有的技能。<br><br>　　-攀岩者123：天啊……居然真有玩家会复制技能。<br><br>　　-哥特弓手：那又怎样？SS级技能甩一百遍也刮不动龙鳞好吧？<br><br>　　-闪现接后跳：果然不出所料。<br><br>　　-退伍女高中生：靠 浪费老子时间。<br><br>　　频道里的观众开始快速流失。<br><br>　　这也难怪。<br><br>　　无论是地狱火还是魔女诅咒。<br><br>　　没有任何技能能超越巨龙的吐息。<br><br>　　这是无数挑战者用失败验证过的铁则。<br><br>　　＂愚蠢的人类。就凭这点伎俩也敢大放厥词？＂<br><br>　　德斯蒂亚咂了咂舌。<br><br>　　是啊。<br><br>　　这种程度确实不够看。<br><br>　　所以——<br><br>　　现场创造就行了。<br><br>　　『将左手的技能』<br><br>　　破解吐息……<br><br>　　『与右手的技能融合』<br><br>　　创造出连龙鳞都能斩断的更高阶技能！<br><br>　　男子将黑色液滴滴落在地狱火之上。<br><br>　　刹那间。<br><br>　　[技能『地狱火(S)』与技能『黑之泪(S)』开始融合]<br><br>　　异质的两股力量交汇时，迸发出暗红色火花。<br><br>　　[融合成功！]<br><br>　　[获得『虚空龙埃瑟里昂的吐息(SSS)』！]<br><br>　　轰隆隆隆！<br><br>　　与红龙吐息截然不同的黑焰冲天而起。<br><br>　　魔力的密度。<br><br>　　火焰的温度都不可同日而语。<br><br>　　＂那、那是！＂<br><br>　　德斯蒂亚的瞳孔发生剧烈地震。<br><br>　　不可能认错。<br><br>　　怎么可能认错？<br><br>　　古代种之一的埃瑟里昂。<br><br>　　以及那位古龙使用过的至强吐息。<br><br>　　＂你…你这家伙！区区人类怎么可能拥有这种力量……！＂<br><br>　　德斯蒂亚的声音开始颤抖。<br><br>　　超越好奇的恐惧。<br><br>　　正因如此才不得不问。<br><br>　　＂到底、到底是谁！你究竟是谁！＂<br><br>　　面对巨龙的质问，男人缓缓开口：<br><br>　　＂姜振赫。＂<br><br>　　我是老油条。<br><br>　　被岁月打磨至圆滑的。<br><br>　　＂而且这已经不是第一次杀你了。＂<br><br>　　同时，也是唯一登顶过这座塔的玩家。</div><div data-v-ea7ce094="" class="chapter-comments mt-8 mb-16"><div data-v-6721d26f="" data-v-ea7ce094="" class="comment-section comment-section-reader" data-reader-theme="theme-light"><div data-v-6721d26f="" class="flex items-center justify-between mb-3 sm:mb-4"><div data-v-6721d26f="" class="flex items-center space-x-2 sm:space-x-3 flex-1 min-w-0"><h3 data-v-6721d26f="" class="text-lg sm:text-xl md:text-2xl font-bold text-gray-900 dark:text-gray-100 truncate"><span data-v-6721d26f="" class="iconify i-heroicons:chat-bubble-left-right w-4 h-4 sm:w-5 sm:h-5 inline mr-1" aria-hidden="true"></span> 章节讨论 <span data-v-6721d26f="" class="text-sm sm:text-base md:text-lg text-gray-500 dark:text-gray-400 ml-1 sm:ml-2">(0)</span></h3><div data-v-6721d26f="" class="hidden sm:flex text-xs sm:text-sm text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 sm:px-3 py-0.5 sm:py-1 rounded-full flex-shrink-0"><span data-v-6721d26f="" class="font-medium">第1章</span><span data-v-6721d26f="" class="mx-1">·</span><span data-v-6721d26f="" class="truncate max-w-[120px] sm:max-w-[200px]">独行满级菜鸟 第0话（序幕）</span></div></div><button data-v-6721d26f="" class="btn btn-blue btn-sm flex-shrink-0 ml-2"> 写评论 </button></div><div data-v-6721d26f="" class="mt-2 sm:mt-3"><button data-v-6721d26f="" type="button" class="w-full flex items-center gap-3 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl border border-gray-200 bg-white hover:bg-gray-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"><div data-v-6721d26f="" class="w-9 h-9 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center flex-shrink-0"><span data-v-6721d26f="" class="iconify i-heroicons:chat-bubble-left-right w-4 h-4 text-gray-500" aria-hidden="true"></span></div><div data-v-6721d26f="" class="min-w-0 flex-1"><div data-v-6721d26f="" class="flex items-center gap-2 min-w-0"><span data-v-6721d26f="" class="text-sm font-medium text-gray-700 whitespace-nowrap"> 展开评论 </span><span data-v-6721d26f="" class="text-xs text-gray-500 tabular-nums whitespace-nowrap"> (0) </span><!----></div><div data-v-6721d26f="" class="text-[11px] sm:text-xs text-gray-500 truncate">暂无评论，来抢沙发</div></div><span data-v-6721d26f="" class="iconify i-heroicons:chevron-right w-4 h-4 text-gray-400 flex-shrink-0" aria-hidden="true"></span></button></div><!----><!----></div></div></div><div data-v-ea7ce094="" id="chapter-6340138" class="chapter-item" data-chapter-id="6340138" data-chapter-title="独自满级新手 独自满级新手-第1话"><div data-v-ea7ce094="" class="chapter-separator text-center"><h2 data-v-ea7ce094="" class="text-xl font-bold text-gray-500">独自满级新手 独自满级新手-第1话</h2></div><div data-v-ea7ce094="">　　＂孤身满级菜鸟＂ 第1话 塔之巅<br><br>　　垃圾游戏。<br><br>　　通常指那些无聊透顶、角色平衡崩坏、<br><br>　　或是运营烂到家的游戏。<br><br>　　但还有另一种情况——<br><br>　　那就是难度离谱到极致的游戏。<br><br>　　虚拟现实游戏《试炼之塔》正是如此。<br><br>　　发售一年间，那些以戏弄开发者为乐的韩国骨灰级玩家们前赴后继地攻略它。<br><br>　　废寝忘食整整一年，365天不间断。<br><br>　　然而三年过去，人们终于意识到：<br><br>　　这游戏根本不可能通关。<br><br>　　不是夸张，是真的。<br><br>　　举个例子？<br><br>　　第10层的守门人无敌。<br><br>　　字面意义上的无敌。<br><br>　　就算100人同时狂甩技能，用尽各种武器围殴也毫无效果。<br><br>　　喂，做人好歹该给个强制扣1血的设定吧？<br><br>　　更别提第7层是零下60度、一小时就能冻死人的极寒地狱，<br><br>　　第8层等着你的是超过一万公里的超巨型迷宫。<br><br>　　这根本不是娱乐，根本是刑具。<br><br>　　或者说，就是专门用来恶心韩国硬核玩家的阴谋。<br><br>　　于是游戏凉了。<br><br>　　准确说是「几乎」凉透——<br><br>　　毕竟还有极少数受虐狂在挑战这该死的魔鬼难度。<br><br>　　而其中……<br><br>　　就包括韩国青年姜镇赫。<br><br>　　＊＊＊<br><br>　　[已征服第50层！]<br><br>　　[恭喜！您成为首位通关试炼之塔的玩家！]<br><br>　　＂这……真的假的？＂<br><br>　　站在试炼之塔顶层，姜镇赫吐出一声五味杂陈的叹息。<br><br>　　纯粹是因为有趣。<br><br>　　用与众不同的新奇方式攻克关卡，<br><br>　　通过反复练习直到背下每个细节后获得的成就感。<br><br>　　但没想到真能通关最后一层。<br><br>　　从17岁初次接触VR游戏开始，到如今27岁成年，<br><br>　　整整11年光阴走马灯般掠过脑海。<br><br>　　『哈，早知道该开直播的。』<br><br>　　虽然只是个二三十人观看的小主播，但主播就是主播嘛。<br><br>　　可他随即摇头自嘲。<br><br>　　反正开了直播也不会有人看——<br><br>　　连续三个月重复同样操作，连铁粉都跑光了。<br><br>　　如今就算用＂BOSS攻略＂或＂50层突破＂这种标题吸引眼球，只要说是试炼之塔的游戏实况，根本没人会看。<br><br>　　＂不过上传到油管的话，点击量应该还不错吧？＂<br><br>　　只要把结果剪辑成十分钟左右的视频，似乎还能小赚一笔。<br><br>　　就在这时。<br><br>　　叮铃！<br><br>　　[衷心感谢您长期以来的游玩]<br><br>　　[重启更新将于12小时后进行，恳请继续支持]<br><br>　　这是管理员专用消息。<br><br>　　十一年来既不沟通也不维护，还以为早就放弃这游戏了。<br><br>　　＂意外啊。居然要重启更新？难道在沙漠里挖到油田了？＂<br><br>　　按常理根本说不通。<br><br>　　这破游戏怎么可能有收益......<br><br>　　＂......算了，运营方自有打算吧。＂<br><br>　　反正和我没关系。<br><br>　　不管是重启更新还是什么，我都不打算再碰这游戏了。<br><br>　　而且今天也是我作为职业主播的最后一次直播。<br><br>　　虽说没有需要抚养的家人，但毕竟已经27岁了。<br><br>　　总不能永远靠着月入50万韩元过日子。<br><br>　　＂得和馆长说暂停训练一段时间了。＂<br><br>　　虽然曾经被说过有格斗职业选手的潜质，但现在赚钱比运动更重要。<br><br>　　-jjy77：真河！真河！是真赫的昵称啦！<br><br>　　-修理猫头鹰：哇，太阳打西边出来了？今天开播这么早？<br><br>　　刚开播就有二十个老观众涌进来。<br><br>　　桌上摆着炸鸡、披萨、奶油虾、广式炒面，还有两瓶啤酒和两瓶烧酒。<br><br>　　-减肥第25年：嚯，这摆盘是要把餐桌腿压断啊。<br><br>　　-吃播就服子阳：果然哥还是适合吃播，别搞游戏直播了。<br><br>　　-真赫滚起来才够味：BJ真赫的招牌是什么？<br><br>　　-棺材颂：吃光黄牛再啃牛棚！<br><br>　　-房间角落的土豪：石桥也要敲碎了吞下去！<br><br>　　-一人双鸡：吃了甲鱼吓破胆，连锅盖都要啃三碗！<br><br>　　多亏这些少数观众，我才能坚持直播到现在。<br><br>　　大家笑着闹着，配着烧酒和小吃，不知不觉已是凌晨。<br><br>　　＂停播的事还是明天再正式说吧。＂<br><br>　　此刻实在说不出口。<br><br>　　没错。<br><br>　　就留到明天再说。<br><br>　　但是......<br><br>　　连真赫自己都没料到。<br><br>　　当我睁开眼时，世界早已天翻地覆。</div><div data-v-ea7ce094="" class="chapter-comments mt-8 mb-16"><div data-v-6721d26f="" data-v-ea7ce094="" class="comment-section comment-section-reader" data-reader-theme="theme-light"><div data-v-6721d26f="" class="flex items-center justify-between mb-3 sm:mb-4"><div data-v-6721d26f="" class="flex items-center space-x-2 sm:space-x-3 flex-1 min-w-0"><h3 data-v-6721d26f="" class="text-lg sm:text-xl md:text-2xl font-bold text-gray-900 dark:text-gray-100 truncate"><span data-v-6721d26f="" class="iconify i-heroicons:chat-bubble-left-right w-4 h-4 sm:w-5 sm:h-5 inline mr-1" aria-hidden="true"></span> 章节讨论 <span data-v-6721d26f="" class="text-sm sm:text-base md:text-lg text-gray-500 dark:text-gray-400 ml-1 sm:ml-2">(0)</span></h3><div data-v-6721d26f="" class="hidden sm:flex text-xs sm:text-sm text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 sm:px-3 py-0.5 sm:py-1 rounded-full flex-shrink-0"><span data-v-6721d26f="" class="font-medium">第2章</span><span data-v-6721d26f="" class="mx-1">·</span><span data-v-6721d26f="" class="truncate max-w-[120px] sm:max-w-[200px]">独自满级新手 独自满级新手-第1话</span></div></div><button data-v-6721d26f="" class="btn btn-blue btn-sm flex-shrink-0 ml-2"> 写评论 </button></div><div data-v-6721d26f="" class="mt-2 sm:mt-3"><button data-v-6721d26f="" type="button" class="w-full flex items-center gap-3 px-3 sm:px-4 py-2.5 sm:py-3 rounded-xl border border-gray-200 bg-white hover:bg-gray-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"><div data-v-6721d26f="" class="w-9 h-9 rounded-lg bg-gray-100 border border-gray-200 flex items-center justify-center flex-shrink-0"><span data-v-6721d26f="" class="iconify i-heroicons:chat-bubble-left-right w-4 h-4 text-gray-500" aria-hidden="true"></span></div><div data-v-6721d26f="" class="min-w-0 flex-1"><div data-v-6721d26f="" class="flex items-center gap-2 min-w-0"><span data-v-6721d26f="" class="text-sm font-medium text-gray-700 whitespace-nowrap"> 展开评论 </span><span data-v-6721d26f="" class="text-xs text-gray-500 tabular-nums whitespace-nowrap"> (0) </span><!----></div><div data-v-6721d26f="" class="text-[11px] sm:text-xs text-gray-500 truncate">暂无评论，来抢沙发</div></div><span data-v-6721d26f="" class="iconify i-heroicons:chevron-right w-4 h-4 text-gray-400 flex-shrink-0" aria-hidden="true"></span></button></div><!----><!----></div></div></div><!----><!----><div data-v-ea7ce094="" class="chapter-navigation-toolbar mt-12 pt-8 border-t-2 border-gray-300" style="min-height: 80px;"><div data-v-ea7ce094="" class="navigation-toolbar flex items-center justify-between py-4 px-2"><button data-v-ea7ce094="" disabled="" class="nav-button flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-200 opacity-50 cursor-not-allowed bg-gray-100 text-gray-800 hover:bg-gray-200"><span data-v-ea7ce094="" class="iconify i-heroicons:chevron-left w-4 h-4" aria-hidden="true"></span><span data-v-ea7ce094="" class="text-sm font-medium">上一章</span></button><button data-v-ea7ce094="" class="nav-button flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-200 bg-gray-100 text-gray-800 hover:bg-gray-200"><span data-v-ea7ce094="" class="iconify i-heroicons:book-open w-4 h-4" aria-hidden="true"></span><span data-v-ea7ce094="" class="text-sm font-medium">书本页</span></button><button data-v-ea7ce094="" class="nav-button flex items-center space-x-2 px-4 py-2 rounded-lg transition-all duration-200 hover:bg-opacity-80 bg-gray-100 text-gray-800 hover:bg-gray-200"><span data-v-ea7ce094="" class="text-sm font-medium">下一章</span><span data-v-ea7ce094="" class="iconify i-heroicons:chevron-right w-4 h-4" aria-hidden="true"></span></button></div><div data-v-ea7ce094="" class="flex justify-center mt-2"><button data-v-ea7ce094="" type="button" class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 bg-gray-100 text-gray-800 hover:bg-gray-200" title="收藏小说"><span data-v-ea7ce094="" class="iconify i-heroicons:bookmark w-4 h-4" aria-hidden="true"></span><span data-v-ea7ce094="">收藏</span></button></div></div><!----><!----></article></main><!----><div data-v-1897aa1c="" data-v-ea7ce094="" class="fixed inset-0 z-50 pointer-events-none pointer-events-auto" tabindex="0" role="dialog" aria-modal="true" aria-label="目录"><div data-v-1897aa1c="" class="absolute inset-0" aria-hidden="true"></div><div data-v-1897aa1c="" class="absolute top-0 right-0 h-full pointer-events-auto flex focus-within:outline-none shadow-2xl duration-300 transition-[background-color,backdrop-filter,box-shadow] backdrop-blur-md theme-light" role="complementary" aria-describedby="sidebar-description" style="width: min(90vw, 500px);"><div data-v-1897aa1c="" class="submenu-panel flex-1 flex flex-col overflow-hidden border-r border-white/20"><!----><header data-v-1897aa1c="" class="h-12 flex items-center justify-center px-6 border-b border-white/20 flex-shrink-0 transition-all duration-300 bg-white/10 backdrop-blur-sm"><h2 data-v-1897aa1c="" class="text-sm font-semibold text-gray-900" id="sidebar-description">目录</h2></header><main data-v-1897aa1c="" class="flex-1 overflow-y-auto transition-all duration-300 bg-white/20 backdrop-blur-sm" id="panel-chapters" role="tabpanel"><!----><section data-v-1897aa1c="" class="flex flex-col h-full" aria-labelledby="chapters-title"><h3 data-v-1897aa1c="" id="chapters-title" class="sr-only">章节目录</h3><div data-v-1897aa1c="" class="relative mb-4"><label data-v-1897aa1c="" for="chapter-search" class="sr-only">搜索章节</label><input data-v-1897aa1c="" id="chapter-search" type="text" class="w-full pl-10 pr-4 py-2 bg-white/60 backdrop-blur-sm border border-white/30 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all placeholder-gray-500" placeholder="搜索章节..." aria-describedby="search-results"><span data-v-1897aa1c="" class="iconify i-heroicons:magnifying-glass absolute left-3 top-2.5 w-4 h-4 text-gray-500" aria-hidden="true"></span></div><div data-v-1897aa1c="" class="flex-1 overflow-y-auto relative custom-scrollbar" role="listbox" aria-label="章节列表，共890章" id="search-results"><div data-v-1897aa1c="" style="height: 78320px; position: relative;"><!----><div data-v-1897aa1c="" class="absolute top-0 left-0 right-0 px-4 pb-4" style="transform: translateY(0px);"><div data-v-1897aa1c="" data-chapter-id="6340224" data-chapter-number="1" data-index="0" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative chapter-item-active" role="option" aria-selected="true" aria-label="第1章 独行满级菜鸟 第0话（序幕）"><div data-v-1897aa1c="" class="chapter-indicator absolute left-0 top-0 bottom-0 w-1 rounded-l-lg"></div><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600 font-semibold"> 第1章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900 font-semibold">独行满级菜鸟 第0话（序幕）</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">2.7K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-green-500" title="缓存最新"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340138" data-chapter-number="2" data-index="1" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第2章 独自满级新手 独自满级新手-第1话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第2章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独自满级新手 独自满级新手-第1话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">1.5K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-green-500" title="缓存最新"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340199" data-chapter-number="3" data-index="2" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第3章 独行满级菜鸟 第2话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第3章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第2话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">4.2K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-green-500" title="缓存最新"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340154" data-chapter-number="4" data-index="3" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第4章 独自满级新手 独自满级新手-第3集"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第4章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独自满级新手 独自满级新手-第3集</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.9K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-green-500" title="缓存最新"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340202" data-chapter-number="5" data-index="4" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第5章 独行满级菜鸟 第4话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第5章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第4话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.7K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-green-500" title="缓存最新"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340137" data-chapter-number="6" data-index="5" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第6章 独自满级新手 独自满级新手-第5话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第6章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独自满级新手 独自满级新手-第5话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">4.1K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340276" data-chapter-number="7" data-index="6" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第7章 独行满级菜鸟 第6话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第7章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第6话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.8K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340136" data-chapter-number="8" data-index="7" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第8章 只有我是满级新手 只有我是满级新手-第7集"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第8章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">只有我是满级新手 只有我是满级新手-第7集</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.9K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340200" data-chapter-number="9" data-index="8" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第9章 独行满级菜鸟 第8集"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第9章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第8集</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.9K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340142" data-chapter-number="10" data-index="9" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第10章 独自满级新手 独自满级新手-第9话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第10章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独自满级新手 独自满级新手-第9话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">4K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340275" data-chapter-number="11" data-index="10" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第11章 独行满级菜鸟 第10话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第11章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第10话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.6K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340164" data-chapter-number="12" data-index="11" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第12章 独自满级新手 独自满级新手-第11话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第12章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独自满级新手 独自满级新手-第11话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.9K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340270" data-chapter-number="13" data-index="12" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第13章 独行满级菜鸟 第12话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第13章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第12话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.6K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340166" data-chapter-number="14" data-index="13" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第14章 我独自满级新手 我独自满级新手-第13话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第14章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">我独自满级新手 我独自满级新手-第13话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.9K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340261" data-chapter-number="15" data-index="14" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第15章 独行满级菜鸟 第14话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第15章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第14话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.6K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340198" data-chapter-number="16" data-index="15" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第16章 只有我是满级新手 只有我是满级新手-第15话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第16章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">只有我是满级新手 只有我是满级新手-第15话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">4K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340272" data-chapter-number="17" data-index="16" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第17章 独行满级菜鸟 第16话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第17章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第16话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.7K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340144" data-chapter-number="18" data-index="17" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第18章 只有我是满级新手 只有我是满级新手-第17话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第18章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">只有我是满级新手 只有我是满级新手-第17话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.9K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340206" data-chapter-number="19" data-index="18" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第19章 独行满级菜鸟 第18话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第19章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第18话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.8K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340148" data-chapter-number="20" data-index="19" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第20章 我独自满级新手 我独自满级新手-第19话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第20章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">我独自满级新手 我独自满级新手-第19话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.8K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340203" data-chapter-number="21" data-index="20" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第21章 独行满级菜鸟 第20话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第21章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第20话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.6K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340152" data-chapter-number="22" data-index="21" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第22章 独自满级新手 独自满级新手-第21话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第22章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独自满级新手 独自满级新手-第21话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">4K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340269" data-chapter-number="23" data-index="22" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第23章 独行满级菜鸟 第22话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第23章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第22话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.7K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340147" data-chapter-number="24" data-index="23" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第24章 只有我是满级新手 只有我是满级新手-第23话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第24章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">只有我是满级新手 只有我是满级新手-第23话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.6K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340232" data-chapter-number="25" data-index="24" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第25章 独行满级菜鸟 第24话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第25章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第24话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">4K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340162" data-chapter-number="26" data-index="25" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第26章 我独自满级新手 我独自满级新手-第25话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第26章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">我独自满级新手 我独自满级新手-第25话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.6K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340267" data-chapter-number="27" data-index="26" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第27章 独行满级菜鸟 第26话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第27章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第26话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.5K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340239" data-chapter-number="28" data-index="27" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第28章 独行满级菜鸟 第27话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第28章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独行满级菜鸟 第27话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.7K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340167" data-chapter-number="29" data-index="28" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第29章 我独自满级新手 我独自满级新手-第28话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第29章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">我独自满级新手 我独自满级新手-第28话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.4K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div><div data-v-1897aa1c="" data-chapter-id="6340190" data-chapter-number="30" data-index="29" tabindex="0" class="chapter-item mb-2 p-3 rounded-lg cursor-pointer transition-colors duration-100 focus:outline-none focus:ring-2 focus:ring-blue-500 border border-white/20 relative hover:bg-white/60 focus:bg-white/60" role="option" aria-selected="false" aria-label="第30章 独自满级新手 独自满级新手-第29话"><!----><div data-v-1897aa1c="" class="text-xs font-medium mb-1 text-gray-600"> 第30章 </div><div data-v-1897aa1c="" class="text-sm font-medium leading-5 mb-2 text-gray-900">独自满级新手 独自满级新手-第29话</div><div data-v-1897aa1c="" class="flex justify-between items-center text-xs text-gray-500"><div data-v-1897aa1c="" class="flex items-center gap-2"><span data-v-1897aa1c="">3.7K</span><!----></div><div data-v-1897aa1c="" class="flex items-center gap-1.5"><div data-v-1897aa1c="" class="w-2 h-2 rounded-full flex-shrink-0 bg-gray-400" title="无缓存"></div><span data-v-1897aa1c="">2月</span></div></div></div></div></div><!----></div></section><!----><!----><!----></main></div><nav data-v-1897aa1c="" class="flex flex-col w-16 border-l border-white/20 transition-all duration-300 px-1 bg-white/10 backdrop-blur-md" role="tablist" aria-label="阅读器功能菜单"><button data-v-1897aa1c="" class="w-full flex items-center justify-center text-xs font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset backdrop-blur-sm rounded-lg shrink-0 text-gray-600 hover:text-gray-800 h-16 flex-col" aria-label="关闭侧边栏" title="关闭侧边栏 (ESC)"><span data-v-1897aa1c="" class="iconify i-heroicons:x-mark w-5 h-5 mb-1 flex-shrink-0" aria-hidden="true"></span><span data-v-1897aa1c="" class="leading-tight text-center px-1 whitespace-nowrap">关闭</span></button><div data-v-1897aa1c="" class="flex-1 flex flex-col justify-evenly overflow-y-auto hidden-scrollbar py-2"><button data-v-1897aa1c="" class="w-full flex items-center justify-center text-xs font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset backdrop-blur-sm rounded-lg shrink-0 h-16 flex-col text-gray-600 hover:text-gray-800" role="tab" aria-selected="false" aria-controls="panel-help" aria-label="切换到帮助" title="帮助"><span data-v-1897aa1c="" class="iconify i-heroicons:question-mark-circle w-5 h-5 mb-1" aria-hidden="true"></span><span data-v-1897aa1c="" class="leading-tight text-center px-1">帮助</span></button><!----><button data-v-1897aa1c="" class="w-full flex items-center justify-center text-xs font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset backdrop-blur-sm rounded-lg shrink-0 h-16 flex-col bg-blue-100/60 text-blue-700 border-l-2 border-blue-600" role="tab" aria-selected="true" aria-controls="panel-chapters" aria-label="切换到目录" title="目录"><span data-v-1897aa1c="" class="iconify i-heroicons:book-open w-5 h-5 mb-1" aria-hidden="true"></span><span data-v-1897aa1c="" class="leading-tight text-center px-1">目录</span></button><!----><button data-v-1897aa1c="" class="w-full flex items-center justify-center text-xs font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset backdrop-blur-sm rounded-lg shrink-0 h-16 flex-col text-gray-600 hover:text-gray-800" role="tab" aria-selected="false" aria-controls="panel-settings" aria-label="切换到设置" title="设置"><span data-v-1897aa1c="" class="iconify i-heroicons:cog-6-tooth w-5 h-5 mb-1" aria-hidden="true"></span><span data-v-1897aa1c="" class="leading-tight text-center px-1">设置</span></button><!----><button data-v-1897aa1c="" class="w-full flex items-center justify-center text-xs font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset backdrop-blur-sm rounded-lg shrink-0 h-16 flex-col text-gray-600 hover:text-gray-800" role="tab" aria-selected="false" aria-controls="panel-themes" aria-label="切换到主题" title="主题"><span data-v-1897aa1c="" class="iconify i-heroicons:paint-brush w-5 h-5 mb-1" aria-hidden="true"></span><span data-v-1897aa1c="" class="leading-tight text-center px-1">主题</span></button><button data-v-1897aa1c="" disabled="" class="w-full flex items-center justify-center text-xs font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset backdrop-blur-sm rounded-lg shrink-0 disabled:opacity-50 disabled:cursor-not-allowed h-16 flex-col text-gray-400" aria-label="已经是第一章" title="上章"><span data-v-1897aa1c="" class="iconify i-heroicons:chevron-up w-5 h-5 mb-1 flex-shrink-0" aria-hidden="true"></span><span data-v-1897aa1c="" class="leading-tight text-center px-1 whitespace-nowrap">上章</span></button><button data-v-1897aa1c="" class="w-full flex items-center justify-center text-xs font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset backdrop-blur-sm rounded-lg shrink-0 disabled:opacity-50 disabled:cursor-not-allowed h-16 flex-col text-gray-600 hover:text-gray-800" aria-label="转到下一章" title="下章"><span data-v-1897aa1c="" class="iconify i-heroicons:chevron-down w-5 h-5 mb-1 flex-shrink-0" aria-hidden="true"></span><span data-v-1897aa1c="" class="leading-tight text-center px-1 whitespace-nowrap">下章</span></button><button data-v-1897aa1c="" class="w-full flex items-center justify-center text-xs font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset backdrop-blur-sm rounded-lg shrink-0 h-16 flex-col text-gray-600 hover:text-gray-800" aria-label="翻页模式，当前关闭" title="开启翻页模式"><span data-v-1897aa1c="" class="iconify i-heroicons:document-duplicate w-5 h-5 mb-1 flex-shrink-0" aria-hidden="true"></span><span data-v-1897aa1c="" class="leading-tight text-center px-1 whitespace-nowrap">滑动</span></button><button data-v-1897aa1c="" class="w-full flex items-center justify-center text-xs font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset backdrop-blur-sm rounded-lg shrink-0 h-16 flex-col text-gray-600 hover:text-gray-800" aria-label="听书功能" title="听书"><span data-v-1897aa1c="" class="iconify i-heroicons:speaker-wave w-5 h-5 mb-1 flex-shrink-0" aria-hidden="true"></span><span data-v-1897aa1c="" class="leading-tight text-center px-1 whitespace-nowrap">听书</span></button></div><div data-v-1897aa1c="" class="border-t border-white/20 flex flex-col gap-1 py-2"><button data-v-1897aa1c="" class="w-full flex items-center justify-center text-xs font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset backdrop-blur-sm rounded-lg shrink-0 h-16 flex-col text-gray-600 hover:text-gray-800" aria-label="全屏"><span data-v-1897aa1c="" class="iconify i-heroicons:arrows-pointing-out w-5 h-5 mb-0.5" aria-hidden="true"></span><span data-v-1897aa1c="" class="leading-tight text-center px-1 whitespace-nowrap text-xs">全屏</span></button><button data-v-1897aa1c="" class="w-full flex items-center justify-center text-xs font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset backdrop-blur-sm rounded-lg shrink-0 h-16 flex-col text-gray-600 hover:text-gray-800" aria-label="收藏小说"><span data-v-1897aa1c="" class="iconify i-heroicons:bookmark w-5 h-5 mb-0.5" aria-hidden="true"></span><span data-v-1897aa1c="" class="leading-tight text-center px-1 whitespace-nowrap text-xs">收藏</span></button><button data-v-1897aa1c="" class="w-full flex items-center justify-center text-xs font-medium transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset backdrop-blur-sm rounded-lg shrink-0 h-16 flex-col text-gray-600 hover:text-gray-800" aria-label="导航"><span data-v-1897aa1c="" class="iconify i-heroicons:map w-5 h-5 mb-0.5" aria-hidden="true"></span><span data-v-1897aa1c="" class="leading-tight text-center px-1 whitespace-nowrap text-xs"> 导航 </span></button></div></nav></div></div><!----><!----><div data-v-ea7ce094="" class="reader-status-bar-scroll"><div data-v-ea7ce094="" class="status-bar-content"><span data-v-ea7ce094="" class="status-time">17:14</span><span data-v-ea7ce094="" class="status-chapter">1章-"独行满级菜鸟 第0话（序幕）" </span><span data-v-ea7ce094="" class="status-progress flex items-center gap-2"><div data-v-ea7ce094="" class="progress-ring-container" title="全书进度: 0.00%
+本章进度: 0.00%"><svg data-v-ea7ce094="" width="18" height="18" viewBox="0 0 36 36" class="progress-ring"><circle data-v-ea7ce094="" cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" stroke-opacity="0.1" stroke-width="3"></circle><circle data-v-ea7ce094="" cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" stroke-opacity="0.4" stroke-width="3" stroke-linecap="round" stroke-dasharray="97.39" style="stroke-dashoffset: 97.39;"></circle><circle data-v-ea7ce094="" cx="18" cy="18" r="9" fill="none" stroke="currentColor" stroke-opacity="0.1" stroke-width="3"></circle><circle data-v-ea7ce094="" cx="18" cy="18" r="9" fill="none" stroke="currentColor" stroke-opacity="1" stroke-width="3" stroke-linecap="round" stroke-dasharray="56.55" style="stroke-dashoffset: 56.55;"></circle></svg></div><span data-v-ea7ce094="">0.00%</span></span></div></div><!----></div></div></main><!----><!----></div></div><div id="teleports"></div><script type="application/json" data-nuxt-data="nuxt-app" data-ssr="false" id="__NUXT_DATA__">[{"serverRendered":1},false]</script><script>window.__NUXT__={};window.__NUXT__.config={public:{apiBase:"https://novalpie.cc/api",frontendUrl:"https://novalpie.cc",turnstileSiteKey:"0x4AAAAAACWQugOr3NhzfXKJ",recaptchaSiteKey:"6LeC7ScsAAAAAJyczwFFr5jOuB2zznGT0Mu3zhIJ",hcaptchaSiteKey:"c33cd62c-47d4-4c00-a4f6-9a4e19acabd2"},app:{baseURL:"/",buildId:"7e270279-d76d-42ab-8ba1-4fc28949abb1",buildAssetsDir:"/_nuxt/",cdnURL:""}}</script><script nomodule="">!function(){var e=document,t=e.createElement("script");if(!("noModule"in t)&&"onbeforeload"in t){var n=!1;e.addEventListener("beforeload",(function(e){if(e.target===t)n=!0;else if(!e.target.hasAttribute("nomodule")||!n)return;e.preventDefault()}),!0),t.type="module",t.src=".",e.head.appendChild(t),t.remove()}}();</script><script nomodule="" crossorigin="" id="vite-legacy-polyfill" src="./第1章 独行满级菜鸟 第0话（序幕）_files/DB1BhKMu-legacy.js.下载"></script><script nomodule="" crossorigin="" id="vite-legacy-entry" data-src="/_nuxt/BKQXZffL-legacy.js">System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script><script defer="" src="./第1章 独行满级菜鸟 第0话（序幕）_files/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon="{&quot;version&quot;:&quot;2024.11.0&quot;,&quot;token&quot;:&quot;a2f9858e5fb74d338c08f7880ca577b8&quot;,&quot;r&quot;:1,&quot;server_timing&quot;:{&quot;name&quot;:{&quot;cfCacheStatus&quot;:true,&quot;cfEdge&quot;:true,&quot;cfExtPri&quot;:true,&quot;cfL4&quot;:true,&quot;cfOrigin&quot;:true,&quot;cfSpeedBrain&quot;:true},&quot;location_startswith&quot;:null}}" crossorigin="anonymous"></script>
+<!----><div data-v-6688dedf="" class="fixed top-4 right-4 z-[10000] flex flex-col gap-2 pointer-events-none"></div><!----><!----><!----><!----><!----></body><div id="immersive-translate-popup" style="all: initial"><template shadowrootmode="open"><style>/** 基础色阶定义 **/
+:root,
+#mount[data-theme="light"],
+#mount:not([data-theme="dark"]) {
+  /* 中性灰阶（light） */
+  --c-00: #000000;
+  --c-22: #222222;
+  --c-33: #333333;
+  --c-66: #666666;
+  --c-83: #838383;
+  --c-99: #999999;
+  --c-c7: #c7c7c7;
+  --c-cc: #cccccc;
+  --c-e6: #e6e6e6;
+  --c-f5: #f5f5f5;
+  --c-ff: #ffffff;
+  /* 品牌主色阶（light） */
+  --p-main: #ea4c89;
+  --p-hover: #ec5e95;
+  --p-active: #e34a85;
+  --p-special: #ee71a2;
+  --p-disabled: #f4a5c4;
+  --p-text-disabled: #f9c9dc;
+  --p-weak: #fdedf3;
+  /* Surface 层级（light，TC 填充-1） */
+  --s-1: #f3f5f6;
+  --s-1-hover: #f6f8f9;
+  --s-1-active: #edf1f2;
+  --s-1-weak: #fafbfb;
+  /* 输入/边框（light，TC 填充-2） */
+  --input-bg-base: #fafbfc;
+  --input-border: #ecf0f7;
+  --input-border-strong: #e0e0e6;
+  --input-bg-strong: #fafdff;
+}
+
+:root[data-theme="dark"],
+[data-theme="dark"] {
+  /* 中性灰阶（dark） */
+  --c-00: #ffffff;
+  --c-22: #dbdbdb;
+  --c-33: #dbdbdb;
+  --c-66: #b3b3b3;
+  --c-83: #838383;
+  --c-99: #707070;
+  --c-c7: #666666;
+  --c-cc: #5c5c5c;
+  --c-e6: #3b3b3b;
+  --c-f5: #262626;
+  --c-ff: #222222;
+  /* 品牌主色阶（dark） */
+  --p-main: #e23c7c;
+  --p-hover: #ea4c89;
+  --p-active: #d5467d;
+  --p-special: #a93a65;
+  --p-disabled: #7e2f4d;
+  --p-text-disabled: #522335;
+  --p-weak: #26171d;
+  /* Surface 层级（dark，TC 填充-1） */
+  --s-1: #2d2e2f;
+  --s-1-hover: #323434;
+  --s-1-active: #202121;
+  --s-1-weak: #262627;
+  /* 输入/边框（dark，TC 填充-2） */
+  --input-bg-base: #2b2d30;
+  --input-border: #3e434b;
+  --input-border-strong: #43474b;
+  --input-bg-strong: #1f2123;
+}
+
+:root,
+#mount [data-theme] {
+  /* 业务/通用变量引用色阶（全局可见，含 Shadow DOM） */
+  --primary: var(--p-main);
+  --primary-hover: var(--p-hover);
+  --primary-inverse: #fff;
+  --modal-background: var(--s-1);
+  --modal-border: var(--input-border);
+  --modal-text: var(--c-22);
+  --modal-text-secondary: var(--c-66);
+  --modal-error: var(--p-main);
+  --modal-required: #f53f3f;
+  --modal-success: #68cd52;
+  --modal-button-background: var(--p-main);
+  --modal-button-text: var(--c-ff);
+  --modal-input-background: var(--input-bg-base);
+  --modal-check-color: var(--p-main);
+  --background-color: var(--c-ff);
+  --background-light-green: var(--s-1-weak, #f5f7f9);
+  --text-black-2: var(--c-22);
+  --text-gray-2: var(--c-22);
+  --text-gray-6: var(--c-66);
+  --text-gray-9: var(--c-99);
+  --text-gray-c2: var(--c-c7);
+  --switch-background-color: var(--c-c7, hsl(205deg, 16%, 77%));
+  --float-ball-more-button-border-color: var(--c-f5, #f6f6f6);
+  --float-ball-more-button-background-color: var(--c-ff);
+  --float-ball-more-button-hover-color: var(--p-weak);
+  --float-ball-more-button-svg-color: #6c6f73;
+  --service-bg-hover: var(--s-1-hover, #f7faff);
+  --service-bg: var(--s-1-weak, #fafbfb);
+}
+
+#mount {
+  --font-family: system-ui, -apple-system, "Segoe UI", "Roboto", "Ubuntu",
+    "Cantarell", "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+  /* PC/H5 兼容的字号、间距、圆角、阴影变量 */
+  --f-12: 12px;
+  --f-14: 14px;
+  --f-15: 15px;
+  --f-16: 16px;
+  --f-18: 18px;
+  --f-20: 20px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-18: 18px;
+  --space-24: 24px;
+  --radius-8: 8px;
+  --radius-12: 12px;
+  --radius-16: 16px;
+  --control-height-lg: 44px;
+  --width-28: 28px;
+  --width-24: 24px;
+  --width-20: 20px;
+  --width-18: 18px;
+  --width-16: 16px;
+  --width-label-md: 56px;
+  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.12);
+
+  /* 常规变量 */
+  --line-height: 1.5;
+  --font-weight: 400;
+  --font-size: 16px;
+  --border-radius: 4px;
+  --border-width: 2px;
+  --outline-width: 3px;
+  --spacing: 16px;
+  --typography-spacing-vertical: 24px;
+  --block-spacing-vertical: calc(var(--spacing) * 2);
+  --block-spacing-horizontal: var(--spacing);
+  --grid-spacing-vertical: 0;
+  --grid-spacing-horizontal: var(--spacing);
+  --form-element-spacing-vertical: 12px;
+  --form-element-spacing-horizontal: 16px;
+  --nav-element-spacing-vertical: 16px;
+  --nav-element-spacing-horizontal: 8px;
+  --nav-link-spacing-vertical: 8px;
+  --nav-link-spacing-horizontal: 8px;
+  --form-label-font-weight: var(--font-weight);
+  --transition: 0.2s ease-in-out;
+  --modal-overlay-backdrop-filter: blur(4px);
+  --switch-color: var(--primary-inverse);
+  --switch-checked-background-color: var(--primary);
+  --icon-xia: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGcgaWQ9IkZyYW1lIj4KPHBhdGggaWQ9IlZlY3RvciIgZD0iTTguMDAyOTEgOS42Nzk4M0wzLjgzMzM5IDUuNTEyMjFMMy4wMjUzOSA2LjMxOTgzTDguMDAzMjkgMTEuMjk1MUwxMi45NzYyIDYuMzE5ODNMMTIuMTY3OSA1LjUxMjIxTDguMDAyOTEgOS42Nzk4M1oiIGZpbGw9IiM4MzgzODMiLz4KPC9nPgo8L3N2Zz4K");
+  /* 兼容旧变量：主色直接引用品牌主色阶 */
+  --primary: var(--p-main);
+  --primary-hover: var(--p-hover);
+  --primary-inverse: #fff;
+  /* Modal 业务变量引用色阶 */
+  --modal-background: var(--s-1);
+  --modal-border: var(--input-border);
+  --modal-text: var(--c-22);
+  --modal-text-secondary: var(--c-66);
+  --modal-error: var(--p-main);
+  --modal-required: #f53f3f;
+  --modal-success: #68cd52;
+  --modal-button-background: var(--p-main);
+  --modal-button-text: var(--c-ff);
+  --modal-input-background: var(--input-bg-base);
+  --modal-check-color: var(--p-main);
+  --background-color: var(--c-ff);
+  --background-light-green: var(--s-1-weak, #f5f7f9);
+  --text-black-2: var(--c-22);
+  --text-gray-2: var(--c-22);
+  --text-gray-6: var(--c-66);
+  --text-gray-9: var(--c-99);
+  --text-gray-c2: var(--c-c7);
+  --switch-background-color: var(--c-c7, hsl(205deg, 16%, 77%));
+  --float-ball-more-button-border-color: var(--c-f5, #f6f6f6);
+  --float-ball-more-button-background-color: var(--c-ff);
+  --float-ball-more-button-hover-color: var(--p-weak);
+  --float-ball-more-button-svg-color: #6c6f73;
+  --service-bg-hover: var(--s-1-hover, #f7faff);
+  --service-bg: var(--s-1-weak, #fafbfb);
+  line-height: var(--line-height);
+  font-family: var(--font-family);
+  font-size: var(--font-size);
+}
+
+@media (max-width: 480px) {
+  :root,
+  #mount {
+    --f-12: 10px;
+    --f-14: 12px;
+    --f-15: 13px;
+    --f-16: 14px;
+    --f-18: 16px;
+    --f-20: 18px;
+    --space-4: 4px;
+    --space-6: 4px;
+    --space-8: 6px;
+    --space-12: 8px;
+    --space-16: 12px;
+    --space-18: 14px;
+    --space-24: 18px;
+    --radius-8: 6px;
+    --radius-12: 10px;
+    --radius-16: 12px;
+    --control-height-lg: 38px;
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.1);
+    --width-28: 24px;
+    --width-24: 20px;
+    --width-20: 16px;
+    --width-18: 14px;
+    --width-16: 12px;
+    --width-label-md: 52px;
+  }
+}
+
+#mount * {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+:where(#mount) a,
+:where(#mount) [role="link"] {
+  --color: var(--primary);
+  --background-color: transparent;
+  outline: none;
+  background-color: var(--background-color);
+  color: var(--color);
+  -webkit-text-decoration: var(--text-decoration);
+  text-decoration: var(--text-decoration);
+  transition: background-color var(--transition), color var(--transition),
+    box-shadow var(--transition), -webkit-text-decoration var(--transition);
+  transition: background-color var(--transition), color var(--transition),
+    text-decoration var(--transition), box-shadow var(--transition);
+  transition: background-color var(--transition), color var(--transition),
+    text-decoration var(--transition), box-shadow var(--transition),
+    -webkit-text-decoration var(--transition);
+}
+:where(#mount) a:is([aria-current], :hover, :active, :focus),
+:where(#mount) [role="link"]:is([aria-current], :hover, :active, :focus) {
+  --color: var(--primary-hover);
+  --text-decoration: underline;
+}
+
+:where(#mount) label {
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--text-gray-2, #222222);
+}
+
+:where(#mount) button {
+  width: 100%;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.3;
+  min-height: 44px;
+  border-radius: 12px;
+  padding: 0 14px;
+  border: none;
+  background-color: var(--primary, #ea4c89);
+  color: #ffffff;
+  cursor: pointer;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+}
+
+:where(#mount) button:hover {
+  background-color: var(--primary-hover, #f082ac);
+}
+
+:where(#mount) button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+:where(#mount) select,
+:where(#mount) input,
+:where(#mount) textarea {
+  font-family: inherit;
+  color: var(--text-gray-2, #222222);
+}
+
+:where(#mount) select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  font-family: inherit;
+  color: var(--text-gray-2, inherit);
+  font-size: 13px;
+  line-height: 1.3;
+  outline: none;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 12px;
+  background-color: var(--popup-item-background-color, transparent);
+  background-image: var(--icon-xia, none);
+  background-repeat: no-repeat;
+  background-position: center right 12px;
+  background-size: 16px auto;
+  cursor: pointer;
+}
+
+:where(#mount) input[type="checkbox"] {
+  accent-color: var(--primary, #ea4c89);
+}
+
+[type="checkbox"],
+[type="radio"] {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  width: 1.25em;
+  height: 1.25em;
+  margin-top: -0.125em;
+  margin-right: 0.375em;
+  margin-left: 0;
+  -webkit-margin-start: 0;
+  margin-inline-start: 0;
+  -webkit-margin-end: 0.375em;
+  margin-inline-end: 0.375em;
+  border-width: var(--border-width);
+  font-size: inherit;
+  vertical-align: middle;
+  cursor: pointer;
+}
+[type="checkbox"]::-ms-check,
+[type="radio"]::-ms-check {
+  display: none;
+}
+[type="checkbox"]:checked,
+[type="checkbox"]:checked:active,
+[type="checkbox"]:checked:focus,
+[type="radio"]:checked,
+[type="radio"]:checked:active,
+[type="radio"]:checked:focus {
+  --background-color: var(--primary);
+  --border-color: var(--primary);
+  background-image: var(--icon-checkbox);
+  background-position: center;
+  background-size: 0.75em auto;
+  background-repeat: no-repeat;
+}
+[type="checkbox"] ~ label,
+[type="radio"] ~ label {
+  display: inline-block;
+  margin-right: 0.375em;
+  margin-bottom: 0;
+  cursor: pointer;
+}
+
+[type="checkbox"]:indeterminate {
+  --background-color: var(--primary);
+  --border-color: var(--primary);
+  background-image: var(--icon-minus);
+  background-position: center;
+  background-size: 0.75em auto;
+  background-repeat: no-repeat;
+}
+
+[type="radio"] {
+  border-radius: 50%;
+}
+[type="radio"]:checked,
+[type="radio"]:checked:active,
+[type="radio"]:checked:focus {
+  --background-color: var(--primary-inverse);
+  border-width: 0.35em;
+  background-image: none;
+}
+
+:where(#mount) [type="checkbox"][role="switch"] {
+  --background-color: var(--switch-background-color);
+  --border-color: var(--switch-background-color);
+  --color: var(--switch-color);
+  width: 2.25em;
+  height: 1.25em;
+  border: var(--border-width) solid var(--border-color);
+  border-radius: 1.25em;
+  background-color: var(--background-color);
+  line-height: 1.25em;
+}
+:where(#mount) [type="checkbox"][role="switch"]:focus {
+  --background-color: var(--switch-background-color);
+  --border-color: var(--switch-background-color);
+}
+:where(#mount) [type="checkbox"][role="switch"]:checked {
+  --background-color: var(--switch-checked-background-color);
+  --border-color: var(--switch-checked-background-color);
+}
+:where(#mount) [type="checkbox"][role="switch"]:before {
+  display: block;
+  width: calc(1.25em - (var(--border-width) * 2));
+  height: 100%;
+  border-radius: 50%;
+  background-color: var(--color);
+  content: "";
+  transition: margin 0.1s ease-in-out;
+}
+:where(#mount) [type="checkbox"][role="switch"]:checked {
+  background-image: none;
+}
+:where(#mount) [type="checkbox"][role="switch"]:checked::before {
+  margin-left: calc(1.125em - var(--border-width));
+  -webkit-margin-start: calc(1.125em - var(--border-width));
+  margin-inline-start: calc(1.125em - var(--border-width));
+}
+
+:where(#mount) [type="checkbox"][aria-invalid="false"],
+:where(#mount) [type="checkbox"]:checked[aria-invalid="false"],
+:where(#mount) [type="radio"][aria-invalid="false"],
+:where(#mount) [type="radio"]:checked[aria-invalid="false"],
+:where(#mount) [type="checkbox"][role="switch"][aria-invalid="false"],
+:where(#mount) [type="checkbox"][role="switch"]:checked[aria-invalid="false"] {
+  --border-color: var(--form-element-valid-border-color);
+}
+:where(#mount) [type="checkbox"][aria-invalid="true"],
+:where(#mount) [type="checkbox"]:checked[aria-invalid="true"],
+:where(#mount) [type="radio"][aria-invalid="true"],
+:where(#mount) [type="radio"]:checked[aria-invalid="true"],
+:where(#mount) [type="checkbox"][role="switch"][aria-invalid="true"],
+:where(#mount) [type="checkbox"][role="switch"]:checked[aria-invalid="true"] {
+  --border-color: var(--form-element-invalid-border-color);
+}
+
+.text-black {
+  color: var(--text-black-2);
+}
+
+.text-gray-2 {
+  color: var(--text-gray-2);
+}
+
+.text-gray-6 {
+  color: var(--text-gray-6);
+}
+
+.text-gray-9 {
+  color: var(--text-gray-9);
+}
+
+.text-gray-c2 {
+  color: var(--text-gray-c2);
+}
+
+.pt-4 {
+  padding-top: 16px;
+}
+
+.p-2 {
+  padding: 8px;
+}
+
+.pl-5 {
+  padding-left: 48px;
+}
+
+.p-0 {
+  padding: 0;
+}
+
+.pl-2 {
+  padding-left: 8px;
+}
+
+.pl-4 {
+  padding-left: 24px;
+}
+
+.pt-2 {
+  padding-top: 8px;
+}
+
+.pb-2 {
+  padding-bottom: 8px;
+}
+
+.pb-4 {
+  padding-bottom: 16px;
+}
+
+.pb-5 {
+  padding-bottom: 20px;
+}
+
+.pr-5 {
+  padding-right: 48px;
+}
+
+.text-sm {
+  font-size: 13px;
+}
+
+.text-base {
+  font-size: 16px;
+}
+
+.w-full {
+  width: 100%;
+}
+
+.flex {
+  display: flex;
+}
+
+.flex-row {
+  flex-direction: row;
+}
+
+.flex-wrap {
+  flex-wrap: wrap;
+}
+
+.flex-end {
+  justify-content: flex-end;
+}
+
+.flex-grow {
+  flex-grow: 1;
+}
+
+.justify-between {
+  justify-content: space-between;
+}
+
+.mb-0 {
+  margin-bottom: 0px;
+}
+
+.mb-2 {
+  margin-bottom: 8px;
+}
+
+.mb-4 {
+  margin-bottom: 16px;
+}
+
+.mb-3 {
+  margin-bottom: 12px;
+}
+
+.inline-block {
+  display: inline-block;
+}
+
+.py-2 {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.py-2-5 {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.mt-0 {
+  margin-top: 0;
+}
+
+.mt-2 {
+  margin-top: 8px;
+}
+
+.mt-3 {
+  margin-top: 12px;
+}
+
+.mt-4 {
+  margin-top: 16px;
+}
+
+.mt-5 {
+  margin-top: 20px;
+}
+
+.mt-6 {
+  margin-top: 24px;
+}
+
+.mb-1 {
+  margin-bottom: 4px;
+}
+
+.ml-4 {
+  margin-left: 24px;
+}
+
+.ml-3 {
+  margin-left: 16px;
+}
+
+.ml-2 {
+  margin-left: 8px;
+}
+
+.ml-1 {
+  margin-left: 4px;
+}
+
+.mr-1 {
+  margin-right: 4px;
+}
+
+.mr-2 {
+  margin-right: 8px;
+}
+
+.mr-3 {
+  margin-right: 16px;
+}
+
+.mx-2 {
+  margin-left: 8px;
+  margin-right: 8px;
+}
+
+.pl-3 {
+  padding-left: 12px;
+}
+
+.pr-3 {
+  padding-right: 12px;
+}
+
+.p-3 {
+  padding: 12px;
+}
+
+.px-1 {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.px-3 {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.pt-3 {
+  padding-top: 12px;
+}
+
+.px-6 {
+  padding-left: 18px;
+  padding-right: 18px;
+}
+
+.px-4 {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.pt-6 {
+  padding-top: 20px;
+}
+
+.py-3 {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.py-0 {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.left-auto {
+  left: auto !important;
+}
+
+.max-h-28 {
+  max-height: 112px;
+}
+
+.max-h-30 {
+  max-height: 120px;
+}
+
+.overflow-y-scroll {
+  overflow-y: scroll;
+}
+
+.text-xs {
+  font-size: 12px;
+}
+
+.inline-flex {
+  display: inline-flex;
+}
+
+.flex-1 {
+  flex: 1;
+}
+
+.flex-3 {
+  flex: 3;
+}
+
+.flex-4 {
+  flex: 4;
+}
+
+.flex-2 {
+  flex: 2;
+}
+
+.items-center {
+  align-items: center;
+}
+
+.max-content {
+  width: max-content;
+}
+
+.justify-center {
+  justify-content: center;
+}
+
+.items-end {
+  align-items: flex-end;
+}
+
+.items-baseline {
+  align-items: baseline;
+}
+
+.my-5 {
+  margin-top: 48px;
+  margin-bottom: 48px;
+}
+
+.my-4 {
+  margin-top: 24px;
+  margin-bottom: 24px;
+}
+
+.my-3 {
+  margin-top: 16px;
+  margin-bottom: 16px;
+}
+
+.pt-3 {
+  padding-top: 12px;
+}
+
+.px-3 {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.pt-2 {
+  padding-top: 8px;
+}
+
+.px-2 {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.pt-1 {
+  padding-top: 4px;
+}
+
+.px-1 {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.pb-2 {
+  padding-bottom: 8px;
+}
+
+.justify-end {
+  justify-content: flex-end;
+}
+
+.w-auto {
+  width: auto;
+}
+
+.shrink-0 {
+  flex-shrink: 0;
+}
+
+.text-right {
+  text-align: right;
+}
+
+.clickable {
+  cursor: pointer;
+}
+
+.close {
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  background-image: var(--icon-close);
+  background-position: center;
+  background-size: auto 1rem;
+  background-repeat: no-repeat;
+  opacity: 0.5;
+  transition: opacity var(--transition);
+}
+
+.padding-two-column {
+  padding-left: 40px;
+  padding-right: 40px;
+}
+
+.muted {
+  color: #999;
+}
+
+.text-label {
+  color: #666;
+}
+
+.display-none {
+  display: none;
+}
+
+/* dark use #18232c */
+@media (prefers-color-scheme: dark) {
+  .text-label {
+    color: #9ca3af;
+  }
+}
+
+.text-decoration-none {
+  text-decoration: none;
+}
+
+.text-decoration-none:is([aria-current], :hover, :active, :focus),
+[role="link"]:is([aria-current], :hover, :active, :focus) {
+  --text-decoration: none !important;
+  background-color: transparent !important;
+}
+
+.text-overflow-ellipsis {
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.max-w-20 {
+  max-width: 180px;
+  white-space: nowrap;
+}
+
+[data-theme="light"],
+#mount:not([data-theme="dark"]) {
+  --popup-footer-background-color: #e8eaeb;
+  --popup-content-background-color: #ffffff;
+  --popup-item-background-color: #f3f5f6;
+  --popup-item-hover-background-color: #eaeced;
+  --popup-trial-pro-background-color: #f9fbfc;
+  --service-select-content-shadow: 0px 2px 12px 0px rgba(75, 76, 77, 0.2);
+  --service-select-border-color: #fafafa;
+  --service-select-selected-background-color: #f3f5f6;
+  --download-app-background: #f3f5f6;
+}
+
+[data-theme="dark"] {
+  --popup-footer-background-color: #0d0d0d;
+  --popup-content-background-color: #191919;
+  --popup-item-background-color: #272727;
+  --popup-item-hover-background-color: #333333;
+  --popup-trial-pro-background-color: #222222;
+  --service-select-content-shadow: 0px 2px 12px 0px rgba(0, 0, 0, 0.9);
+  --service-select-border-color: #2c2c2c;
+  --service-select-selected-background-color: #333333;
+  --download-app-background: #333;
+}
+
+#mount {
+  min-width: 268px;
+}
+
+body {
+  padding: 0;
+  margin: 0 auto;
+  min-width: 268px;
+  border-radius: 10px;
+}
+
+.popup-container {
+  font-size: 16px;
+  --font-size: 16px;
+  color: #666;
+  background-color: var(--popup-footer-background-color);
+  width: 316px;
+  min-width: 316px;
+}
+
+.popup-content {
+  background-color: var(--popup-content-background-color);
+  border-radius: 0px 0px 12px 12px;
+  padding: 16px 20px;
+}
+
+.immersive-translate-popup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 100%;
+  touch-action: none;
+}
+
+.immersive-translate-popup-wrapper {
+  background: var(--background-color);
+  border-radius: 10px;
+  border: 1px solid var(--muted-border-color);
+}
+
+.main-button {
+  font-size: 15px;
+  vertical-align: middle;
+  border-radius: 12px;
+  padding: unset;
+  height: 44px;
+  line-height: 44px;
+}
+
+select.language-select,
+select.translate-service,
+select.min-select {
+  --form-element-spacing-horizontal: 0;
+  margin-bottom: 0px;
+  max-width: unset;
+  flex: 1;
+  overflow: hidden;
+  font-size: 13px;
+  border: none;
+  border-radius: 8px;
+  padding-right: 30px;
+  padding-left: 0px;
+  background-position: center right 12px;
+  background-size: 16px auto;
+  background-image: var(--icon-xia);
+  text-overflow: ellipsis;
+  color: var(--text-gray-2);
+  background-color: transparent;
+  box-shadow: unset !important;
+  cursor: pointer;
+}
+
+select.more {
+  background-position: center right;
+  padding-right: 20px;
+}
+
+select.translate-service {
+  color: var(--text-black-2);
+}
+
+.min-select-container.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.popup-footer {
+  background-color: var(--popup-footer-background-color);
+  height: 40px;
+}
+
+.language-select-container {
+  position: relative;
+  width: 100%;
+  background-color: var(--popup-item-background-color);
+  height: 55px;
+  border-radius: 12px;
+}
+
+select.language-select {
+  color: var(--text-black-2);
+  font-size: 14px;
+  padding: 8px 24px 24px 16px;
+  position: absolute;
+  border-radius: 12px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+}
+
+.language-select-container label {
+  position: absolute;
+  bottom: 10px;
+  left: 16px;
+  font-size: 12px;
+  color: var(--text-gray-9);
+  line-height: 12px;
+  margin: 0;
+}
+
+.translation-service-container {
+  background-color: var(--popup-item-background-color);
+  border-radius: 12px;
+}
+
+.min-select-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 44px;
+  background-color: var(--popup-item-background-color);
+  padding-left: 16px;
+}
+
+.min-select-container:first-child {
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+}
+
+.min-select-container:last-child {
+  border-bottom-left-radius: 10px;
+  border-bottom-right-radius: 10px;
+}
+
+.min-select-container:only-child {
+  border-radius: 10px;
+}
+
+.translate-mode {
+  width: 44px;
+  height: 44px;
+  border-radius: 22px;
+  background-color: var(--popup-item-background-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.translate-mode svg {
+  fill: var(--text-gray-2);
+}
+
+.widgets-container {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  width: 100%;
+  gap: 9px;
+}
+
+/* 当只有两个小组件时的样式优化 */
+.widgets-container.widgets-two-items {
+  gap: 16px;
+}
+
+.widgets-container.widgets-two-items .widget-item {
+  flex: 0 1 auto;
+  min-width: 93px;
+  max-width: 120px;
+}
+
+.widget-item {
+  display: flex;
+  max-width: 93px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--popup-item-background-color);
+  font-size: 12px;
+  min-height: 44px;
+  height: 100%;
+  border-radius: 8px;
+  cursor: pointer;
+  flex: 1;
+  padding: 8px 4px;
+  text-align: center;
+}
+
+.widget-icon-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-gray-2);
+}
+
+.widgets-container svg {
+  fill: var(--text-gray-2);
+  color: var(--text-gray-2);
+}
+
+.share-button-container {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 2px 3px 0 8px;
+}
+
+.share-button-container svg {
+  fill: var(--text-gray-9);
+}
+
+.min-select-container:hover,
+.language-select-container:hover,
+.widget-item:hover,
+.translate-mode:hover {
+  background-color: var(--popup-item-hover-background-color);
+}
+
+.main-button:hover {
+  background-color: #f5508f;
+}
+
+.share-button-container:hover {
+  background-color: var(--popup-item-background-color);
+  border-radius: 6px;
+}
+
+.error-boundary {
+  background: #fff2f0;
+  border: 1px solid #ffccc7;
+  display: flex;
+  padding: 12px;
+  font-size: 14px;
+  color: rgba(0, 0, 0, 0.88);
+  word-break: break-all;
+  margin: 12px;
+  border-radius: 12px;
+  flex-direction: column;
+}
+
+.upgrade-pro {
+  border-radius: 11px;
+  background: linear-gradient(57deg, #272727 19.8%, #696969 82.2%);
+  padding: 2px 8px;
+  transform: scale(0.85);
+}
+
+.upgrade-pro span {
+  background: linear-gradient(180deg, #ffeab4 17.65%, #f8c235 85.29%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-size: 12px;
+  margin-left: 4px;
+}
+
+.upgrade-pro svg {
+  margin-top: -2px;
+}
+
+.upgrade-pro:hover {
+  background: linear-gradient(57deg, #3d3d3d 19.8%, #949494 82.2%);
+}
+
+.border-bottom-radius-0 {
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+}
+
+.trial-pro-container {
+  border-radius: 0px 0px 12px 12px;
+  background: var(--popup-trial-pro-background-color);
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding-left: 16px;
+  padding-right: 12px;
+  font-size: 12px;
+}
+
+.trial-pro-container label {
+  line-height: 13px;
+  color: var(--text-black-2);
+}
+
+.trial-pro-container img {
+  margin-left: 5px;
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+.upgrade-pro-discount-act {
+  height: 25px;
+  display: flex;
+  padding: 0 4px;
+  align-items: center;
+  border-radius: 15px;
+  background: linear-gradient(
+    90deg,
+    #cefbfa 11.33%,
+    #d7f56f 63.75%,
+    #fccd5e 100%
+  );
+  transform: scale(0.9);
+  box-shadow: 0px 1.8px 3.6px 0px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+}
+
+.upgrade-pro-discount-act span {
+  font-size: 12px;
+  font-weight: 700;
+  margin-left: 4px;
+  color: #222222;
+}
+
+.upgrade-pro-discount-act:hover {
+  text-decoration: unset;
+  background: linear-gradient(
+    90deg,
+    #e2fffe 11.33%,
+    #e6ff91 63.75%,
+    #ffdf93 100%
+  );
+}
+
+.custom-select-container {
+  width: 200px;
+  position: relative;
+  flex: 1;
+}
+
+#translation-service-select {
+  padding-right: 12px;
+  padding-left: 6px;
+}
+
+.custom-select-content {
+  border-radius: 12px;
+  background: var(--popup-content-background-color);
+  box-shadow: var(--service-select-content-shadow);
+  border: 1px solid var(--service-select-border-color);
+  padding: 4px 5px;
+  position: absolute;
+  left: -10px;
+  right: 0;
+  z-index: 100;
+  overflow-y: auto;
+}
+
+.custom-select-item.default {
+  width: 100%;
+  padding: 0;
+}
+
+.custom-select-item {
+  font-size: 13px;
+  padding: 5px 6px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  color: var(--text-black-2);
+  width: auto;
+  overflow: hidden;
+  height: 30px;
+  line-height: 30px;
+}
+
+.custom-select-item-img {
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .custom-select-item-img {
+    margin-right: 6px;
+  }
+}
+
+.custom-select-content .custom-select-item.selected,
+.custom-select-content .custom-select-item:hover {
+  background: var(--service-select-selected-background-color);
+}
+
+.custom-select-item > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.custom-select-item-pro {
+  font-size: 12px;
+  margin-left: 6px;
+  display: flex;
+}
+
+.custom-select-item-pro img {
+  margin: 0 3px;
+  width: 20px;
+  flex-shrink: 0;
+}
+
+.custom-select-group-header {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-gray-9);
+  padding: 6px 8px 4px;
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.more-container {
+  position: relative;
+}
+
+.new-menu-indicator {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background-color: #ef3434;
+  border-radius: 50%;
+  right: 18px;
+  top: 4px;
+}
+
+.download-app {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 8px;
+  background: var(--download-app-background);
+  padding: 4px 8px;
+  color: var(--text-gray-6);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+
+/* Popup 动画效果 */
+@keyframes popup-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes popup-fade-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.95);
+  }
+}
+
+.popup-generic-content {
+  animation: popup-fade-in 0.2s ease-out;
+}
+
+.popup-generic-content.hiding {
+  animation: popup-fade-out 0.15s ease-in;
+}
+
+select.min-select {
+  --form-element-spacing-horizontal: 0;
+  max-width: 128px;
+  overflow: hidden;
+  color: var(--primary);
+  font-size: 13px;
+  border: none;
+  padding: 0;
+  padding-right: 20px;
+  text-overflow: ellipsis;
+  color: var(--color);
+}
+select.min-select-secondary {
+  color: var(--color);
+}
+select.min-select:focus {
+  outline: none;
+  border: none;
+  --box-shadow: none;
+}
+
+select.min-select-left {
+  padding-right: 0px;
+  /* padding-left: 24px; */
+  /* background-position: center left 0; */
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+select.transform-padding-left {
+  padding-left: 12px;
+  transform: translateX(-12px);
+  background-position: center right 0px;
+}
+
+select.text-gray-6 {
+  color: var(--text-gray-6);
+}
+
+/* dark use black, for windows */
+@media (prefers-color-scheme: dark) {
+  select.language-select option,
+  select.translate-service option,
+  select.min-select option {
+    background-color: #666666;
+  }
+}
+
+select.min-select-no-arrow {
+  background-image: none;
+  padding-right: 0;
+}
+
+
+
+.activity-tips {
+  border-radius: 8px;
+  padding: 0px 8px;
+  min-height: 28px;
+  background: linear-gradient(83deg, #FACCDE -0.87%, #FCE7EF 43.13%, #FBD6E4 72.08%, #FFB3D1 96.34%);  gap: 2px;
+  color: #333;
+  cursor: pointer;
+  gap: 4px;
+}
+
+.activity-tips-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.countdown-container {
+  min-width: 50px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+
+.activity-tips-text {
+  font-weight: 600;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html {
+  font-size: 17px;
+}
+
+@media print {
+  .imt-fb-container {
+    display: none !important;
+  }
+}
+
+#mount {
+  position: absolute;
+  display: none;
+  min-width: 250px;
+  height: auto;
+  --font-size: 17px;
+  font-size: 17px;
+}
+
+/* float-ball */
+.imt-fb-container {
+  position: fixed;
+  padding: 0;
+  top: 335px;
+  width: fit-content;
+  display: flex;
+  flex-direction: column;
+  display: none;
+  direction: ltr;
+  background-color: transparent !important;
+}
+
+.imt-fb-container:hover .imt-manga-button {
+  opacity: 1;
+}
+
+.imt-fb-container.left {
+  align-items: flex-start;
+  left: 0;
+}
+
+.imt-fb-container.right {
+  align-items: flex-end;
+  right: 0;
+}
+
+.imt-fb-btn {
+  cursor: pointer;
+  background: var(--float-ball-more-button-background-color);
+  height: 36px;
+  box-shadow: 0 0 10px 0 rgba(0, 0, 0, 0.08);
+}
+
+.imt-fb-btn.left {
+  border-top-right-radius: 36px;
+  border-bottom-right-radius: 36px;
+  padding-left: 3px;
+}
+
+.imt-fb-btn.right {
+  border-top-left-radius: 36px;
+  border-bottom-left-radius: 36px;
+  padding-right: 3px;
+}
+
+.imt-fb-btn.mini.left {
+  transform: translateX(-22px);
+}
+
+.imt-fb-btn.mini.right {
+  transform: translateX(22px);
+}
+
+.imt-fb-btn.mini.active {
+  transform: translateX(0);
+}
+
+.imt-fb-btn div {
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+}
+
+.imt-fb-btn .imt-fb-hit-area {
+  position: absolute;
+  top: 0;
+  height: 36px;
+  bottom: -6px;
+  left: -6px;
+  right: -6px;
+  background: transparent;
+}
+
+.imt-fb-btn.mini.right .imt-fb-hit-area {
+  left: -10px;
+}
+
+.imt-fb-btn.mini.left .imt-fb-hit-area {
+  right: -10px;
+}
+
+.imt-fb-btn.left div {
+  border-top-right-radius: 34px;
+  border-bottom-right-radius: 34px;
+  justify-content: flex-end;
+}
+
+.imt-fb-btn.right div {
+  border-top-left-radius: 34px;
+  border-bottom-left-radius: 34px;
+}
+
+.imt-fb-logo-img {
+  width: 20px;
+  height: 20px;
+  margin: 0 10px;
+}
+
+.imt-fb-logo-img-big-bg {
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  background-color: #ed6d8f;
+  border-radius: 50%;
+  margin: 0 5px;
+}
+
+.imt-float-ball-translated {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  bottom: 4px;
+  right: 4px;
+}
+
+.btn-animate {
+  -webkit-transform: translate3d(0, 0, 0);
+  transform: translate3d(0, 0, 0);
+  -webkit-transition: -webkit-transform ease-out 250ms;
+  transition: -webkit-transform ease-out 250ms;
+  transition: transform ease-out 250ms;
+  transition: transform ease-out 250ms, -webkit-transform ease-out 250ms;
+}
+
+.imt-fb-setting-btn {
+  margin-right: 18px;
+  width: 28px;
+  height: 28px;
+}
+
+.immersive-translate-popup-wrapper {
+  background: var(--background-color);
+  border-radius: 20px;
+  box-shadow: 2px 10px 24px 0px #0e121614;
+  border: none;
+}
+
+.popup-container {
+  border-radius: 20px;
+}
+
+.popup-content {
+  border-radius: 20px 20px 12px 12px;
+}
+.popup-footer {
+  border-radius: 20px;
+}
+
+.imt-fb-close-button {
+  cursor: pointer;
+  position: absolute;
+  left: -10px;
+  bottom: -20px;
+}
+.imt-fb-container.left .imt-fb-close-button {
+  left: auto;
+  right: -10px;
+}
+
+.imt-fb-close-content {
+  padding: 22px;
+  width: 320px;
+  pointer-events: all;
+}
+
+.imt-fb-close-title {
+  font-weight: 500;
+  color: var(--text-black-2);
+}
+
+.imt-fb-close-radio-content {
+  background-color: var(--background-light-green);
+  padding: 8px 20px;
+}
+
+.imt-fb-radio-sel,
+.imt-fb-radio-nor {
+  width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.imt-fb-radio-sel {
+  border: 2px solid var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.imt-fb-radio-sel div {
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background-color: var(--primary);
+}
+
+.imt-fb-radio-nor {
+  border: 2px solid var(--input-border-strong);
+}
+
+.imt-fb-primary-btn {
+  background-color: var(--primary);
+  width: 72px;
+  height: 32px;
+  color: white;
+  border-radius: 8px;
+  text-align: center;
+  line-height: 32px;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.imt-fb-default-btn {
+  border: 1px solid var(--primary);
+  width: 72px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--primary);
+  line-height: 32px;
+  text-align: center;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.imt-fb-guide-container {
+  width: 312px;
+  transform: translateY(-45%);
+}
+
+.imt-fb-guide-bg {
+  position: absolute;
+  left: 30px;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: -1;
+  height: 100%;
+  width: 90%;
+}
+
+.imt-fb-guide-bg.left {
+  transform: scaleX(-1);
+}
+
+.imt-fb-guide-content {
+  margin: 16px -30px 80px 0px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.imt-fb-guide-content.left {
+  margin: 16px 21px 60px 32px;
+}
+
+.imt-fb-guide-img {
+  width: 220px;
+  height: 112px;
+}
+
+.imt-fb-guide-message {
+  font-size: 14px;
+  line-height: 28px;
+  color: #333333;
+  white-space: pre-wrap;
+  text-align: center;
+  font-weight: 700;
+  margin-bottom: 20px;
+}
+
+.imt-manga-guide-message {
+  font-size: 16px;
+  line-height: 24px;
+  color: #333333;
+  text-align: center;
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+
+.imt-fb-guide-button {
+  margin-top: 16px;
+  line-height: 40px;
+  height: 40px;
+  padding: 0 20px;
+  width: unset;
+}
+
+.imt-fb-side {
+  border-radius: 50%;
+  cursor: pointer;
+  pointer-events: all;
+  position: relative;
+}
+
+.imt-fb-side {
+  margin: 10px 0;
+}
+
+.imt-fb-side::before,
+.imt-manga-button::before,
+.imt-fb-round-button::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  bottom: 2px;
+  left: 2px;
+  border-radius: 50%;
+  background-color: transparent;
+  transition: background-color 0.15s ease;
+}
+
+.imt-fb-side:hover::before,
+.imt-manga-button:hover::before,
+.imt-fb-round-button:hover::before {
+  background-color: var(--float-ball-more-button-hover-color);
+}
+
+.imt-fb-new-badge {
+  width: 26px;
+  height: 14px;
+  padding: 3px;
+  background-color: #f53f3f;
+  border-radius: 4px;
+  position: absolute;
+  top: -5px;
+  right: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.imt-fb-side * {
+  pointer-events: all;
+}
+
+.imt-fb-pin-icon {
+  position: absolute;
+  left: -16px;
+  bottom: -12px;
+  opacity: 0;
+  cursor: pointer;
+}
+.imt-fb-container.left .imt-fb-pin-icon {
+  left: auto;
+  right: -16px;
+}
+
+.imt-fb-side:hover .imt-fb-pin-icon {
+  opacity: 1;
+}
+
+.imt-fb-more-button {
+  width: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+/* Sheet.css */
+.immersive-translate-sheet {
+  position: fixed;
+  transform: translateY(100%);
+  /* Start off screen */
+  left: 0;
+  right: 0;
+  background-color: var(--background-color);
+  transition: transform 0.3s ease-out;
+  /* Smooth slide transition */
+  box-shadow: 0px -2px 10px rgba(0, 0, 0, 0.1);
+  /* Ensure it's above other content */
+  bottom: 0;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  overflow: hidden;
+}
+
+.immersive-translate-sheet.visible {
+  transform: translateY(0);
+}
+
+.immersive-translate-sheet-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity 0.3s ease-out;
+}
+
+.immersive-translate-sheet-backdrop.visible {
+  opacity: 1;
+}
+
+.popup-container-sheet {
+  max-width: 100vw;
+  width: 100vw;
+}
+
+.imt-no-events svg * {
+  pointer-events: none !important;
+}
+
+.imt-manga-button {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  pointer-events: all;
+  margin: 0 0 10px 0;
+  background-color: var(--float-ball-more-button-background-color);
+  border-radius: 50%;
+  box-shadow: 0 2px 10px 0 rgba(0, 0, 0, 0.08);
+  right: 8px;
+}
+
+.imt-manga-feedback {
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+
+.imt-fb-round-button {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: var(--float-ball-more-button-background-color);
+  border-radius: 50%;
+  box-shadow: 0 0 10px 0 rgba(0, 0, 0, 0.08);
+  position: relative;
+}
+
+.imt-fb-round-button > svg {
+  z-index: 1;
+}
+
+.imt-fb-upgrade-button {
+  cursor: pointer;
+  margin-top: 10px;
+}
+
+.imt-manga-translated {
+  position: absolute;
+  left: 24px;
+  top: 20px;
+}
+
+.imt-float-ball-loading {
+  animation: imt-loading-animation 0.6s infinite linear !important;
+}
+
+.imt-manga-guide-bg {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: -1;
+  width: 100%;
+  transform: translateY(-50%);
+}
+.imt-manga-guide-content {
+  position: absolute;
+  top: 15px;
+  left: 0;
+  right: 0;
+  margin: 0 40px 0;
+}
+
+.img-manga-guide-button {
+  width: fit-content;
+  margin: 0 auto;
+}
+
+.img-manga-close {
+  position: absolute;
+  bottom: -200px;
+  width: 32px;
+  height: 32px;
+  left: 0;
+  right: 0;
+  margin: auto;
+  cursor: pointer;
+}
+
+.imt-fb-container.dragging .imt-manga-button,
+.imt-fb-container.dragging .btn-animate:not(.imt-fb-btn) {
+  display: none !important;
+}
+
+.imt-fb-container.dragging .imt-fb-btn {
+  border-radius: 50% !important;
+  width: 36px !important;
+  height: 36px !important;
+  display: flex !important;
+  align-items: center !important;
+  cursor: move !important;
+}
+
+.imt-fb-container.dragging .imt-fb-btn div {
+  border-radius: 50% !important;
+  width: 36px !important;
+  height: 36px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 0 !important;
+}
+
+.imt-fb-container.dragging .imt-fb-btn.left,
+.imt-fb-container.dragging .imt-fb-btn.right {
+  border-radius: 50% !important;
+}
+
+.imt-fb-container.dragging .imt-fb-btn.left div,
+.imt-fb-container.dragging .imt-fb-btn.right div {
+  border-radius: 50% !important;
+}
+
+.imt-fb-container.dragging .imt-fb-logo-img {
+  margin: 0 !important;
+}
+
+.imt-fb-container.dragging .imt-float-ball-translated {
+  right: 2px !important;
+  bottom: 2px !important;
+}
+
+@-webkit-keyframes imt-loading-animation {
+  from {
+    -webkit-transform: rotate(0deg);
+  }
+
+  to {
+    -webkit-transform: rotate(359deg);
+  }
+}
+
+@keyframes imt-loading-animation {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(359deg);
+  }
+}
+
+.imt-fb-icon {
+  color: #666666;
+}
+
+[data-theme="dark"] .imt-fb-icon {
+  color: #b3b3b3;
+}
+
+[data-theme="light"] .imt-fb-icon {
+  color: #666666;
+}
+
+/* 悬浮球设置弹窗样式 */
+.imt-fb-setting-wrapper {
+  border-radius: 12px;
+  box-shadow: 2px 10px 24px 0px rgba(0, 0, 0, 0.06);
+}
+
+.imt-fb-setting-content {
+  padding: 16px;
+  width: 350px;
+  pointer-events: all;
+}
+
+.imt-fb-setting-title {
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 24px;
+  color: var(--text-black-2);
+}
+
+.imt-fb-setting-preview {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 24px 0;
+}
+
+.imt-fb-preview-wrapper {
+  display: flex;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.imt-fb-preview-item {
+  width: 99px;
+  height: 57px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  position: relative;
+  overflow: hidden;
+}
+
+.imt-fb-preview-item.light {
+  background-color: #f3f5f6;
+  border-top-left-radius: 12px;
+  border-bottom-left-radius: 12px;
+}
+
+.imt-fb-preview-item.dark {
+  background-color: #444;
+  border-top-right-radius: 12px;
+  border-bottom-right-radius: 12px;
+}
+
+.imt-fb-preview-ball {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  box-shadow: 0 0 10px 0 rgba(0, 0, 0, 0.08);
+  transition: all 0.2s ease;
+}
+
+.imt-fb-preview-ball.light {
+  background-color: #fff;
+  border-top-left-radius: 36px;
+  border-bottom-left-radius: 36px;
+}
+
+.imt-fb-preview-ball.dark {
+  background-color: #111;
+  border-top-left-radius: 36px;
+  border-bottom-left-radius: 36px;
+}
+
+.imt-fb-preview-ball.full {
+  width: 41px;
+  justify-content: center;
+}
+
+.imt-fb-preview-ball.mini {
+  width: 41px;
+  justify-content: center;
+  transform: translateX(21px);
+}
+
+.imt-fb-preview-ball .imt-fb-preview-logo {
+  flex-shrink: 0;
+}
+
+/* 选项区域 */
+.imt-fb-setting-options {
+  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.imt-fb-setting-option-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 4px;
+}
+
+.imt-fb-setting-option-label {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 21px;
+  color: var(--text-black-2);
+}
+
+/* Toggle 开关样式 */
+.imt-fb-toggle {
+  width: 30px;
+  height: 18px;
+  background-color: var(--switch-background-color);
+  border-radius: 24px;
+  position: relative;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.imt-fb-toggle.checked {
+  background-color: var(--primary);
+}
+
+.imt-fb-toggle.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.imt-fb-toggle-thumb {
+  width: 14px;
+  height: 14px;
+  background-color: var(--switch-color);
+  border-radius: 50%;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s ease;
+  box-shadow: 0 0 10px 0 rgba(0, 0, 0, 0.08);
+}
+
+.imt-fb-toggle.checked .imt-fb-toggle-thumb {
+  transform: translateX(12px);
+}
+
+.imt-fb-setting-hide-options {
+  background-color: var(--background-light-green);
+  padding: 8px 20px;
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+.imt-fb-setting-save-btn {
+  background-color: var(--primary);
+  color: white;
+  border-radius: 8px;
+  text-align: center;
+  line-height: 45px;
+  height: 45px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  margin-top: 16px;
+  transition: opacity 0.2s ease;
+}
+
+.imt-fb-setting-save-btn:hover {
+  opacity: 0.9;
+}
+
+.imt-fb-setting-save-btn:active {
+  opacity: 0.8;
+}
+</style><div id="mount" style="display: block;"><div class="imt-fb-container right notranslate " data-theme="light" style="z-index: 2147483637; pointer-events: none; right: 0px; top: 469px; display: flex;"><div class="btn-animate" style="transform: translateX(-5px); opacity: 0.7;"><div class="imt-fb-btn imt-fb-more-button imt-fb-side"><div class=" btn-animate" style="position: relative; pointer-events: all; display: inline-block;"><div><svg class="imt-fb-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M9.65332 13.3477C10.4097 13.4245 11 14.0632 11 14.8398V18.8398L10.9922 18.9932C10.9205 19.6992 10.3593 20.2604 9.65332 20.332L9.5 20.3398H5.5C4.72334 20.3398 4.08461 19.7496 4.00781 18.9932L4 18.8398V14.8398C4 14.0114 4.67157 13.3398 5.5 13.3398H9.5L9.65332 13.3477ZM18.6533 13.3477C19.4097 13.4245 20 14.0632 20 14.8398V18.8398L19.9922 18.9932C19.9205 19.6992 19.3593 20.2604 18.6533 20.332L18.5 20.3398H14.5C13.7233 20.3398 13.0846 19.7496 13.0078 18.9932L13 18.8398V14.8398C13 14.0114 13.6716 13.3398 14.5 13.3398H18.5L18.6533 13.3477ZM5.5 14.3398C5.22386 14.3398 5 14.5637 5 14.8398V18.8398C5 19.116 5.22386 19.3398 5.5 19.3398H9.5C9.77614 19.3398 10 19.116 10 18.8398V14.8398C10 14.5637 9.77614 14.3398 9.5 14.3398H5.5ZM14.5 14.3398C14.2239 14.3398 14 14.5637 14 14.8398V18.8398C14 19.116 14.2239 19.3398 14.5 19.3398H18.5C18.7761 19.3398 19 19.116 19 18.8398V14.8398C19 14.5637 18.7761 14.3398 18.5 14.3398H14.5ZM9.65332 4.34766C10.4097 4.42445 11 5.06318 11 5.83984V9.83984L10.9922 9.99316C10.9205 10.6992 10.3593 11.2604 9.65332 11.332L9.5 11.3398H5.5C4.72334 11.3398 4.08461 10.7496 4.00781 9.99316L4 9.83984V5.83984C4 5.01142 4.67157 4.33984 5.5 4.33984H9.5L9.65332 4.34766ZM16.1484 3.18848C16.2521 2.83834 16.7479 2.83834 16.8516 3.18848L17.3281 4.79785C17.5079 5.40507 17.9648 5.89104 18.5596 6.1084L20.0576 6.65625C20.3786 6.77361 20.3785 7.22732 20.0576 7.34473L18.5596 7.89258C17.9648 8.10991 17.5079 8.59598 17.3281 9.20312L16.8516 10.8125C16.7479 11.1626 16.2521 11.1626 16.1484 10.8125L15.6719 9.20312C15.4921 8.59598 15.0352 8.10991 14.4404 7.89258L12.9424 7.34473C12.6215 7.22732 12.6214 6.77361 12.9424 6.65625L14.4404 6.1084C15.0352 5.89104 15.4921 5.40507 15.6719 4.79785L16.1484 3.18848ZM5.5 5.33984C5.22386 5.33984 5 5.5637 5 5.83984V9.83984C5 10.116 5.22386 10.3398 5.5 10.3398H9.5C9.77614 10.3398 10 10.116 10 9.83984V5.83984C10 5.5637 9.77614 5.33984 9.5 5.33984H5.5Z" fill="#ED6D8F"></path></svg><svg class="imt-fb-pin-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="7" fill="#B1B1B166"></circle><g transform="translate(2, 2)"><mask id="mask0_39788_745" maskUnits="userSpaceOnUse" x="0" y="0" width="10" height="10" style="mask-type: alpha;"><rect width="10" height="10" fill="#D9D9D9"></rect></mask><g mask="url(#mask0_39788_745)"><path d="M6.23958 3.76042C6.28819 3.80903 6.35243 3.88194 6.43229 3.97917C6.51215 4.07639 6.59722 4.18056 6.6875 4.29167C6.6875 4.44444 6.63646 4.57292 6.53438 4.67708C6.43222 4.78125 6.30618 4.83333 6.15625 4.83333C6.00056 4.83333 5.86962 4.78125 5.76344 4.67708C5.65726 4.57292 5.60417 4.44444 5.60417 4.29167C5.59722 4.28472 5.59201 4.28646 5.58854 4.29688C5.58507 4.30729 5.58333 4.31076 5.58333 4.30729C5.58333 4.30382 5.59028 4.30382 5.60417 4.30729C5.61806 4.31076 5.62153 4.30903 5.61458 4.30208C5.47569 4.30208 5.3559 4.25104 5.25521 4.14896C5.15451 4.04681 5.10417 3.92771 5.10417 3.79167C5.10417 3.65278 5.15451 3.53299 5.25521 3.43229C5.3559 3.3316 5.47569 3.28125 5.61458 3.28125C5.74653 3.35764 5.86111 3.43403 5.95833 3.51042C6.05556 3.58681 6.14931 3.67014 6.23958 3.76042ZM5 2.75C4.94667 2.75 4.89465 2.75017 4.84396 2.75052C4.79326 2.75087 4.74083 2.75035 4.68667 2.74896C4.54139 2.7566 4.39931 2.72049 4.26042 2.64062C4.12153 2.56076 4.03472 2.44618 4 2.29688C3.96528 2.14757 3.98611 2.01389 4.0625 1.89583C4.13889 1.77778 4.25267 1.71094 4.40385 1.69531C4.50962 1.6901 4.61059 1.68576 4.70677 1.68229C4.80295 1.67882 4.90069 1.67708 5 1.67708C5.97917 1.67708 6.88368 1.93056 7.71354 2.4375C8.5434 2.94444 9.17059 3.64625 9.5951 4.54292C9.62892 4.61847 9.65451 4.69451 9.67188 4.77104C9.68924 4.84757 9.69792 4.92389 9.69792 5C9.69792 5.07611 9.69097 5.15417 9.67708 5.23417C9.66319 5.31417 9.64236 5.39236 9.61458 5.46875C9.49826 5.68972 9.36504 5.89948 9.2149 6.09802C9.06469 6.29656 8.90278 6.49306 8.72917 6.6875C8.63194 6.79861 8.51042 6.85069 8.36458 6.84375C8.21875 6.83681 8.09375 6.78069 7.98958 6.67542C7.88542 6.57007 7.83681 6.44507 7.84375 6.30042C7.85069 6.15569 7.90278 6.02431 8 5.90625C8.13194 5.76736 8.25125 5.62153 8.35792 5.46875C8.46465 5.31597 8.5641 5.15972 8.65625 5C8.30208 4.30556 7.79861 3.75694 7.14583 3.35417C6.49306 2.95139 5.77778 2.75 5 2.75ZM5 8.32292C4.04861 8.32292 3.1684 8.07465 2.35938 7.57812C1.55035 7.0816 0.919896 6.40906 0.468021 5.56052C0.419896 5.46462 0.387153 5.37142 0.369792 5.28094C0.352431 5.19052 0.34375 5.09677 0.34375 4.99969C0.34375 4.90267 0.352431 4.80556 0.369792 4.70833C0.387153 4.61111 0.420139 4.51736 0.46875 4.42708C0.614583 4.13542 0.787361 3.86813 0.987083 3.62521C1.18688 3.38229 1.40646 3.15306 1.64583 2.9375L0.96875 2.27083C0.871528 2.18056 0.821181 2.07812 0.817708 1.96354C0.814236 1.84896 0.861111 1.74306 0.958333 1.64583C1.05556 1.54861 1.16319 1.5 1.28125 1.5C1.39931 1.5 1.50694 1.54861 1.60417 1.64583L8.19792 8.23958C8.29514 8.33681 8.34201 8.44271 8.33854 8.55729C8.33507 8.67188 8.28819 8.77431 8.19792 8.86458C8.10069 8.96181 7.99479 9.01042 7.88021 9.01042C7.76562 9.01042 7.65972 8.96181 7.5625 8.86458L6.70833 8.01042C6.43472 8.12153 6.15382 8.20139 5.86562 8.25C5.57743 8.29861 5.28889 8.32292 5 8.32292ZM2.41667 3.6875C2.20139 3.88194 2.00347 4.08507 1.82292 4.29688C1.64236 4.50868 1.48611 4.74306 1.35417 5C1.69444 5.70139 2.19271 6.25174 2.84896 6.65104C3.50521 7.05035 4.22222 7.25 5 7.25C5.14729 7.25 5.29347 7.24132 5.43854 7.22396C5.58368 7.2066 5.72569 7.18056 5.86458 7.14583L5.39583 6.67708C5.33333 6.70486 5.26736 6.72396 5.19792 6.73438C5.12847 6.74479 5.0625 6.75 5 6.75C4.51389 6.75 4.10069 6.57986 3.76042 6.23958C3.42014 5.89931 3.25 5.48611 3.25 5C3.25 4.9375 3.25694 4.87153 3.27083 4.80208C3.28472 4.73264 3.29514 4.66667 3.30208 4.60417L2.41667 3.6875Z" fill="white"></path></g></g></svg></div></div></div></div><div hidden="" class="imt-no-events " id="manga-button" style="position: relative; opacity: 0.7;"><div class="imt-manga-button btn-animate" style="transform: translateX(2px);"><div style="position: relative;"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none" style="vertical-align: middle;"><path d="M14.8853 4.92364C14.8853 4.92364 16.3905 10.4362 22.6668 4C22.6668 4 20.3381 10.8907 25.3364 10.0843C25.3364 10.0843 22.0563 15.6994 29 18.0599C29 18.0599 22.9934 19.306 21.1617 28C21.1617 28 17.7679 24.54 14.8853 27.3549C14.8853 27.3549 13.3233 23.5724 7.33097 26.27C7.33097 26.27 10.1141 20.6549 4.83179 21.0507C4.83179 21.0507 7.16057 18.8955 3 15.9047C3 15.9047 7.50137 16.1833 6.33697 11.7117C6.33697 11.7117 10.0005 12.3421 8.66576 6.82957C8.65156 6.81491 12.4855 9.80574 14.8853 4.92364Z" fill="#ED6D8F"></path><path d="M20.8599 13.7022C20.885 13.1361 20.9543 12.5713 20.9959 12.0052C21.0337 11.568 20.8107 11.2794 20.3876 11.18C20.0759 11.1013 19.7508 11.0867 19.433 11.137C19.1951 11.1945 18.9542 11.2396 18.7113 11.2721C18.2403 11.3028 17.9973 11.5275 17.9796 11.988C17.977 12.0833 17.9596 12.1777 17.928 12.268C17.3034 13.9102 16.6774 15.5499 16.0503 17.1873C16.0301 17.2401 16.0062 17.2904 15.9671 17.3776C15.7291 16.8975 15.4281 16.4898 15.2745 15.9986C14.8073 14.5152 14.3186 13.033 13.8312 11.5594C13.6826 11.1112 13.3489 10.9344 12.8754 11.0216C12.7889 11.0365 12.7008 11.0398 12.6134 11.0314C12.2241 10.9938 11.8311 11.0404 11.4623 11.1677C11.0946 11.2991 10.9498 11.557 11.0152 11.9254C11.0428 12.0371 11.0643 12.1503 11.0795 12.2643C11.1223 13.1902 11.1777 14.1087 11.2054 15.0321C11.257 16.7992 11.2117 18.5651 11.0858 20.3284C11.0644 20.6354 11.0304 20.9424 11.0228 21.2494C11.0115 21.6092 11.1613 21.7811 11.5266 21.8143C11.9976 21.8573 12.4711 21.8708 12.9421 21.9088C13.0309 21.9201 13.121 21.9003 13.1962 21.8528C13.2714 21.8053 13.3268 21.7334 13.3527 21.6497C13.3996 21.5394 13.4252 21.4216 13.4282 21.3022C13.4295 20.8258 13.4207 20.3493 13.4081 19.8741C13.393 19.3264 13.3917 18.7763 13.3438 18.231C13.2857 17.5839 13.266 16.934 13.2847 16.2847C13.2847 16.2466 13.291 16.2073 13.2985 16.1312C13.3338 16.2024 13.3514 16.2356 13.3665 16.2712C13.9017 17.5228 14.3617 18.8037 14.7443 20.1074C14.7928 20.2421 14.7928 20.3889 14.7443 20.5237C14.6322 20.8196 14.7141 21.037 14.9659 21.1377C15.4445 21.3268 15.9331 21.4926 16.4155 21.6731C16.4865 21.7033 16.566 21.7091 16.6408 21.6895C16.7157 21.6698 16.7815 21.6259 16.8273 21.565C16.9085 21.4643 16.9743 21.3526 17.0225 21.2335C17.0537 21.1374 17.0798 21.0399 17.1006 20.9412C17.3185 20.2425 17.5653 19.5499 17.7517 18.8438C17.9785 17.9723 18.2624 17.1158 18.6018 16.2798C18.6201 16.2439 18.6411 16.2094 18.6647 16.1766C18.6761 16.2319 18.6761 16.254 18.6761 16.2761C18.6345 17.59 18.5955 18.8978 18.5501 20.2056C18.5363 20.5949 18.491 20.9829 18.4809 21.3722C18.4721 21.705 18.6207 21.8708 18.9557 21.9002C19.4355 21.9432 19.9191 21.9592 20.4002 21.9973C20.4888 22.0079 20.5784 21.9875 20.653 21.9399C20.7277 21.8922 20.7827 21.8203 20.8082 21.7369C20.8531 21.6305 20.8766 21.5167 20.8775 21.4017C20.88 20.7668 20.8674 20.132 20.8674 19.4971C20.8662 19.2846 20.8687 19.0722 20.8523 18.8622C20.8158 18.3968 20.7264 17.9314 20.7339 17.4685C20.7515 16.2122 20.8044 14.9572 20.8599 13.7022Z" fill="white"></path></svg></div></div></div><div style="display: flex; align-items: center; flex-direction: row; gap: 8px;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" style="display: block; opacity: 0;"><g clip-path="url(#clip0_38845_9816)"><path d="M7 14C5.14348 14 3.36301 13.2625 2.05025 11.9497C0.737498 10.637 0 8.85652 0 7C0 5.14348 0.737498 3.36301 2.05025 2.05025C3.36301 0.737498 5.14348 0 7 0C8.85652 0 10.637 0.737498 11.9497 2.05025C13.2625 3.36301 14 5.14348 14 7C14 8.85652 13.2625 10.637 11.9497 11.9497C10.637 13.2625 8.85652 14 7 14Z" fill="#B1B1B1" fill-opacity="0.4"></path><path d="M6.11754 7.00052L4.18254 5.06452C4.06786 4.94725 4.00406 4.78948 4.00498 4.62546C4.00589 4.46144 4.07145 4.3044 4.18744 4.18841C4.30342 4.07243 4.46046 4.00687 4.62448 4.00595C4.7885 4.00503 4.94627 4.06884 5.06354 4.18352L6.99954 6.11852L8.93554 4.18352C8.99315 4.1246 9.06188 4.07771 9.13774 4.04554C9.2136 4.01337 9.29508 3.99656 9.37748 3.9961C9.45988 3.99564 9.54155 4.01153 9.61777 4.04285C9.69398 4.07417 9.76323 4.1203 9.82149 4.17857C9.87976 4.23683 9.92589 4.30608 9.95721 4.38229C9.98853 4.45851 10.0044 4.54018 10.004 4.62258C10.0035 4.70497 9.98669 4.78646 9.95452 4.86232C9.92235 4.93818 9.87545 5.00691 9.81654 5.06452L7.88154 7.00052L9.81654 8.93652C9.93122 9.05379 9.99502 9.21155 9.99411 9.37557C9.99319 9.5396 9.92763 9.69664 9.81164 9.81262C9.69566 9.9286 9.53862 9.99417 9.3746 9.99508C9.21058 9.996 9.05281 9.9322 8.93554 9.81752L6.99954 7.88252L5.06354 9.81752C5.00593 9.87643 4.93721 9.92333 4.86135 9.9555C4.78549 9.98767 4.704 10.0045 4.6216 10.0049C4.5392 10.0054 4.45753 9.9895 4.38131 9.95818C4.3051 9.92686 4.23585 9.88073 4.17759 9.82247C4.11932 9.7642 4.0732 9.69496 4.04188 9.61874C4.01056 9.54253 3.99467 9.46086 3.99513 9.37846C3.99559 9.29606 4.01239 9.21457 4.04456 9.13871C4.07673 9.06285 4.12363 8.99413 4.18254 8.93652L6.11754 7.00052Z" fill="white"></path></g><defs><clippath id="clip0_38845_9816"><rect width="14" height="14" fill="white"></rect></clippath></defs></svg><div style="position: relative;"><div class="imt-fb-btn right btn-animate  " dir="ltr" style="opacity: 0.7;"><div class=" " style="position: relative; pointer-events: all; display: inline-block;"><div><div class="imt-fb-btn-content"><svg class="imt-fb-logo-img imt-fb-logo-img-big-bg" width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M0 14C0 6.26801 6.26801 0 14 0C21.732 0 28 6.26801 28 14C28 21.732 21.732 28 14 28C6.26801 28 0 21.732 0 14Z" fill="#ED6D8F"></path><path d="M7.30921 15.6381C7.53044 15.6381 7.70979 15.8175 7.70979 16.0387V19.0088C7.70979 19.934 8.45993 20.684 9.38526 20.684H11.7557C11.9769 20.684 12.1562 20.8634 12.1562 21.0846V22.152C12.1562 22.3732 11.9769 22.5526 11.7557 22.5526H9.38526C7.42782 22.5526 5.84099 20.966 5.84099 19.0088V16.0387C5.84099 15.8175 6.02034 15.6381 6.24157 15.6381H7.30921ZM18.9876 12.6944C19.1515 12.6944 19.2989 12.7943 19.3597 12.9466L22.9711 22.0036C23.076 22.2667 22.8822 22.5526 22.599 22.5526H21.4672C21.3016 22.5526 21.153 22.4506 21.0934 22.2961L20.2724 20.1673C20.2128 20.0128 20.0643 19.9108 19.8986 19.9108H16.7508C16.5852 19.9108 16.4366 20.0128 16.377 20.1673L15.556 22.2961C15.4964 22.4506 15.3478 22.5526 15.1822 22.5526H14.0504C13.7672 22.5526 13.5734 22.2667 13.6783 22.0036L17.2897 12.9466C17.3505 12.7943 17.4979 12.6944 17.6618 12.6944H18.9876ZM18.5116 15.6017C18.4456 15.4308 18.2038 15.4308 18.1378 15.6017L17.3016 17.7699C17.251 17.9011 17.3478 18.0423 17.4885 18.0423H19.1609C19.3016 18.0423 19.3984 17.9012 19.3478 17.7699L18.5116 15.6017ZM9.69589 5.30028C9.79943 4.8999 10.368 4.89991 10.4715 5.30028L11.1086 7.76368C11.3244 8.59845 11.9396 9.27221 12.7513 9.56299L14.9019 10.3334C15.2559 10.4602 15.2559 10.9608 14.9019 11.0876L12.7513 11.8581C11.9396 12.1489 11.3244 12.8226 11.1086 13.6574L10.4715 16.1208C10.368 16.5212 9.79943 16.5212 9.69589 16.1208L9.05884 13.6574C8.84297 12.8226 8.22786 12.1489 7.41615 11.8581L5.26548 11.0876C4.91151 10.9608 4.91151 10.4602 5.26548 10.3334L7.41615 9.56299C8.22786 9.27221 8.84297 8.59844 9.05884 7.76368L9.69589 5.30028ZM18.0064 6.20485C19.9639 6.20485 21.5507 7.79145 21.5507 9.74861V11.281C21.5507 11.5022 21.3713 11.6816 21.1501 11.6816H20.0825C19.8612 11.6816 19.6819 11.5022 19.6819 11.281V9.74861C19.6819 8.82341 18.9318 8.07338 18.0064 8.07338H14.4343C14.2131 8.07338 14.0337 7.89403 14.0337 7.6728V6.60543C14.0337 6.3842 14.2131 6.20486 14.4343 6.20485H18.0064Z" fill="white"></path></svg></div></div></div></div><div title="关闭悬浮球" class="imt-fb-close-button" style="opacity: 0; pointer-events: none;"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none"><g clip-path="url(#clip0_38845_9816)"><path d="M7 14C5.14348 14 3.36301 13.2625 2.05025 11.9497C0.737498 10.637 0 8.85652 0 7C0 5.14348 0.737498 3.36301 2.05025 2.05025C3.36301 0.737498 5.14348 0 7 0C8.85652 0 10.637 0.737498 11.9497 2.05025C13.2625 3.36301 14 5.14348 14 7C14 8.85652 13.2625 10.637 11.9497 11.9497C10.637 13.2625 8.85652 14 7 14Z" fill="#B1B1B1" fill-opacity="0.4"></path><path d="M6.11754 7.00052L4.18254 5.06452C4.06786 4.94725 4.00406 4.78948 4.00498 4.62546C4.00589 4.46144 4.07145 4.3044 4.18744 4.18841C4.30342 4.07243 4.46046 4.00687 4.62448 4.00595C4.7885 4.00503 4.94627 4.06884 5.06354 4.18352L6.99954 6.11852L8.93554 4.18352C8.99315 4.1246 9.06188 4.07771 9.13774 4.04554C9.2136 4.01337 9.29508 3.99656 9.37748 3.9961C9.45988 3.99564 9.54155 4.01153 9.61777 4.04285C9.69398 4.07417 9.76323 4.1203 9.82149 4.17857C9.87976 4.23683 9.92589 4.30608 9.95721 4.38229C9.98853 4.45851 10.0044 4.54018 10.004 4.62258C10.0035 4.70497 9.98669 4.78646 9.95452 4.86232C9.92235 4.93818 9.87545 5.00691 9.81654 5.06452L7.88154 7.00052L9.81654 8.93652C9.93122 9.05379 9.99502 9.21155 9.99411 9.37557C9.99319 9.5396 9.92763 9.69664 9.81164 9.81262C9.69566 9.9286 9.53862 9.99417 9.3746 9.99508C9.21058 9.996 9.05281 9.9322 8.93554 9.81752L6.99954 7.88252L5.06354 9.81752C5.00593 9.87643 4.93721 9.92333 4.86135 9.9555C4.78549 9.98767 4.704 10.0045 4.6216 10.0049C4.5392 10.0054 4.45753 9.9895 4.38131 9.95818C4.3051 9.92686 4.23585 9.88073 4.17759 9.82247C4.11932 9.7642 4.0732 9.69496 4.04188 9.61874C4.01056 9.54253 3.99467 9.46086 3.99513 9.37846C3.99559 9.29606 4.01239 9.21457 4.04456 9.13871C4.07673 9.06285 4.12363 8.99413 4.18254 8.93652L6.11754 7.00052Z" fill="white"></path></g><defs><clippath id="clip0_38845_9816"><rect width="14" height="14" fill="white"></rect></clippath></defs></svg></div></div><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14" fill="none" style="display: none; opacity: 0;"><g clip-path="url(#clip0_38845_9816)"><path d="M7 14C5.14348 14 3.36301 13.2625 2.05025 11.9497C0.737498 10.637 0 8.85652 0 7C0 5.14348 0.737498 3.36301 2.05025 2.05025C3.36301 0.737498 5.14348 0 7 0C8.85652 0 10.637 0.737498 11.9497 2.05025C13.2625 3.36301 14 5.14348 14 7C14 8.85652 13.2625 10.637 11.9497 11.9497C10.637 13.2625 8.85652 14 7 14Z" fill="#B1B1B1" fill-opacity="0.4"></path><path d="M6.11754 7.00052L4.18254 5.06452C4.06786 4.94725 4.00406 4.78948 4.00498 4.62546C4.00589 4.46144 4.07145 4.3044 4.18744 4.18841C4.30342 4.07243 4.46046 4.00687 4.62448 4.00595C4.7885 4.00503 4.94627 4.06884 5.06354 4.18352L6.99954 6.11852L8.93554 4.18352C8.99315 4.1246 9.06188 4.07771 9.13774 4.04554C9.2136 4.01337 9.29508 3.99656 9.37748 3.9961C9.45988 3.99564 9.54155 4.01153 9.61777 4.04285C9.69398 4.07417 9.76323 4.1203 9.82149 4.17857C9.87976 4.23683 9.92589 4.30608 9.95721 4.38229C9.98853 4.45851 10.0044 4.54018 10.004 4.62258C10.0035 4.70497 9.98669 4.78646 9.95452 4.86232C9.92235 4.93818 9.87545 5.00691 9.81654 5.06452L7.88154 7.00052L9.81654 8.93652C9.93122 9.05379 9.99502 9.21155 9.99411 9.37557C9.99319 9.5396 9.92763 9.69664 9.81164 9.81262C9.69566 9.9286 9.53862 9.99417 9.3746 9.99508C9.21058 9.996 9.05281 9.9322 8.93554 9.81752L6.99954 7.88252L5.06354 9.81752C5.00593 9.87643 4.93721 9.92333 4.86135 9.9555C4.78549 9.98767 4.704 10.0045 4.6216 10.0049C4.5392 10.0054 4.45753 9.9895 4.38131 9.95818C4.3051 9.92686 4.23585 9.88073 4.17759 9.82247C4.11932 9.7642 4.0732 9.69496 4.04188 9.61874C4.01056 9.54253 3.99467 9.46086 3.99513 9.37846C3.99559 9.29606 4.01239 9.21457 4.04456 9.13871C4.07673 9.06285 4.12363 8.99413 4.18254 8.93652L6.11754 7.00052Z" fill="white"></path></g><defs><clippath id="clip0_38845_9816"><rect width="14" height="14" fill="white"></rect></clippath></defs></svg></div><div class="btn-animate" style="margin-top: 10px; transform: translateX(60px);"><div class=" btn-animate" style="position: relative; pointer-events: all; display: inline-block;"><div><div class="imt-fb-round-button"><svg class="imt-fb-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" style="width: 24px; height: 24px;"><path d="M17 8.66797H11.375" stroke="#ED6D8F" stroke-linecap="round" stroke-linejoin="round"></path><path d="M12.625 15.332L7 15.332" stroke="#ED6D8F" stroke-linecap="round" stroke-linejoin="round"></path><path d="M15.125 17C16.1605 17 17 16.1605 17 15.125C17 14.0895 16.1605 13.25 15.125 13.25C14.0895 13.25 13.25 14.0895 13.25 15.125C13.25 16.1605 14.0895 17 15.125 17Z" stroke="#ED6D8F" stroke-linecap="round" stroke-linejoin="round"></path><path d="M8.875 10.75C9.91053 10.75 10.75 9.91053 10.75 8.875C10.75 7.83947 9.91053 7 8.875 7C7.83947 7 7 7.83947 7 8.875C7 9.91053 7.83947 10.75 8.875 10.75Z" stroke="#ED6D8F" stroke-linecap="round" stroke-linejoin="round"></path><rect x="3" y="4" width="18" height="16" rx="1.66667" stroke="#ED6D8F"></rect></svg></div></div></div></div><div class="btn-animate" style="margin-top: 10px; transform: translateX(60px);"><div class=" btn-animate" style="position: relative; pointer-events: all; display: inline-block;"><div><div class="imt-fb-round-button"><svg class="imt-fb-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"><mask id="mask0_39772_2885" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24" style="mask-type: alpha;"><rect width="24" height="24" fill="#D9D9D9"></rect></mask><g mask="url(#mask0_39772_2885)"><path d="M12 15.423C12.1808 15.423 12.3286 15.3657 12.4433 15.251C12.5581 15.1362 12.6155 14.9884 12.6155 14.8077C12.6155 14.6269 12.5581 14.4792 12.4433 14.3645C12.3286 14.2497 12.1808 14.1923 12 14.1923C11.8192 14.1923 11.6714 14.2497 11.5568 14.3645C11.4419 14.4792 11.3845 14.6269 11.3845 14.8077C11.3845 14.9884 11.4419 15.1362 11.5568 15.251C11.6714 15.3657 11.8192 15.423 12 15.423ZM12 12.4615C12.1423 12.4615 12.2612 12.4138 12.3567 12.3183C12.4522 12.2228 12.5 12.1038 12.5 11.9615V6.8845C12.5 6.74233 12.4522 6.6235 12.3567 6.528C12.2612 6.43233 12.1423 6.3845 12 6.3845C11.8577 6.3845 11.7388 6.43233 11.6433 6.528C11.5478 6.6235 11.5 6.74233 11.5 6.8845V11.9615C11.5 12.1038 11.5478 12.2228 11.6433 12.3183C11.7388 12.4138 11.8577 12.4615 12 12.4615ZM6.077 18L4.373 19.7038C4.1205 19.9564 3.8285 20.0145 3.497 19.878C3.16567 19.7413 3 19.4929 3 19.1328V5.6155C3 5.15517 3.15417 4.77083 3.4625 4.4625C3.77083 4.15417 4.15517 4 4.6155 4H19.3845C19.8448 4 20.2292 4.15417 20.5375 4.4625C20.8458 4.77083 21 5.15517 21 5.6155V16.3845C21 16.8448 20.8458 17.2292 20.5375 17.5375C20.2292 17.8458 19.8448 18 19.3845 18H6.077ZM5.65 17H19.3845C19.5385 17 19.6796 16.9359 19.8078 16.8077C19.9359 16.6796 20 16.5385 20 16.3845V5.6155C20 5.4615 19.9359 5.32042 19.8078 5.19225C19.6796 5.06408 19.5385 5 19.3845 5H4.6155C4.4615 5 4.32042 5.06408 4.19225 5.19225C4.06408 5.32042 4 5.4615 4 5.6155V18.6443L5.65 17Z" fill="#ED6D8F"></path></g></svg></div></div></div></div><div hidden="" id="immersive-translate-popup-overlay" class="immersive-translate-popup-overlay"><div class="immersive-translate-popup-wrapper" style="position: fixed; bottom: 30px; right: 65px;"></div></div></div></div></template></div></html>
