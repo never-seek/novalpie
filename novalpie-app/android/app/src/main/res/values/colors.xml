@@ -1,6 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 品牌色 -->
     <color name="colorPrimary">#ea4c89</color>
     <color name="colorPrimaryDark">#d43c7a</color>
     <color name="colorAccent">#f082ac</color>
+    
+    <!-- 状态栏和导航栏：深色背景 -->
+    <color name="statusBarColor">#000000</color>
+    <color name="navigationBarColor">#000000</color>
+    
+    <!-- 窗口背景：深色 -->
+    <color name="windowBackground">#000000</color>
+    
+    <!-- 启动画面背景：深色 -->
+    <color name="launchBackground">#000000</color>
 </resources>

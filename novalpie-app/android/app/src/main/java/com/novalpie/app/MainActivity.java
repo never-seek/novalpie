@@ -2,26 +2,25 @@ package com.novalpie.app;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
-import android.graphics.drawable.Drawable;
-import android.os.Build;
+import android.media.AudioManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.speech.tts.TextToSpeech;
 import android.util.Log;
 import android.view.Gravity;
-import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.WindowManager;
+import android.view.Window;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
 
-import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
@@ -31,27 +30,39 @@ import java.util.Locale;
 
 /**
  * NovalPie 主Activity
- * - 音量键拦截翻页（dispatchKeyEvent）
- * - 动态注入悬浮刷新按钮
- * - 手势检测隐藏/显示按钮
+ * - 音量键拦截翻页
+ * - 动态生成悬浮刷新按钮（Capacitor 不读 XML 布局）
  * - TTS 接口
  */
 public class MainActivity extends BridgeActivity {
 
     private static final String TAG = "NovalPie-Main";
-    private static final int FAB_MARGIN_DP = 24;
-    private static final int SCROLL_BUFFER_DP = 50;
 
     private WebView webView;
     private FloatingActionButton fabRefresh;
     private TextToSpeech tts;
     private boolean ttsInitialized = false;
-    private ViewGroup webViewParent;
+    private Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        // 彻底移除标题栏 - 必须在 super.onCreate 前调用
+        supportRequestWindowFeature(Window.FEATURE_NO_TITLE);
+        setTheme(R.style.AppTheme_NoActionBar);
+        
         super.onCreate(savedInstanceState);
+
+        // 双重保险：再次隐藏 ActionBar
+        try {
+            if (getSupportActionBar() != null) {
+                getSupportActionBar().hide();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "hide action bar failed", e);
+        }
+
         Log.d(TAG, "onCreate: 开始初始化");
+        getWindow().getDecorView().postDelayed(this::initializeNativeUI, 500);
     }
 
     /**
@@ -74,20 +85,13 @@ public class MainActivity extends BridgeActivity {
 
         Log.d(TAG, "成功获取 WebView，开始注入原生 UI");
 
-        // 获取 WebView 的父容器
-        webViewParent = (ViewGroup) webView.getParent();
-        if (webViewParent == null) {
-            Log.e(TAG, "WebView 没有父容器");
-            return;
-        }
-
         // 初始化 TTS
         initTTS();
 
         // 配置 WebView
         configureWebView();
 
-        // 动态创建并注入 FAB
+        // 核心修复：用 Java 代码动态生成 FAB，彻底无视无效的 XML 布局
         createFloatingActionButton();
 
         // 设置手势检测
@@ -95,6 +99,68 @@ public class MainActivity extends BridgeActivity {
 
         // 加载网页
         webView.loadUrl("https://novalpie.cc");
+    }
+
+    /**
+     * 核心：用 Java 代码动态生成悬浮刷新按钮
+     * 原因：Capacitor 根本不读取 activity_main.xml，必须用代码创建
+     */
+    private void createFloatingActionButton() {
+        try {
+            Log.d(TAG, "动态创建 FAB 刷新按钮...");
+            
+            fabRefresh = new FloatingActionButton(this);
+            
+            // 设置刷新图标（使用 ic_refresh.xml）
+            fabRefresh.setImageResource(R.drawable.ic_refresh);
+            
+            // 设为迷你尺寸
+            fabRefresh.setSize(FloatingActionButton.SIZE_MINI);
+            
+            // 设置背景色：15%透明度的蓝灰色 (#2678909C)
+            // ARGB: 38=15%透明度, 120=R, 144=G, 156=B
+            fabRefresh.setBackgroundTintList(ColorStateList.valueOf(Color.argb(38, 120, 144, 156)));
+            
+            // 设置图标颜色：60%透明度的蓝灰色 (#9978909C)
+            // ARGB: 153=60%透明度
+            fabRefresh.setImageTintList(ColorStateList.valueOf(Color.argb(153, 120, 144, 156)));
+            
+            // 拍扁去阴影
+            fabRefresh.setCompatElevation(0f);
+
+            // 设置按钮位置：右下角
+            FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+            );
+            params.gravity = Gravity.BOTTOM | Gravity.END;
+            // 距离右边 60px，底部 120px（可根据需要微调）
+            params.setMargins(0, 0, 60, 120);
+            fabRefresh.setLayoutParams(params);
+
+            // 绑定点击事件：刷新 WebView
+            fabRefresh.setOnClickListener(v -> {
+                Log.d(TAG, "FAB 点击: 刷新页面");
+                if (webView != null) {
+                    webView.reload();
+                }
+            });
+
+            // 强行添加到 WebView 的父容器中，保证绝对可见！
+            ViewGroup parent = (ViewGroup) webView.getParent();
+            if (parent instanceof FrameLayout) {
+                ((FrameLayout) parent).addView(fabRefresh);
+                Log.d(TAG, "FAB 已添加到视图层级");
+            } else {
+                // 如果父容器不是 FrameLayout，尝试强制添加
+                parent.addView(fabRefresh);
+                Log.d(TAG, "FAB 已添加到父容器: " + parent.getClass().getSimpleName());
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "创建 FAB 失败: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -173,24 +239,77 @@ public class MainActivity extends BridgeActivity {
                 super.onPageFinished(view, url);
                 Log.d(TAG, "页面加载完成: " + url);
                 
-                // 核心修复：注入 TTS Polyfill，欺骗前端它拥有 Web Speech API，并桥接到原生
+                // 注入 TTS Polyfill
                 String ttsPolyfill = "(function() {" +
+                    "window.currentUtterance = null;" +
+                    "window.onTtsStart = function() { " +
+                    "    if(window.currentUtterance && window.currentUtterance.onstart) " +
+                    "        window.currentUtterance.onstart({type: 'start', utterance: window.currentUtterance}); " +
+                    "};" +
+                    "window.onTtsEnd = function() { " +
+                    "    if(window.currentUtterance && window.currentUtterance.onend) " +
+                    "        window.currentUtterance.onend({type: 'end', utterance: window.currentUtterance}); " +
+                    "};" +
                     "window.speechSynthesis = {" +
-                    "    speak: function(utterance) {" +
-                    "        if(window.AndroidTTS) window.AndroidTTS.speak(utterance.text);" +
+                    "    speak: function(u) {" +
+                    "        window.currentUtterance = u;" +
+                    "        if(window.AndroidTTS) window.AndroidTTS.speak(u.text);" +
                     "    }," +
-                    "    cancel: function() {" +
-                    "        if(window.AndroidTTS) window.AndroidTTS.stop();" +
-                    "    }," +
+                    "    cancel: function() { if(window.AndroidTTS) window.AndroidTTS.stop(); }," +
                     "    pause: function() { if(window.AndroidTTS) window.AndroidTTS.stop(); }," +
                     "    resume: function() {}," +
-                    "    getVoices: function() { return []; }" +
+                    "    getVoices: function() { return [{name: 'Native Android', lang: 'zh-CN', default: true}]; }" +
                     "};" +
                     "window.SpeechSynthesisUtterance = function(text) { this.text = text; };" +
-                    "window.Android = window.AndroidTTS;" + 
                 "})();";
                 
                 executeScript(ttsPolyfill);
+                
+                // 极致安全的被动式自动提交脚本
+                // 核心原则：只监听状态，绝不派发 input 事件，绝不干涉输入法缓冲区
+                String safeAutoSubmit = "(function() {" +
+                    "console.log('[NovalPie] 注入被动式自动提交...');" +
+                    "" +
+                    "let typingTimer = null;" +
+                    "let isComposing = false;" +
+                    "" +
+                    // 仅仅记录状态，绝不派发任何事件打断输入法
+                    "document.addEventListener('compositionstart', function() {" +
+                    "    isComposing = true;" +
+                    "    console.log('[NovalPie] 拼写开始');" +
+                    "}, true);" +
+                    "" +
+                    "document.addEventListener('compositionend', function() {" +
+                    "    isComposing = false;" +
+                    "    console.log('[NovalPie] 拼写结束');" +
+                    "}, true);" +
+                    "" +
+                    "document.addEventListener('input', function(e) {" +
+                    "    if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') return;" +
+                    "    clearTimeout(typingTimer);" +
+                    "" +
+                    "    // 只有在不在打拼音的情况下，开启 1 秒倒计时" +
+                    "    if (!isComposing) {" +
+                    "        typingTimer = setTimeout(function() {" +
+                    "            // 1秒钟没敲键盘，帮用户偷偷按一下回车" +
+                    "            // 注意：只发 KeyboardEvent，绝对不发 input 事件！" +
+                    "            console.log('[NovalPie] 1秒停顿，静默触发回车');" +
+                    "            e.target.dispatchEvent(new KeyboardEvent('keydown', {" +
+                    "                key: 'Enter'," +
+                    "                code: 'Enter'," +
+                    "                keyCode: 13," +
+                    "                which: 13," +
+                    "                bubbles: true," +
+                    "                cancelable: true" +
+                    "            }));" +
+                    "        }, 1000);" + // 1000毫秒（1秒）缓冲，保证不吞字
+                    "    }" +
+                    "}, true);" +
+                    "" +
+                    "console.log('[NovalPie] 被动式自动提交已加载');" +
+                "})();";
+                
+                executeScript(safeAutoSubmit);
             }
         });
 
@@ -198,52 +317,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * 动态创建悬浮刷新按钮 (FAB)
-     */
-    private void createFloatingActionButton() {
-        // 创建 FAB
-        fabRefresh = new FloatingActionButton(this);
-
-        // 设置颜色 (粉色主题 #ea4c89)
-        fabRefresh.setBackgroundTintList(android.content.res.ColorStateList.valueOf(Color.parseColor("#ea4c89")));
-
-        // 设置图标
-        Drawable refreshIcon = ContextCompat.getDrawable(this, android.R.drawable.ic_popup_sync);
-        if (refreshIcon != null) {
-            fabRefresh.setImageDrawable(refreshIcon);
-        }
-
-        // 设置内容描述
-        fabRefresh.setContentDescription("刷新页面");
-
-        // 设置大小和边距
-        final int margin = dpToPx(FAB_MARGIN_DP);
-        
-        // 创建 FrameLayout.LayoutParams 以支持 gravity
-        FrameLayout.LayoutParams fabParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
-        );
-        fabParams.setMargins(margin, margin, margin, margin);
-        fabParams.gravity = Gravity.BOTTOM | Gravity.END;
-        fabRefresh.setLayoutParams(fabParams);
-
-        // 点击刷新
-        fabRefresh.setOnClickListener(v -> {
-            Log.d(TAG, "FAB 点击: 刷新页面");
-            if (webView != null) {
-                webView.reload();
-            }
-        });
-
-        // 添加到 WebView 的父容器
-        webViewParent.addView(fabRefresh);
-
-        Log.d(TAG, "FAB 创建并添加到父容器");
-    }
-
-    /**
-     * 设置手势检测器
+     * 设置手势检测器（上下滑动隐藏/显示 FAB）
      */
     private void setupGestureDetector() {
         if (webView == null || fabRefresh == null) return;
@@ -252,49 +326,29 @@ public class MainActivity extends BridgeActivity {
                 new android.view.GestureDetector.SimpleOnGestureListener() {
 
             private static final int SWIPE_THRESHOLD = 20;
-            private static final int DOUBLE_TAP_TIMEOUT = 300;
-
-            private long lastDoubleTapTime = 0;
 
             @Override
             public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
-                // distanceY > 0: 手指向上移动，页面向下滚动 -> 隐藏按钮
-                // distanceY < 0: 手指向下移动，页面向上滚动 -> 显示按钮
-
                 if (distanceY > SWIPE_THRESHOLD && fabRefresh.isShown()) {
-                    Log.d(TAG, "手势: 上滑 -> 隐藏 FAB");
                     fabRefresh.hide();
                 } else if (distanceY < -SWIPE_THRESHOLD && !fabRefresh.isShown()) {
-                    Log.d(TAG, "手势: 下滑 -> 显示 FAB");
                     fabRefresh.show();
                 }
-
-                return false; // 返回 false 不拦截事件，让 WebView 继续处理
-            }
-
-            @Override
-            public boolean onDoubleTap(MotionEvent e) {
-                long currentTime = System.currentTimeMillis();
-                if (currentTime - lastDoubleTapTime < DOUBLE_TAP_TIMEOUT * 2) {
-                    Log.d(TAG, "手势: 双击 -> 显示 FAB");
-                    if (!fabRefresh.isShown()) {
-                        fabRefresh.show();
-                    }
-                }
-                lastDoubleTapTime = currentTime;
                 return false;
             }
 
             @Override
-            public boolean onFling(MotionEvent e1, MotionEvent e2, float velocityX, float velocityY) {
-                return false; // 不拦截快速滑动
+            public boolean onDoubleTap(MotionEvent e) {
+                if (!fabRefresh.isShown()) {
+                    fabRefresh.show();
+                }
+                return false;
             }
         });
 
-        // 设置触摸监听器
         webView.setOnTouchListener((v, event) -> {
             gestureDetector.onTouchEvent(event);
-            return false; // 必须返回 false，不拦截事件
+            return false;
         });
 
         Log.d(TAG, "手势检测器设置完成");
@@ -304,38 +358,39 @@ public class MainActivity extends BridgeActivity {
      * 初始化 TTS
      */
     private void initTTS() {
-        tts = new TextToSpeech(this, status -> {
+        Log.d(TAG, "开始连接系统 TTS 引擎...");
+        
+        tts = new TextToSpeech(getApplicationContext(), status -> {
             if (status == TextToSpeech.SUCCESS) {
-                int result = tts.setLanguage(Locale.CHINESE);
-                if (result == TextToSpeech.LANG_MISSING_DATA ||
-                    result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    Log.w(TAG, "中文不支持，使用英文");
-                    tts.setLanguage(Locale.US);
+                String engineName = tts.getDefaultEngine();
+                Log.d(TAG, "引擎实例连接成功: " + engineName);
+                
+                int langResult = tts.setLanguage(Locale.CHINA);
+                
+                if (langResult >= TextToSpeech.LANG_AVAILABLE || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    ttsInitialized = true;
+                    tts.setSpeechRate(1.0f);
+                    tts.setPitch(1.0f);
                 }
-                tts.setSpeechRate(1.0f);
-                ttsInitialized = true;
-                Log.d(TAG, "TTS 初始化成功");
-            } else {
-                Log.e(TAG, "TTS 初始化失败");
-            }
-        });
 
-        tts.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
-            @Override
-            public void onStart(String utteranceId) {
-                Log.d(TAG, "TTS 开始朗读");
+                tts.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
+                    @Override 
+                    public void onStart(String utteranceId) {
+                        mainHandler.post(() -> executeScript("if(window.onTtsStart) window.onTtsStart();"));
+                    }
+                    
+                    @Override 
+                    public void onDone(String utteranceId) {
+                        mainHandler.post(() -> executeScript("if(window.onTtsEnd) window.onTtsEnd();"));
+                    }
+                    
+                    @Override 
+                    public void onError(String utteranceId) {
+                        mainHandler.post(() -> executeScript("if(window.onTtsEnd) window.onTtsEnd();"));
+                    }
+                });
             }
-
-            @Override
-            public void onDone(String utteranceId) {
-                Log.d(TAG, "TTS 朗读完成");
-            }
-
-            @Override
-            public void onError(String utteranceId) {
-                Log.e(TAG, "TTS 朗读错误");
-            }
-        });
+        }, null);
     }
 
     /**
@@ -344,25 +399,30 @@ public class MainActivity extends BridgeActivity {
     public class WebAppInterface {
         @JavascriptInterface
         public void speak(String text) {
-            Log.d(TAG, "TTS speak: " + (text != null ? text.substring(0, Math.min(30, text.length())) : "null"));
-            if (ttsInitialized && text != null && !text.isEmpty() && tts != null) {
-                // QUEUE_FLUSH 会打断当前语音立即播放新的
-                tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "novalpie_tts");
+            if (text == null || text.isEmpty() || text.trim().length() <= 1) {
+                mainHandler.post(() -> executeScript("if(window.onTtsEnd) window.onTtsEnd();"));
+                return;
             }
-        }
-        
-        @JavascriptInterface
-        public void stop() {
-            Log.d(TAG, "TTS stop");
+            
             if (tts != null) {
-                tts.stop();
+                try {
+                    AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+                    am.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
+                } catch (Exception e) {
+                    Log.e(TAG, "音频焦点请求异常: " + e.getMessage());
+                }
+                
+                Bundle params = new Bundle();
+                params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC);
+                
+                tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, "novalpie_tts");
             }
         }
 
         @JavascriptInterface
-        public void setRate(float rate) {
+        public void stop() {
             if (tts != null) {
-                tts.setSpeechRate(rate);
+                tts.stop();
             }
         }
     }
@@ -383,11 +443,10 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * 音量键抬起拦截 - 彻底防止系统音量框弹出
+     * 音量键抬起拦截
      */
     @Override
     public boolean onKeyUp(int keyCode, android.view.KeyEvent event) {
-        // 拦截抬起事件，彻底防止系统音量框弹出
         if (keyCode == android.view.KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP) {
             return true; 
         }
@@ -395,14 +454,13 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
-     * 页面滚动 - 精准定位 NovalPie 阅读器滚动容器
+     * 页面滚动
      */
     private void scrollPage(String direction) {
         if (webView == null) return;
         String script = "(function() {" +
             "var offset = window.innerHeight - 50;" +
             "if ('up' === '" + direction + "') offset = -offset;" +
-            // 核心修复：定向寻找 Novalpie 阅读器的真实滚动容器
             "var reader = document.querySelector('.reader-main-scroll');" +
             "if (reader) {" +
             "    reader.scrollBy({top: offset, behavior: 'smooth'});" +
@@ -410,15 +468,13 @@ public class MainActivity extends BridgeActivity {
             "    window.scrollBy({top: offset, behavior: 'smooth'});" +
             "}" +
             "})();";
-            
-        executeScript(script); // 调用现有的 executeScript 方法
+        executeScript(script);
     }
 
     /**
-     * 执行 JavaScript - 强制在主线程执行，防止静默失败
+     * 执行 JavaScript
      */
     private void executeScript(String script) {
-        // 强制将 JS 注入推入主线程，防止静默失败
         runOnUiThread(() -> {
             if (webView != null) {
                 try {
@@ -430,33 +486,12 @@ public class MainActivity extends BridgeActivity {
         });
     }
 
-    /**
-     * dp 转 px
-     */
-    private int dpToPx(int dp) {
-        float density = getResources().getDisplayMetrics().density;
-        return Math.round(dp * density);
-    }
-
-    @Override
-    public void onResume() {
-        super.onResume();
-        // 延迟初始化，确保 Capacitor 完全准备好
-        if (webView == null) {
-            getWindow().getDecorView().postDelayed(this::initializeNativeUI, 500);
-        }
-    }
-
     @Override
     public void onDestroy() {
         super.onDestroy();
         if (tts != null) {
             tts.stop();
             tts.shutdown();
-        }
-        // 移除 FAB
-        if (fabRefresh != null && webViewParent != null) {
-            webViewParent.removeView(fabRefresh);
         }
     }
 }

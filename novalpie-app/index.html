@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#ea4c89">
+  <meta name="theme-color" content="#000000">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' https://novalpie.cc https://images.novelpia.com https://*.novelpia.com https://*.novalpie.cc http://* https://*; img-src 'self' data: https: blob:; connect-src 'self' https://novalpie.cc https://*.novalpie.cc https://images.novelpia.com https://*.novelpia.com http://* https://*; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://novalpie.cc https://*.novalpie.cc blob:;">
   <title>NovalPie - 小说阅读</title>
   <style>
@@ -13,57 +13,56 @@
       --primary-color: #ea4c89;
       --primary-hover: #f082ac;
       --toolbar-height: 50px;
-      --safe-area-bottom: env(safe-area-inset-bottom);
+      --safe-area-bottom: env(safe-area-inset-bottom, 0px);
     }
-    
+
     * {
       margin: 0;
       padding: 0;
       box-sizing: border-box;
       -webkit-tap-highlight-color: transparent;
     }
-    
+
     html, body {
       width: 100%;
       height: 100%;
       overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-      background-color: white;
+      background-color: #000000;
       overscroll-behavior: none;
       -webkit-overflow-scrolling: touch;
     }
-    
+
     #app {
       width: 100%;
       height: 100%;
       display: flex;
       flex-direction: column;
     }
-    
-    /* WebView 容器 */
+
     #webview-container {
       flex: 1;
       position: relative;
       overflow: hidden;
+      background-color: #000000;
     }
-    
+
     #webview-frame {
       width: 100%;
       height: 100%;
       border: none;
-      background-color: white;
+      background-color: #000000;
       -webkit-text-size-adjust: 100%;
       text-size-adjust: 100%;
     }
-    
-    /* 加载状态 */
+
     #loading-overlay {
       position: absolute;
       top: 0;
       left: 0;
       right: 0;
       bottom: 0;
-      background: white;
+      background: #000000;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -71,12 +70,12 @@
       z-index: 100;
       transition: opacity 0.3s ease;
     }
-    
+
     #loading-overlay.hidden {
       opacity: 0;
       pointer-events: none;
     }
-    
+
     #loading-overlay .logo {
       width: 80px;
       height: 80px;
@@ -90,15 +89,15 @@
       font-weight: bold;
       margin-bottom: 20px;
     }
-    
+
     #loading-overlay .loading-bar {
       width: 200px;
       height: 4px;
-      background: #f0f0f0;
+      background: #333;
       border-radius: 2px;
       overflow: hidden;
     }
-    
+
     #loading-overlay .loading-bar-fill {
       width: 30%;
       height: 100%;
@@ -106,14 +105,13 @@
       border-radius: 2px;
       animation: loading 1.5s ease-in-out infinite;
     }
-    
+
     @keyframes loading {
       0% { width: 0%; margin-left: 0%; }
       50% { width: 50%; margin-left: 25%; }
       100% { width: 0%; margin-left: 100%; }
     }
-    
-    /* 浮动刷新按钮 */
+
     #floating-refresh {
       position: fixed;
       top: 20px;
@@ -130,33 +128,32 @@
       transition: transform 0.3s ease, opacity 0.3s ease;
       cursor: pointer;
     }
-    
+
     #floating-refresh.hidden {
       transform: scale(0.5);
       opacity: 0;
       pointer-events: none;
     }
-    
+
     #floating-refresh:active {
       transform: scale(0.9);
     }
-    
+
     #floating-refresh svg {
       width: 24px;
       height: 24px;
       color: white;
     }
-    
+
     #floating-refresh.refreshing svg {
       animation: spin 1s linear infinite;
     }
-    
+
     @keyframes spin {
       from { transform: rotate(0deg); }
       to { transform: rotate(360deg); }
     }
-    
-    /* 双击检测区域提示 */
+
     #double-tap-hint {
       position: fixed;
       top: 50%;
@@ -173,12 +170,11 @@
       transition: opacity 0.3s ease;
       text-align: center;
     }
-    
+
     #double-tap-hint.show {
       opacity: 1;
     }
-    
-    /* 错误提示 */
+
     #error-toast {
       position: fixed;
       top: 50%;
@@ -196,12 +192,11 @@
       max-width: 80%;
       text-align: center;
     }
-    
+
     #error-toast.show {
       opacity: 1;
     }
-    
-    /* TTS 状态提示 */
+
     #tts-indicator {
       position: fixed;
       top: 20px;
@@ -219,11 +214,11 @@
       align-items: center;
       gap: 8px;
     }
-    
+
     #tts-indicator.show {
       opacity: 1;
     }
-    
+
     #tts-indicator .dot {
       width: 8px;
       height: 8px;
@@ -231,7 +226,7 @@
       border-radius: 50%;
       animation: tts-pulse 1s ease-in-out infinite;
     }
-    
+
     @keyframes tts-pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.3; }
@@ -240,11 +235,9 @@
 </head>
 <body>
   <div id="app">
-    <!-- WebView 容器 -->
     <div id="webview-container">
       <iframe id="webview-frame" src="https://novalpie.cc" allow="geolocation; microphone; camera"></iframe>
-      
-      <!-- 加载状态 -->
+
       <div id="loading-overlay">
         <div class="logo">N</div>
         <div class="loading-bar">
@@ -252,27 +245,22 @@
         </div>
       </div>
     </div>
-    
-    <!-- 浮动刷新按钮 -->
+
     <div id="floating-refresh" title="刷新页面">
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
       </svg>
     </div>
-    
-    <!-- TTS 状态指示器 -->
+
     <div id="tts-indicator">
       <div class="dot"></div>
       <span>听书中</span>
     </div>
-    
-    <!-- 双击提示 -->
+
     <div id="double-tap-hint">双击任意位置显示刷新按钮</div>
-    
-    <!-- 错误提示 -->
     <div id="error-toast"></div>
   </div>
-  
+
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

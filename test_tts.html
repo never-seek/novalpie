@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NovalPie TTS 测试页面</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #ea4c89;
+            margin-bottom: 30px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 5px;
+        }
+        .test-section h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        button {
+            background: #ea4c89;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #d43d6e;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        textarea {
+            width: 100%;
+            height: 100px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            margin: 10px 0;
+            box-sizing: border-box;
+        }
+        .log {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        .log-entry {
+            margin: 5px 0;
+        }
+        .log-time {
+            color: #888;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎧 NovalPie TTS 测试页面</h1>
+        
+        <div id="status" class="status info"></div>
+        
+        <div class="test-section">
+            <h3>1️⃣ 检测环境</h3>
+            <button onclick="checkEnvironment()">检查 TTS 环境</button>
+            <button onclick="listEngines()">列出可用引擎</button>
+            <div id="envInfo" style="margin-top: 10px;"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>2️⃣ 测试 TTS 播放</h3>
+            <textarea id="testText" placeholder="输入要朗读的文本...">你好，这是 NovalPie 听书功能的测试语音。如果你听到这段话，说明 TTS 已经成功连接到你的手机语音引擎。</textarea>
+            <br>
+            <button onclick="testSpeak()">▶️ 开始朗读</button>
+            <button onclick="testStop()">⏹️ 停止朗读</button>
+            <div id="speakStatus" style="margin-top: 10px;"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>3️⃣ 监听回调</h3>
+            <button onclick="testCallbacks()">测试回调机制</button>
+            <p style="color: #666; font-size: 13px;">测试 onstart 和 onend 回调是否正常触发</p>
+        </div>
+        
+        <div class="test-section">
+            <h3>📝 实时日志</h3>
+            <div class="log" id="logContainer">
+                <div class="log-entry"><span class="log-time">[初始化]</span> 页面加载完成</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 日志函数
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="log-time">[${time}]</span> ${message}`;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        // 检查环境
+        function checkEnvironment() {
+            log('开始检查 TTS 环境...');
+            const statusDiv = document.getElementById('status');
+            const envInfo = document.getElementById('envInfo');
+            
+            let html = '<ul>';
+            
+            // 检查 speechSynthesis
+            if (window.speechSynthesis) {
+                html += '<li>✅ speechSynthesis API 可用</li>';
+                log('speechSynthesis API 可用', 'success');
+            } else {
+                html += '<li>❌ speechSynthesis API 不可用</li>';
+                log('speechSynthesis API 不可用', 'error');
+            }
+            
+            // 检查 AndroidTTS
+            if (window.AndroidTTS) {
+                html += '<li>✅ AndroidTTS 接口可用</li>';
+                log('AndroidTTS 接口可用', 'success');
+            } else {
+                html += '<li>❌ AndroidTTS 接口不可用（非 Android 环境）</li>';
+                log('AndroidTTS 接口不可用', 'error');
+            }
+            
+            // 检查回调函数
+            if (window.onTtsStart && window.onTtsEnd) {
+                html += '<li>✅ TTS 回调函数已注入</li>';
+                log('TTS 回调函数已注入', 'success');
+            } else {
+                html += '<li>❌ TTS 回调函数未注入</li>';
+                log('TTS 回调函数未注入', 'error');
+            }
+            
+            // 检查 SpeechSynthesisUtterance
+            if (window.SpeechSynthesisUtterance) {
+                html += '<li>✅ SpeechSynthesisUtterance 构造函数可用</li>';
+                log('SpeechSynthesisUtterance 可用', 'success');
+            } else {
+                html += '<li>❌ SpeechSynthesisUtterance 不可用</li>';
+                log('SpeechSynthesisUtterance 不可用', 'error');
+            }
+            
+            html += '</ul>';
+            envInfo.innerHTML = html;
+        }
+
+        // 列出可用引擎
+        function listEngines() {
+            log('查询可用引擎...');
+            const envInfo = document.getElementById('envInfo');
+            
+            if (window.AndroidTTS && window.AndroidTTS.getEngines) {
+                try {
+                    const engines = JSON.parse(window.AndroidTTS.getEngines());
+                    log(`找到 ${engines.length} 个引擎`, 'info');
+                    
+                    let html = '<h4>可用引擎列表：</h4><ul>';
+                    engines.forEach((engine, index) => {
+                        html += `<li>${index + 1}. <strong>${engine.label}</strong> (${engine.name})</li>`;
+                        log(`引擎 ${index + 1}: ${engine.label} (${engine.name})`);
+                    });
+                    html += '</ul>';
+                    envInfo.innerHTML += html;
+                } catch (e) {
+                    log('解析引擎列表失败: ' + e.message, 'error');
+                }
+            } else {
+                log('AndroidTTS.getEngines 方法不可用', 'error');
+                envInfo.innerHTML += '<p style="color: red;">无法获取引擎列表（可能不在 Android 环境）</p>';
+            }
+        }
+
+        // 测试朗读
+        function testSpeak() {
+            const text = document.getElementById('testText').value;
+            if (!text) {
+                log('请输入要朗读的文本', 'error');
+                return;
+            }
+            
+            log('开始朗读: ' + text.substring(0, 30) + '...');
+            const speakStatus = document.getElementById('speakStatus');
+            speakStatus.innerHTML = '<span style="color: #ea4c89;">🔊 正在朗读...</span>';
+            
+            try {
+                const utterance = new SpeechSynthesisUtterance(text);
+                
+                utterance.onstart = function() {
+                    log('✅ onstart 回调触发', 'success');
+                    speakStatus.innerHTML = '<span style="color: green;">✅ 正在朗读中...</span>';
+                };
+                
+                utterance.onend = function() {
+                    log('✅ onend 回调触发', 'success');
+                    speakStatus.innerHTML = '<span style="color: blue;">✅ 朗读完成</span>';
+                };
+                
+                utterance.onerror = function(e) {
+                    log('❌ 朗读错误: ' + JSON.stringify(e), 'error');
+                    speakStatus.innerHTML = '<span style="color: red;">❌ 朗读失败</span>';
+                };
+                
+                window.speechSynthesis.speak(utterance);
+            } catch (e) {
+                log('朗读异常: ' + e.message, 'error');
+                speakStatus.innerHTML = '<span style="color: red;">❌ 错误: ' + e.message + '</span>';
+            }
+        }
+
+        // 停止朗读
+        function testStop() {
+            log('停止朗读');
+            window.speechSynthesis.cancel();
+            document.getElementById('speakStatus').innerHTML = '<span>已停止</span>';
+        }
+
+        // 测试回调
+        function testCallbacks() {
+            log('开始测试回调机制...');
+            
+            // 保存原始回调
+            const originalOnStart = window.onTtsStart;
+            const originalOnEnd = window.onTtsEnd;
+            
+            let startCalled = false;
+            let endCalled = false;
+            
+            // 设置测试回调
+            window.onTtsStart = function() {
+                startCalled = true;
+                log('🎉 window.onTtsStart 被调用！', 'success');
+                if (originalOnStart) originalOnStart();
+            };
+            
+            window.onTtsEnd = function() {
+                endCalled = true;
+                log('🎉 window.onTtsEnd 被调用！', 'success');
+                if (originalOnEnd) originalOnEnd();
+                
+                // 恢复原始回调
+                window.onTtsStart = originalOnStart;
+                window.onTtsEnd = originalOnEnd;
+                
+                // 显示结果
+                const statusDiv = document.getElementById('status');
+                if (startCalled && endCalled) {
+                    statusDiv.className = 'status success';
+                    statusDiv.textContent = '✅ 回调机制测试通过！onTtsStart 和 onTtsEnd 都正常触发';
+                } else {
+                    statusDiv.className = 'status error';
+                    statusDiv.textContent = `❌ 回调机制异常 - onTtsStart: ${startCalled ? '✅' : '❌'}, onTtsEnd: ${endCalled ? '✅' : '❌'}`;
+                }
+            };
+            
+            // 执行测试朗读
+            const utterance = new SpeechSynthesisUtterance('测试回调');
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // 页面加载完成后自动检查
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                checkEnvironment();
+            }, 500);
+        });
+    </script>
+</body>
+</html>

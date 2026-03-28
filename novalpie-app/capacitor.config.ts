@@ -12,18 +12,21 @@ const config: CapacitorConfig = {
   plugins: {
     SplashScreen: {
       launchShowDuration: 2000,
-      backgroundColor: "#ea4c89",
+      backgroundColor: '#000000',
       showSpinner: false,
-      androidScaleType: "CENTER_CROP",
+      androidScaleType: 'CENTER_CROP',
       splashFullScreen: false,
       splashImmersive: false
+    },
+    StatusBar: {
+      overlaysWebView: false
     }
   },
   android: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#000000',
     allowMixedContent: true,
-    captureInput: true,
-    webContentsDebuggingEnabled: true  // 允许调试以便排查问题
+    captureInput: false,
+    webContentsDebuggingEnabled: true
   }
 };
 
