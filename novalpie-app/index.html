@@ -45,6 +45,11 @@
       position: relative;
       overflow: hidden;
       background-color: #000000;
+      /* 刘海屏和底部手势条的安全区域适配 */
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
     }
 
     #webview-frame {
