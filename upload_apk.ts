@@ -1,7 +1,14 @@
 import { S3Storage } from "coze-coding-dev-sdk";
-import * as fs from "fs";
+import { readFileSync } from "fs";
 
-async function uploadApk() {
+async function main() {
+  const apkPath = "/workspace/projects/novelapp/novalpie-app/android/app/build/outputs/apk/debug/app-debug.apk";
+  
+  // 读取 APK 文件
+  const fileContent = readFileSync(apkPath);
+  console.log(`📦 APK 大小: ${(fileContent.length / 1024 / 1024).toFixed(2)} MB`);
+
+  // 初始化存储
   const storage = new S3Storage({
     endpointUrl: process.env.COZE_BUCKET_ENDPOINT_URL,
     accessKey: "",
@@ -10,26 +17,25 @@ async function uploadApk() {
     region: "cn-beijing",
   });
 
-  // 读取 APK 文件
-  const apkPath = "novalpie-app/app-debug.apk";
-  const fileContent = fs.readFileSync(apkPath);
-
   // 上传文件
+  console.log("📤 正在上传 APK...");
   const key = await storage.uploadFile({
     fileContent,
     fileName: "novalpie-app-debug.apk",
     contentType: "application/vnd.android.package-archive",
   });
+  console.log(`✅ 上传成功，key: ${key}`);
 
-  console.log("Upload successful! Key:", key);
-
-  // 生成下载链接（有效期 7 天）
+  // 生成签名 URL（7天有效期）
   const downloadUrl = await storage.generatePresignedUrl({
     key,
-    expireTime: 604800, // 7 天
+    expireTime: 7 * 24 * 60 * 60,
   });
 
-  console.log("Download URL:", downloadUrl);
+  console.log("\n========================================");
+  console.log("🎉 APK 下载链接（7天有效）：");
+  console.log(downloadUrl);
+  console.log("========================================\n");
 }
 
-uploadApk().catch(console.error);
+main().catch(console.error);
