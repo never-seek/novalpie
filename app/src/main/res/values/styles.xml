@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.NovalPie" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:statusBarColor">#FFF8F4</item>
+        <item name="android:navigationBarColor">#FFF8F4</item>
+        <item name="android:fontFamily">sans</item>
+    </style>
+</resources>
