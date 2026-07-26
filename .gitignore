@@ -25,3 +25,6 @@ qa-screenshots/
 
 # Backups produced during the refactor
 *.prebaseline
+
+# Kotlin compiler error logs
+.kotlin/
