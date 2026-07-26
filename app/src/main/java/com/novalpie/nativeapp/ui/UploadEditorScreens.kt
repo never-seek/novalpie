@@ -31,13 +31,13 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -238,7 +238,7 @@ private fun EditorHero(
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { EditorHeroButton("打开", Icons.Filled.FolderOpen, state.busy, onOpen) }
                 item { EditorHeroButton("生成 EPUB", Icons.Filled.Download, state.busy || state.chapters.isEmpty(), onExport) }
-                item { EditorHeroButton("发送到上传", Icons.Filled.Send, state.busy || state.chapters.isEmpty(), onSend) }
+                item { EditorHeroButton("发送到上传", Icons.AutoMirrored.Filled.Send, state.busy || state.chapters.isEmpty(), onSend) }
             }
         }
     }
@@ -391,7 +391,7 @@ private fun EditorSplitTab(
                         else -> Text("将识别对应 Markdown 标题并按出现顺序生成目录。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (state.splitMode == EditorSplitMode.Regex) {
-                        Divider()
+                        HorizontalDivider()
                         Text("AI 生成正则", fontWeight = FontWeight.SemiBold)
                         if (state.aiConfigs.isEmpty()) {
                             Text(

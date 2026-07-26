@@ -419,7 +419,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.workspaceQueueItems(
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(job.bookTitle, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis); WorkspaceStatusChip(job.status, job.status == "completed") }
                 Text("${job.translatorName} \u00b7 ${job.completedChapters}/${job.chapterCount} \u7ae0", style = MaterialTheme.typography.bodySmall)
-                if (job.chapterCount > 0) LinearProgressIndicator(progress = (job.completedChapters.toFloat() / job.chapterCount).coerceIn(0f, 1f), modifier = Modifier.fillMaxWidth())
+                if (job.chapterCount > 0) LinearProgressIndicator(progress = { (job.completedChapters.toFloat() / job.chapterCount).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (job.status == "paused") Button(onClick = { onUpdateStatus(job, "pending") }) { Icon(Icons.Filled.PlayArrow, null); Text("\u7ee7\u7eed") }
                     else if (job.status != "completed") OutlinedButton(onClick = { onUpdateStatus(job, "paused") }) { Icon(Icons.Filled.Pause, null); Text("\u6682\u505c") }

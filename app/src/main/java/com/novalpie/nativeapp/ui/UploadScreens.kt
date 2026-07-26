@@ -28,7 +28,7 @@ import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -349,7 +349,7 @@ private fun UploadChapterSection(chaptersState: LoadResult<List<UploadChapter>>)
                 is LoadResult.Error -> Text(chaptersState.message, color = MaterialTheme.colorScheme.error)
                 is LoadResult.Success -> {
                     chaptersState.value.take(16).forEachIndexed { index, chapter ->
-                        if (index > 0) Divider()
+                        if (index > 0) HorizontalDivider()
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("${chapter.chapterNumber}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                             Column(Modifier.weight(1f)) {

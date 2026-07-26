@@ -41,8 +41,11 @@ fun WebFallbackScreen(
                 setBackgroundColor(backgroundColor)
                 webViewClient = authSyncingWebViewClient(authToken, onAuthTokenCaptured)
                 settings.javaScriptEnabled = true
+                // domStorageEnabled is the one that matters: the auth_token this screen
+                // captures lives in localStorage. databaseEnabled gated the separate
+                // WebSQL API, which modern WebView has removed outright, so setting it
+                // was already a no-op.
                 settings.domStorageEnabled = true
-                settings.databaseEnabled = true
                 loadUrlAfterProxyReady(this, url, proxySettings, webStateKey, useEmulatorFallback)
             }
         },

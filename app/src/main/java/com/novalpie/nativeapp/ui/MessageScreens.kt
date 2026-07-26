@@ -30,7 +30,7 @@ import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -490,7 +490,7 @@ internal fun MessageConversationScreen(
             )
             Spacer(Modifier.width(8.dp))
             IconButton(onClick = onSend, enabled = state.draft.isNotBlank() && !state.sending) {
-                Icon(Icons.Filled.Send, contentDescription = "\u53d1\u9001")
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "\u53d1\u9001")
             }
         }
     }

@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = 'NovalPieNative'
-include ':app'
+rootProject.name = "NovalPieNative"
+include(":app")

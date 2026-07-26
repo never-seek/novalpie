@@ -58,17 +58,17 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Reply
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ThumbDown
 import androidx.compose.material.icons.filled.ThumbUp
@@ -137,7 +137,7 @@ fun NovalPieApp(startUri: String? = null, viewModel: NovalPieViewModel = viewMod
                     navigationIcon = {
                         if (route !is AppRoute.Forum && route !is AppRoute.Home && route !is AppRoute.Search && route !is AppRoute.Tools && route !is AppRoute.Profile) {
                             IconButton(onClick = { viewModel.goBack() }) {
-                                Icon(Icons.Filled.ArrowBack, contentDescription = "返回")
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
                             }
                         }
                     },
@@ -682,7 +682,7 @@ private fun ForumScreen(
         containerColor = MaterialTheme.colorScheme.primary,
         contentColor = MaterialTheme.colorScheme.onPrimary
     ) {
-        Icon(Icons.Filled.Reply, contentDescription = "发布帖子")
+        Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = "发布帖子")
     }
 }
 }
@@ -1198,7 +1198,7 @@ private fun ForumCommentRow(
                 ForumActionIcon(Icons.Filled.ThumbDown, "踩 ${comment.dislikeCount ?: 0}", onDislike)
                 ForumActionIcon(Icons.Filled.EmojiEmotions, "表情 ${comment.reactionCount ?: 0}", onEmoji)
                 ForumActionIcon(Icons.Filled.CardGiftcard, "打赏 ${comment.awardPoints ?: 0}", onAward)
-                ForumActionIcon(Icons.Filled.Reply, "回复", onReply)
+                ForumActionIcon(Icons.AutoMirrored.Filled.Reply, "回复", onReply)
             }
         }
     }
@@ -1605,7 +1605,7 @@ private fun DiscoverSearchPanel(
         )
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             discoverSelectedFilterSummaries(options).forEach { summary ->
                 LibraryStatPill(summary)
@@ -2174,7 +2174,7 @@ private fun ChapterCommentActionRow(
         item { ForumActionIcon(Icons.Filled.ThumbDown, "踩 ${comment.dislikeCount ?: 0}", onDislike) }
         item { ForumActionIcon(Icons.Filled.EmojiEmotions, "表情 ${comment.reactionCount ?: 0}", onEmoji) }
         item { ForumActionIcon(Icons.Filled.CardGiftcard, "打赏 ${comment.awardPoints ?: 0}", onAward) }
-        item { ForumActionIcon(Icons.Filled.Reply, "回复", onReply) }
+        item { ForumActionIcon(Icons.AutoMirrored.Filled.Reply, "回复", onReply) }
     }
 }
 
@@ -2420,7 +2420,7 @@ private fun toolEntryIcon(path: String): ImageVector = when (path) {
     "/messages" -> Icons.Filled.Forum
     "/workspace" -> Icons.Filled.GridView
     "/upload" -> Icons.Filled.OpenInBrowser
-    "/upload-editor" -> Icons.Filled.MenuBook
+    "/upload-editor" -> Icons.AutoMirrored.Filled.MenuBook
     "/political-exam" -> Icons.Filled.CardGiftcard
     else -> Icons.Filled.Tune
 }
@@ -2843,7 +2843,7 @@ private fun ContinueReadingCard(progress: ReaderProgress, onContinue: () -> Unit
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Icon(
-                Icons.Filled.MenuBook,
+                Icons.AutoMirrored.Filled.MenuBook,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.height(24.dp).width(24.dp)
@@ -2994,7 +2994,7 @@ internal fun NovelCardItem(book: NovelCard, onClick: () -> Unit) {
         if (preview.platformLabel != null || preview.tags.isNotEmpty()) {
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 preview.platformLabel?.let { platform -> NovelSourcePill(platform) }
                 preview.tags.forEach { tag -> NovelTagPill(tag) }
@@ -3108,7 +3108,7 @@ private fun BookDetailHero(
             if (facts.isNotEmpty()) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     facts.forEach { fact ->
                         BookDetailFactLabel(fact)
@@ -3118,7 +3118,7 @@ private fun BookDetailHero(
             if (book.tags.isNotEmpty()) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     book.tags.forEach { tag ->
                         NovelTagPill(tag)
@@ -3195,7 +3195,7 @@ private fun BookDetailActionRow(
     val webLabel = actions.last()
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (progress != null) {
             Button(onClick = { onOpenReader(progress.bookId, progress.chapterId) }) {

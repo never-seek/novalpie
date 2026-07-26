@@ -230,7 +230,7 @@ private fun PoliticalExamActive(
                         Text(formatPoliticalExamTime(state.remainingTimeSeconds), color = if (state.remainingTimeSeconds <= 300) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                     }
                     LinearProgressIndicator(
-                        progress = if (total == 0) 0f else answered.toFloat() / total,
+                        progress = { if (total == 0) 0f else answered.toFloat() / total },
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text("已作答 $answered / $total 题", style = MaterialTheme.typography.bodySmall)

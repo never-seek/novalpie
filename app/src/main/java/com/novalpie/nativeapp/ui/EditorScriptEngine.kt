@@ -175,7 +175,9 @@ internal class EditorScriptEngine(private val context: Context) {
                 javaScriptEnabled = true
                 javaScriptCanOpenWindowsAutomatically = false
                 domStorageEnabled = false
-                databaseEnabled = false
+                // databaseEnabled dropped: the WebSQL API it gated is deprecated and
+                // removed from modern WebView, and its default is already false, so the
+                // sandbox posture here is unchanged.
                 blockNetworkLoads = true
                 allowFileAccess = false
                 allowContentAccess = false
