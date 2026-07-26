@@ -101,8 +101,9 @@ Non-negotiable properties the refactor must preserve.
 
 ## 3a. Progress and a revised order
 
-**Status at 2026-07-26.** Phases 0-2 are done and committed. Part of Phase 7 was pulled forward,
-which is a deliberate change to the order below and the reason is worth recording.
+**Status at 2026-07-26.** Phases 0-3 are done and committed, along with the first three Phase 6
+slices, the README half of Phase 9, and the first tranche of Phase 7. Part of Phase 7 was pulled
+forward, which is a deliberate change to the order below and the reason is worth recording.
 
 | Commit | Phase | Verified |
 |---|---|---|
@@ -111,6 +112,16 @@ which is a deliberate change to the order below and the reason is worth recordin
 | `af1fd4e` | 1 - toolchain | 252 tests, release APK 11.03 -> 2.18 MB under R8 |
 | `de39ba4` | 2 - design system | 262 tests |
 | `799d39b` | 7a - error legibility, pagination | 274 tests |
+| `e813dae` | 3 - source readability | 1560 escapes decoded; golden master unchanged at 1228 |
+| `5a75511` | 6.1 - Collection screen | 274 tests; golden master +3, none lost |
+| `a1ae924` | 9 - README as an architecture document | docs only |
+| `572fea9` | 6.2 - Discover / search screen | 274 tests; golden master unchanged; release APK 2.22 MB |
+| `5632590` | 6.3 - Book detail screen | 274 tests; golden master unchanged at 1230; release APK 2.22 MB |
+
+**Phase 3 changed shape rather than being executed as written.** `e813dae` decoded the `\uXXXX`
+escapes instead of moving strings into `res/values/strings.xml`; the commit message carries the full
+argument, summarised in the Phase 3 section below. The readability goal that Phases 4-6 depend on is
+met either way.
 
 **Why 7 moved ahead of 3-6.** The original order put the architectural work first, on the grounds
 that readable, split code makes everything after it easier. That is true, but it front-loads all the
@@ -122,15 +133,15 @@ committed and tested, so if work stops the app is genuinely better rather than h
 
 **Remaining order, in the sequence to be worked:**
 
-1. **Phase 3, string externalisation.** Next. Mechanical, guarded by the golden master, and it makes
-   the two 4000-line files readable — which every later phase depends on.
-2. **Phase 6 partial: the high-traffic screens** (bookshelf, search, book detail, reader) onto the
-   design system. Visible improvement, and it exercises the components built in Phase 2 before the
-   rest of the app commits to them.
-3. **Phases 4 and 5, the data and presentation splits.** Deliberately after the screens above,
-   because those four screens will expose whether the component set is right; discovering that
-   during a 7500-line split would be worse.
-4. **Phase 6 remainder**, then **Phase 7 remainder**, then 8 and 9.
+1. **Phase 6.4, the reader** — the last of the four high-traffic screens, and the largest: the
+   reading surface itself plus the catalog panel, illustrations and chapter comments. Two pieces of
+   6.3 wait on it. `ReaderChapterCommentRow` is a byte-identical twin of `BookCommentRow`, so 6.4
+   should migrate it and then delete one of the two rather than keep both; and the reader still
+   renders its error state without a top bar (D11), which `NpErrorState` alone does not fix.
+2. **Phases 4 and 5, the data and presentation splits.** Deliberately after the four screens above,
+   because they will expose whether the component set is right; discovering that during a 7500-line
+   split would be worse.
+3. **Phase 6 remainder**, then **Phase 7 remainder**, then 8, then the rest of 9.
 
 **One finding deliberately deferred rather than patched.** Bug 2 — a mutation's success or failure
 message is destroyed by the reload fired immediately after it, across roughly 11 sites — is a symptom
@@ -197,13 +208,18 @@ The highest user-visible return in the plan; fixes D1, D2, D3, D8, D9, D10.
 **Exit:** tokens + components exist with previews and tests; theme test proves no unspecified
 colour role; icon renders on the launcher; screens still work (unmigrated, but now on a sane theme).
 
-### Phase 3 — String externalisation
-- Every user-visible literal → `res/values/strings.xml`, verbatim, `\uXXXX` decoded to readable
-  Chinese. Plural/format cases use proper resource syntax.
-- Presentation-helper tests keep asserting resolved strings, so the golden master stays live.
-- Fixes D13 and makes the 4063-line ViewModel and 3654-line screen file readable for Phases 4–6.
+### Phase 3 — String externalisation — *superseded, see `e813dae`*
+As planned: every user-visible literal → `res/values/strings.xml`, verbatim, `\uXXXX` decoded.
 
-**Exit:** no user-visible literal left in Kotlin; golden master unchanged; tests green.
+As executed: the escapes were decoded **in place** and the strings stayed in Kotlin. The app is
+deliberately zh-CN only — Phase 1 disabled the `MissingTranslation` lint for that reason — so the
+localisation the resource system exists to provide is not wanted, while ~40 pure presentation
+helpers pinned by ~30 fast unit tests would each have had to take a `Context` and move to
+Robolectric. The complaint was readability; the cause was the escapes, not their location. D13's
+readability half is fixed and its localisation half is declined on purpose.
+
+**Exit (met):** 1560 escapes decoded across 15 files, a strict 1:1 line swap; golden master
+unchanged; tests green.
 
 ### Phase 4 — Data layer
 - Split `NovalPieApi.kt` (3404) into:
@@ -289,10 +305,19 @@ back-stack defects, unvalidated numeric input. Each fix lands with a regression 
 Per phase: unit tests green · `assembleDebug` + `assembleRelease` · string golden master
 unchanged · inventory checklist advanced · commit.
 
-Build command on this machine:
+Build command on this machine. **Write the Gradle home with forward slashes.** The backslash form
+was what this file used to say, and it is a trap: unquoted in bash, `D:\NovalPie\.gradle-sandbox`
+loses its backslashes to the shell and becomes the drive-relative `D:NovalPie.gradle-sandbox`.
+Gradle does not complain — it silently builds a fresh 1.8 GB home at
+`native-android\NovalPie.gradle-sandbox`, so the build takes 29 minutes instead of 7 and the repo
+grows a large untracked directory. Forward slashes need no quoting and work in both shells:
 
 ```bash
-GRADLE_USER_HOME=D:\NovalPie\.gradle-sandbox ./gradlew --console=plain :app:testDebugUnitTest
+GRADLE_USER_HOME=D:/NovalPie/.gradle-sandbox ./gradlew --console=plain :app:testDebugUnitTest
+```
+
+```powershell
+$env:GRADLE_USER_HOME='D:/NovalPie/.gradle-sandbox'; .\gradlew.bat --console=plain :app:testDebugUnitTest
 ```
 
 Note: `--offline` stops working from Phase 1, since the upgraded dependencies are not in the
