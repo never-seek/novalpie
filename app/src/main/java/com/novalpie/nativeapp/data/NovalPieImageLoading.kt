@@ -19,7 +19,16 @@ internal fun buildNovalPieImageLoader(context: Context, proxySettings: ProxySett
         .crossfade(true)
         .build()
 
-internal fun novalPieImageOkHttpClient(proxySettings: ProxySettings): OkHttpClient {
+/**
+ * [emulatorRuntime] is a parameter rather than an internal call so that both routing paths can be
+ * tested deterministically. Reading ambient `Build` state made the emulator branch untestable: in a
+ * plain JUnit test the fields are unstubbed, so the value was whatever the environment happened to
+ * yield.
+ */
+internal fun novalPieImageOkHttpClient(
+    proxySettings: ProxySettings,
+    emulatorRuntime: Boolean = isEmulatorRuntime(),
+): OkHttpClient {
     val builder = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
@@ -32,11 +41,7 @@ internal fun novalPieImageOkHttpClient(proxySettings: ProxySettings): OkHttpClie
             chain.proceed(request)
         }
 
-    builder.proxySelector(
-        proxySettings.toProxySelector(
-            preferEmulatorProxy = shouldPreferEmulatorProxy()
-        )
-    )
+    builder.proxySelector(proxySettings.toProxySelector(emulatorRuntime = emulatorRuntime))
 
     return builder.build()
 }

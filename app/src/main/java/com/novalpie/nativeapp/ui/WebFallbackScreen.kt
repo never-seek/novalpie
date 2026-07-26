@@ -15,7 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.viewinterop.AndroidView
 import com.novalpie.nativeapp.data.ProxySettings
-import com.novalpie.nativeapp.data.shouldPreferEmulatorProxy
+import com.novalpie.nativeapp.data.isEmulatorRuntime
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executor
@@ -31,7 +31,7 @@ fun WebFallbackScreen(
     val proxyKey = proxySettings.summary()
     val webStateKey = "$proxyKey:${authToken.orEmpty()}"
     val backgroundColor = MaterialTheme.colorScheme.background.toArgb()
-    val useEmulatorFallback = shouldPreferEmulatorProxy()
+    val useEmulatorFallback = isEmulatorRuntime()
 
     AndroidView(
         modifier = Modifier.fillMaxSize(),
@@ -112,7 +112,11 @@ internal fun webViewProxyUrl(
         return "http://$host:${settings.port}"
     }
     if (!useEmulatorFallback) return null
-    return "http://${ProxySettings.DEFAULT_EMULATOR_PROXY_HOSTS.first()}:${ProxySettings.DEFAULT_PROXY_PORT}"
+    // WebView's proxy override takes a single rule, so unlike the OkHttp path it cannot fall
+    // through a route list. It names DEFAULT_PROXY_HOST explicitly rather than reading the first
+    // entry of DEFAULT_EMULATOR_PROXY_HOSTS, so that reordering that list -- which is ordered for
+    // OkHttp's benefit -- cannot silently change which proxy WebView uses.
+    return "http://${ProxySettings.DEFAULT_PROXY_HOST}:${ProxySettings.DEFAULT_PROXY_PORT}"
 }
 
 private fun authSyncingWebViewClient(

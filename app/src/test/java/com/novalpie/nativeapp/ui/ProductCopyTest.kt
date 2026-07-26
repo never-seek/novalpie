@@ -94,32 +94,20 @@ class ProductCopyTest {
     @Test
     fun forumHomeUsesForumClientFeedStructure() {
         assertEquals(listOf("全部", "书评", "章节", "动态"), forumFeedTabs())
-        assertEquals(6, forumFeedItems().size)
-        assert(forumFeedItems().any { it.pinned }) { "Forum feed should include pinned or highlighted topics." }
-        assert(forumFeedItems().any { it.featured }) { "Forum feed should include featured topics from the website model." }
-        forumFeedItems().forEach { item ->
-            listOf(item.category, item.title, item.bookTitle, item.authorName, item.lastActiveLabel).forEach(::assertCleanVisibleCopy)
-            assert(item.title.length <= 18) { "Forum feed title is too long: ${item.title}" }
-            assert(item.replyCount >= 0)
-            assertFalse(item.bookTitle.isBlank())
-            assertFalse(item.authorName.isBlank())
-            assertFalse(item.lastActiveLabel.isBlank())
-            assert(item.tags.isNotEmpty()) { "Forum feed item should carry scan-friendly tags." }
-            assert(item.tags.size <= 3) { "Forum feed tags should stay compact." }
-        }
     }
 
-    @Test
-    fun forumFeedCopyAvoidsUnsupportedReaderTooling() {
-        val forbidden = listOf("书源", "规则编辑", "爬取", "下载源", "净化", "fallback", "API")
-        forumFeedItems().forEach { item ->
-            listOf(item.category, item.title, item.bookTitle, item.authorName, item.lastActiveLabel)
-                .plus(item.tags)
-                .forEach { value ->
-                    forbidden.forEach { word -> assertFalse(value.contains(word, ignoreCase = true)) }
-                }
-        }
-    }
+    // Two tests were removed here, and it is worth recording why rather than leaving a gap.
+    //
+    // They asserted properties of forumFeedItems() -- that it held exactly 6 entries, that some
+    // were pinned, that some were featured, that titles stayed under 18 characters. That fixture
+    // was six hardcoded forum threads with invented authors, reply counts and view counts, and
+    // ForumScreen substituted it for real content whenever the feed was idle, loading, failed or
+    // empty. The tests were therefore pinning fabricated content in place: they would have failed
+    // if anyone removed it.
+    //
+    // The fixture is gone and ForumScreen now renders explicit loading, error and empty states, so
+    // there is nothing left for these tests to assert. The 37 strings they covered are recorded in
+    // the commit that removed them.
 
     private fun assertCleanVisibleCopy(value: String) {
         val mojibakeFragments = listOf(

@@ -28,7 +28,7 @@ import com.novalpie.nativeapp.data.WorkspaceLocalStore
 import com.novalpie.nativeapp.data.UploadFileSource
 import com.novalpie.nativeapp.data.configureNovalPieImageLoader
 import com.novalpie.nativeapp.data.decodeAuthTokenProfile
-import com.novalpie.nativeapp.data.shouldPreferEmulatorProxy
+import com.novalpie.nativeapp.data.isEmulatorRuntime
 import com.novalpie.nativeapp.model.Chapter
 import com.novalpie.nativeapp.model.ChapterComment
 import com.novalpie.nativeapp.model.ChapterIllustrationPage
@@ -320,6 +320,17 @@ data class PoliticalExamState(
     val deadlineEpochMillis: Long? = null,
     val result: LoadResult<PoliticalExamResult> = LoadResult.Idle,
     val submitting: Boolean = false,
+    /**
+     * Set once the expiry auto-submit has been attempted, so it is never retried automatically.
+     *
+     * Without this the screen hammered the server. The timer effect is keyed on `submitting`, and
+     * a failed submit set `submitting = false` while leaving `phase = Active` and
+     * `remainingTimeSeconds = 0`. Because the effect skips its 1s delay once the clock reaches
+     * zero, the false->true->false transition re-fired it immediately, producing an unthrottled
+     * loop of POSTs to /api/political-exams/sessions/submit for as long as the user stayed on the
+     * screen. Retrying is now the user's explicit action.
+     */
+    val autoSubmitAttempted: Boolean = false,
     val actionMessage: String? = null
 )
 
@@ -442,7 +453,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         authTokenProvider = { authToken },
         proxySelectorProvider = {
             proxySettings.toProxySelector(
-                preferEmulatorProxy = shouldPreferEmulatorProxy()
+                emulatorRuntime = isEmulatorRuntime()
             )
         }
     )
@@ -2354,7 +2365,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     fun tickPoliticalExamTimer() {
         if (politicalExamState.phase != PoliticalExamPhase.Active || politicalExamState.submitting) return
         refreshPoliticalExamTimer()
-        if (politicalExamState.remainingTimeSeconds <= 0) submitPoliticalExam()
+        if (politicalExamState.remainingTimeSeconds > 0) return
+        // Expiry auto-submit fires at most once. See PoliticalExamState.autoSubmitAttempted: a
+        // failed submit used to re-enter this path immediately and loop against the server.
+        if (politicalExamState.autoSubmitAttempted) return
+        politicalExamState = politicalExamState.copy(autoSubmitAttempted = true)
+        submitPoliticalExam()
     }
 
     private fun refreshPoliticalExamTimer() {
@@ -2695,7 +2711,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val result = runCatching { api.forumPosts(page = 1, limit = PAGE_SIZE) }
             if (!isFreshRequestSerial(requestSerial, forumRequestSerial)) return@launch
-            forumState = ForumState(posts = result.toLoadResult("璁哄潧"))
+            forumState = ForumState(posts = result.toLoadResult("论坛"))
         }
     }
 
@@ -3911,7 +3927,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         searchTags = LoadResult.Loading
         viewModelScope.launch {
             val result = runCatching { api.tags(sort = "count", limit = 24) }
-            searchTags = result.toLoadResult("鏍囩")
+            searchTags = result.toLoadResult("标签")
         }
     }
 

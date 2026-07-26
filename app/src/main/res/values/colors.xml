@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  XML mirrors of the Compose tokens that the platform needs before Compose exists: the launch
+  window background and the splash background. These are the light values; values-night/colors.xml
+  carries the dark ones, so a cold start in dark mode no longer flashes a light window.
+
+  Keep in sync with ui/design/NovalPieColors.kt (background / surfaceContainerLowest).
+-->
+<resources>
+    <color name="window_background">#F6F7F9</color>
+    <color name="splash_background">#FFFFFF</color>
+    <color name="ic_launcher_background">#1F6FE0</color>
+</resources>

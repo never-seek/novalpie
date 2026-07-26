@@ -95,6 +95,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
+import com.novalpie.nativeapp.ui.design.NpBookRowSkeleton
+import com.novalpie.nativeapp.ui.design.NpEmptyState
+import com.novalpie.nativeapp.ui.design.NpErrorState
 import com.novalpie.nativeapp.model.Chapter
 import com.novalpie.nativeapp.model.ChapterComment
 import com.novalpie.nativeapp.model.FavoriteGroup
@@ -113,11 +116,21 @@ import com.novalpie.nativeapp.model.UserProfile
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NovalPieApp(startUri: String? = null, viewModel: NovalPieViewModel = viewModel()) {
+fun NovalPieApp(
+    startUri: String? = null,
+    onStartUriHandled: () -> Unit = {},
+    viewModel: NovalPieViewModel = viewModel(),
+) {
     val route = viewModel.currentRoute
 
+    // The deep link is consumed once and then cleared by the host activity. Keying the effect on
+    // a URI that outlived the navigation meant a rotation re-ran openDeepLink and yanked the user
+    // back to the linked book/chapter.
     LaunchedEffect(startUri) {
-        if (!startUri.isNullOrBlank()) viewModel.openDeepLink(startUri)
+        if (!startUri.isNullOrBlank()) {
+            viewModel.openDeepLink(startUri)
+            onStartUriHandled()
+        }
     }
 
     BackHandler(enabled = route !is AppRoute.Forum && route !is AppRoute.Home && route !is AppRoute.Search && route !is AppRoute.Tools && route !is AppRoute.Profile) {
@@ -602,9 +615,19 @@ private fun ForumScreen(
 ) {
     val header = forumHeader()
     val actions = forumPrimaryActions(hasAuthToken)
+    // Real posts only.
+    //
+    // This used to fall back to forumFeedItems(), six hardcoded threads with invented authors
+    // (北港读者, 栗子校对), invented counts (42 replies, 7305 views) and 置顶/精华 badges. They were
+    // substituted whenever the load was idle, loading, FAILED, or returned zero posts -- so a
+    // network error presented fabricated forum activity as real content, and because the
+    // error/empty block below renders independently, the user saw "论坛暂时没有可显示的讨论"
+    // immediately above six apparently-real discussions.
+    //
+    // The stats strip also derived its totals from that fixture, so the counts were fictional too.
     val feedItems = when (posts) {
-        is LoadResult.Success -> posts.value.map(::forumPostFeedItem).ifEmpty { forumFeedItems() }
-        else -> forumFeedItems()
+        is LoadResult.Success -> posts.value.map(::forumPostFeedItem)
+        else -> emptyList()
     }
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -647,16 +670,27 @@ private fun ForumScreen(
             ForumStatsStrip(feedItems)
         }
         when (posts) {
-            LoadResult.Loading -> item { LoadingBlock("正在同步论坛") }
+            // Skeletons reserve the space the rows will occupy, so arriving posts do not shove
+            // the page down.
+            LoadResult.Loading -> items(3) { NpBookRowSkeleton() }
             is LoadResult.Error -> item {
-                ErrorBlock(
+                NpErrorState(
                     message = posts.message,
                     retryLabel = "重新同步",
-                    onRetry = onRefresh
+                    onRetry = onRefresh,
+                    secondaryLabel = "网页论坛",
+                    onSecondary = onOpenWeb,
                 )
             }
             is LoadResult.Success -> if (posts.value.isEmpty()) {
-                item { StatusText("论坛暂时没有可显示的讨论") }
+                item {
+                    NpEmptyState(
+                        title = "论坛暂时没有可显示的讨论",
+                        description = "下拉刷新，或到网页版看看",
+                        actionLabel = "网页论坛",
+                        onAction = onOpenWeb,
+                    )
+                }
             }
             LoadResult.Idle -> Unit
         }

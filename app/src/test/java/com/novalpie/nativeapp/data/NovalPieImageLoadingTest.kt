@@ -41,10 +41,31 @@ class NovalPieImageLoadingTest {
         assertNull(client.proxy)
     }
 
+    /**
+     * Replaces `imageHttpClientUsesFallbackProxySelectorWhenProxyDisabled`, whose name described
+     * the defect: with the proxy disabled it asserted that image requests were still routed at
+     * `10.0.2.2:7890` and `127.0.0.1:7890` first. On a real phone neither address resolves, so
+     * every cover image stalled on a dead proxy for the connect timeout before falling through to
+     * the network. That is why covers were slow or blank on real hardware.
+     */
     @Test
-    fun imageHttpClientUsesFallbackProxySelectorWhenProxyDisabled() {
+    fun imageHttpClientGoesStraightToTheNetworkOnRealDevicesWhenProxyDisabled() {
         val client = novalPieImageOkHttpClient(
-            ProxySettings(enabled = false, host = "127.0.0.1", port = 7890)
+            ProxySettings(enabled = false, host = "127.0.0.1", port = 7890),
+            emulatorRuntime = false,
+        )
+
+        val proxies = client.proxySelector.select(URI("https://novalpie.cc/cover.jpg"))
+
+        assertEquals(listOf(Proxy.NO_PROXY), proxies)
+    }
+
+    /** Emulator QA still needs the host-proxy fallbacks, so they survive there. */
+    @Test
+    fun imageHttpClientKeepsFallbackProxiesOnEmulators() {
+        val client = novalPieImageOkHttpClient(
+            ProxySettings(enabled = false, host = "127.0.0.1", port = 7890),
+            emulatorRuntime = true,
         )
 
         val proxies = client.proxySelector.select(URI("https://novalpie.cc/cover.jpg"))

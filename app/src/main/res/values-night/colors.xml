@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dark counterparts of the pre-Compose platform colours. There was no values-night at all before,
+  which is why dark mode showed a light launch window and cream system bars.
+
+  Keep in sync with NovalPieDarkColorTokens (background / surface).
+-->
+<resources>
+    <color name="window_background">#12161B</color>
+    <color name="splash_background">#12161B</color>
+</resources>

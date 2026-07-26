@@ -7,12 +7,16 @@
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:enableOnBackInvokedCallback="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:theme="@style/Theme.NovalPie">
         <activity
             android:name="com.novalpie.nativeapp.MainActivity"
             android:exported="true"
-            android:screenOrientation="unspecified">
+            android:screenOrientation="unspecified"
+            android:theme="@style/Theme.NovalPie.Splash"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

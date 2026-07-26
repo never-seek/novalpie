@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Legacy launcher icon for API 23-25, which predate <adaptive-icon>. Unlike the adaptive version
+  this has to draw its own background, because there is no launcher-supplied mask or backdrop.
+
+  A vector is used rather than the usual set of density-specific PNGs: it keeps the icon a single
+  reviewable source of truth, and VectorDrawable has been supported since API 21.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Rounded-square field, inset so it reads as an icon rather than filling the whole cell -->
+    <path
+        android:fillColor="#1F6FE0"
+        android:pathData="M28,10H80A18,18 0 0,1 98,28V80A18,18 0 0,1 80,98H28A18,18 0 0,1 10,80V28A18,18 0 0,1 28,10Z" />
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M53,43.5C47.2,38.6 39.6,36.2 31.5,36.2C30.4,36.2 29.5,37.1 29.5,38.2V68.4C29.5,69.5 30.4,70.4 31.5,70.4C38.9,70.4 45.9,72.5 51.3,76.3C52,76.8 53,76.3 53,75.4Z" />
+    <path
+        android:fillColor="#E8F1FE"
+        android:pathData="M55,43.5C60.8,38.6 68.4,36.2 76.5,36.2C77.6,36.2 78.5,37.1 78.5,38.2V68.4C78.5,69.5 77.6,70.4 76.5,70.4C69.1,70.4 62.1,72.5 56.7,76.3C56,76.8 55,76.3 55,75.4Z" />
+    <path
+        android:fillColor="#74D6BF"
+        android:pathData="M64,36.8H72V54.5C72,55.4 71,55.9 70.3,55.3L68,53.4L65.7,55.3C65,55.9 64,55.4 64,54.5Z" />
+</vector>

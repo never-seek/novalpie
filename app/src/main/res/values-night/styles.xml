@@ -1,0 +1,17 @@
+<resources>
+    <!--
+      Dark launch theme. There was no values-night at all before, so dark-mode users got the light
+      window background and light-content system bars on every cold start.
+
+      windowLightStatusBar/windowLightNavigationBar are false here: "light bars" means dark icons
+      for a light background, which is the opposite of what a dark app needs. NovalPieTheme also
+      sets these at runtime, but the XML value is what applies during launch, before Compose runs.
+    -->
+    <style name="Theme.NovalPie" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

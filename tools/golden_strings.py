@@ -222,6 +222,15 @@ def collect() -> dict[str, set[str]]:
 
 
 def main() -> int:
+    # The Windows console here reports GBK, which cannot encode every character this script
+    # prints -- notably the private-use codepoints that show up in mojibake. Without this the
+    # script dies with UnicodeEncodeError while reporting its findings.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true", help="write the baseline instead of verifying")
     parser.add_argument("--list", action="store_true", help="print the current set and exit")
