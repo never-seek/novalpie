@@ -3,10 +3,10 @@ package com.novalpie.nativeapp.ui
 import java.net.URI
 
 enum class WorkspaceTab(val label: String) {
-    Overview("\u6982\u89c8"),
-    Apis("API \u7ba1\u7406"),
-    Cookies("Cookie \u7ba1\u7406"),
-    Queue("\u4efb\u52a1\u961f\u5217")
+    Overview("概览"),
+    Apis("API 管理"),
+    Cookies("Cookie 管理"),
+    Queue("任务队列")
 }
 
 data class WorkspaceApiDraft(
@@ -31,26 +31,26 @@ data class WorkspaceCookieDraft(
 
 internal fun maskWorkspaceApiKey(apiKey: String?): String {
     val value = apiKey?.trim().orEmpty()
-    if (value.isEmpty()) return "\u672a\u914d\u7f6e"
+    if (value.isEmpty()) return "未配置"
     if (value.length <= 8) return "********"
     return value.take(4) + "******" + value.takeLast(4)
 }
 
 internal fun validateWorkspaceApiDraft(draft: WorkspaceApiDraft): String? {
-    if (draft.name.isBlank()) return "API \u540d\u79f0\u4e0d\u80fd\u4e3a\u7a7a"
-    if (draft.model.isBlank()) return "\u6a21\u578b\u4e0d\u80fd\u4e3a\u7a7a"
-    if (!isHttpUrl(draft.endpoint)) return "API \u7aef\u70b9\u5fc5\u987b\u662f http(s) URL"
-    if (draft.apiKey.isBlank()) return "API Key \u4e0d\u80fd\u4e3a\u7a7a"
+    if (draft.name.isBlank()) return "API 名称不能为空"
+    if (draft.model.isBlank()) return "模型不能为空"
+    if (!isHttpUrl(draft.endpoint)) return "API 端点必须是 http(s) URL"
+    if (draft.apiKey.isBlank()) return "API Key 不能为空"
     val concurrency = draft.concurrency.toIntOrNull()
-    if (concurrency == null || concurrency !in 1..100) return "\u5e76\u53d1\u6570\u5fc5\u987b\u4ecb\u4e8e 1 \u5230 100"
+    if (concurrency == null || concurrency !in 1..100) return "并发数必须介于 1 到 100"
     return null
 }
 
 internal fun validateWorkspaceCookieDraft(draft: WorkspaceCookieDraft): String? {
-    if (draft.id == null && draft.configKey.isBlank()) return "\u914d\u7f6e\u952e\u540d\u4e0d\u80fd\u4e3a\u7a7a"
-    if (draft.id == null && draft.cookieRaw.isBlank()) return "Cookie \u5185\u5bb9\u4e0d\u80fd\u4e3a\u7a7a"
+    if (draft.id == null && draft.configKey.isBlank()) return "配置键名不能为空"
+    if (draft.id == null && draft.cookieRaw.isBlank()) return "Cookie 内容不能为空"
     if (draft.proxyIp.isNotBlank() && !isProxyValue(draft.proxyIp)) {
-        return "\u4ee3\u7406\u683c\u5f0f\u5e94\u4e3a IP:PORT \u6216 http(s)://..."
+        return "代理格式应为 IP:PORT 或 http(s)://..."
     }
     return null
 }

@@ -1286,8 +1286,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             val messagesResult = messages.await()
             if (!isFreshRequestSerial(requestSerial, toolsRequestSerial)) return@launch
             toolsState = ToolsState(
-                stats = statsResult.toLoadResult("\u6d88\u606f\u7edf\u8ba1"),
-                messages = messagesResult.toLoadResult("\u6d88\u606f\u5217\u8868")
+                stats = statsResult.toLoadResult("消息统计"),
+                messages = messagesResult.toLoadResult("消息列表")
             )
         }
     }
@@ -1317,10 +1317,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             messageCenterState = messageCenterState.copy(
                 messages = pageResult.fold(
                     onSuccess = { LoadResult.Success(it.items) },
-                    onFailure = { LoadResult.Error(apiFailureMessage("\u6d88\u606f\u5217\u8868", it)) }
+                    onFailure = { LoadResult.Error(apiFailureMessage("消息列表", it)) }
                 ),
                 pagination = pageResult.getOrNull()?.pagination ?: MessagePagination(),
-                stats = statsResult.toLoadResult("\u6d88\u606f\u7edf\u8ba1")
+                stats = statsResult.toLoadResult("消息统计")
             )
         }
     }
@@ -1351,7 +1351,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 onFailure = { failure ->
                     messageCenterState.copy(
                         loadingMore = false,
-                        actionMessage = apiFailureMessage("\u52a0\u8f7d\u66f4\u591a\u6d88\u606f", failure)
+                        actionMessage = apiFailureMessage("加载更多消息", failure)
                     )
                 }
             )
@@ -1398,21 +1398,21 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     fun markSelectedMessagesRead() {
         val ids = messageCenterState.selectedIds.toList()
         if (ids.isEmpty()) return
-        runMessageCenterAction("\u6279\u91cf\u5df2\u8bfb") { api.markMessagesRead(ids) }
+        runMessageCenterAction("批量已读") { api.markMessagesRead(ids) }
     }
 
     fun deleteSelectedMessages() {
         val ids = messageCenterState.selectedIds.toList()
         if (ids.isEmpty()) return
-        runMessageCenterAction("\u6279\u91cf\u5220\u9664") { api.deleteMessages(ids) }
+        runMessageCenterAction("批量删除") { api.deleteMessages(ids) }
     }
 
     fun markAllMessagesRead() {
-        runMessageCenterAction("\u5168\u90e8\u5df2\u8bfb") { api.markAllMessagesRead() }
+        runMessageCenterAction("全部已读") { api.markAllMessagesRead() }
     }
 
     fun toggleMessageStar(message: SiteMessage) {
-        runMessageCenterAction(if (message.isStarred) "\u53d6\u6d88\u661f\u6807" else "\u6dfb\u52a0\u661f\u6807") {
+        runMessageCenterAction(if (message.isStarred) "取消星标" else "添加星标") {
             api.starMessage(message.id, !message.isStarred)
         }
     }
@@ -1445,7 +1445,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             val result = runCatching { api.messageDetail(messageId) }
             if (!isFreshRequestSerial(requestSerial, messageDetailRequestSerial)) return@launch
             messageDetailState = messageDetailState.copy(
-                detail = result.toLoadResult("\u6d88\u606f\u8be6\u60c5")
+                detail = result.toLoadResult("消息详情")
             )
         }
     }
@@ -1453,13 +1453,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     fun markCurrentMessageRead() {
         val message = (messageDetailState.detail as? LoadResult.Success)?.value ?: return
         if (message.isRead || messageDetailState.actionLoading) return
-        runMessageDetailAction("\u5df2\u6807\u8bb0\u4e3a\u5df2\u8bfb") { api.markMessageRead(message.id) }
+        runMessageDetailAction("已标记为已读") { api.markMessageRead(message.id) }
     }
 
     fun toggleCurrentMessageStar() {
         val message = (messageDetailState.detail as? LoadResult.Success)?.value ?: return
         if (messageDetailState.actionLoading) return
-        runMessageDetailAction(if (message.isStarred) "\u5df2\u53d6\u6d88\u661f\u6807" else "\u5df2\u6dfb\u52a0\u661f\u6807") {
+        runMessageDetailAction(if (message.isStarred) "已取消星标" else "已添加星标") {
             api.starMessage(message.id, !message.isStarred)
         }
     }
@@ -1476,7 +1476,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             }.onFailure { failure ->
                 messageDetailState = messageDetailState.copy(
                     actionLoading = false,
-                    actionMessage = apiFailureMessage("\u5220\u9664\u6d88\u606f", failure)
+                    actionMessage = apiFailureMessage("删除消息", failure)
                 )
             }
         }
@@ -1531,7 +1531,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             val result = runCatching { api.messageConversation(targetUserId) }
             if (!isFreshRequestSerial(requestSerial, messageConversationRequestSerial)) return@launch
             messageConversationState = messageConversationState.copy(
-                messages = result.toLoadResult("\u79c1\u4fe1\u5bf9\u8bdd")
+                messages = result.toLoadResult("私信对话")
             )
         }
     }
@@ -1561,13 +1561,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     messageConversationState.copy(
                         draft = "",
                         sending = false,
-                        actionMessage = it.message ?: "\u79c1\u4fe1\u5df2\u53d1\u9001"
+                        actionMessage = it.message ?: "私信已发送"
                     )
                 },
                 onFailure = { failure ->
                     messageConversationState.copy(
                         sending = false,
-                        actionMessage = apiFailureMessage("\u53d1\u9001\u79c1\u4fe1", failure)
+                        actionMessage = apiFailureMessage("发送私信", failure)
                     )
                 }
             )
@@ -1592,8 +1592,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 },
                 onFailure = { failure ->
                     MessageSettingsState(
-                        settings = LoadResult.Error(apiFailureMessage("\u6d88\u606f\u8bbe\u7f6e", failure)),
-                        actionMessage = apiFailureMessage("\u6d88\u606f\u8bbe\u7f6e", failure)
+                        settings = LoadResult.Error(apiFailureMessage("消息设置", failure)),
+                        actionMessage = apiFailureMessage("消息设置", failure)
                     )
                 }
             )
@@ -1621,13 +1621,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     messageSettingsState.copy(
                         settings = LoadResult.Success(messageSettingsState.draft),
                         saving = false,
-                        actionMessage = it.message ?: "\u6d88\u606f\u8bbe\u7f6e\u5df2\u4fdd\u5b58"
+                        actionMessage = it.message ?: "消息设置已保存"
                     )
                 },
                 onFailure = { failure ->
                     messageSettingsState.copy(
                         saving = false,
-                        actionMessage = apiFailureMessage("\u4fdd\u5b58\u6d88\u606f\u8bbe\u7f6e", failure)
+                        actionMessage = apiFailureMessage("保存消息设置", failure)
                     )
                 }
             )
@@ -1646,7 +1646,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 onSuccess = {
                     messageCenterState.copy(
                         actionLoading = false,
-                        actionMessage = it.message ?: "$label\u5df2\u540c\u6b65",
+                        // Braces are required, not stylistic: Kotlin identifiers may contain CJK
+                        // letters, so "$label已同步" parses as a reference to `label已同步`.
+                        actionMessage = it.message ?: "${label}已同步",
                         selectedIds = emptySet()
                     )
                 },
@@ -2535,10 +2537,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             val healthResult = health.await()
             if (!isFreshRequestSerial(requestSerial, workspaceRequestSerial)) return@launch
             workspaceState = workspaceState.copy(
-                apiConfigs = apiResult.toLoadResult("\u5de5\u4f5c\u533a API \u914d\u7f6e"),
-                cookieStatus = cookieStatusResult.toLoadResult("Cookie \u72b6\u6001"),
-                cookieConfigs = cookieResult.toLoadResult("Cookie \u914d\u7f6e"),
-                health = healthResult.toLoadResult("\u5de5\u4f5c\u533a\u5065\u5eb7\u72b6\u6001")
+                apiConfigs = apiResult.toLoadResult("工作区 API 配置"),
+                cookieStatus = cookieStatusResult.toLoadResult("Cookie 状态"),
+                cookieConfigs = cookieResult.toLoadResult("Cookie 配置"),
+                health = healthResult.toLoadResult("工作区健康状态")
             )
         }
     }
@@ -2592,13 +2594,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     workspaceState.copy(
                         localApis = workspaceLocalStore.loadApis(),
                         actionLoading = false,
-                        actionMessage = it.message ?: "API \u914d\u7f6e\u5df2\u4fdd\u5b58"
+                        actionMessage = it.message ?: "API 配置已保存"
                     )
                 },
                 onFailure = { failure ->
                     workspaceState.copy(
                         actionLoading = false,
-                        actionMessage = apiFailureMessage("\u4fdd\u5b58 API \u914d\u7f6e", failure)
+                        actionMessage = apiFailureMessage("保存 API 配置", failure)
                     )
                 }
             )
@@ -2619,13 +2621,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     workspaceState.copy(
                         localApis = workspaceLocalStore.loadApis(),
                         actionLoading = false,
-                        actionMessage = "API \u914d\u7f6e\u5df2\u5220\u9664"
+                        actionMessage = "API 配置已删除"
                     )
                 },
                 onFailure = { failure ->
                     workspaceState.copy(
                         actionLoading = false,
-                        actionMessage = apiFailureMessage("\u5220\u9664 API \u914d\u7f6e", failure)
+                        actionMessage = apiFailureMessage("删除 API 配置", failure)
                     )
                 }
             )
@@ -2634,7 +2636,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun deleteWorkspaceServerApi(config: WorkspaceApiConfig) {
-        runWorkspaceAction("API \u914d\u7f6e\u5df2\u5220\u9664") { api.deleteWorkspaceApi(config.id) }
+        runWorkspaceAction("API 配置已删除") { api.deleteWorkspaceApi(config.id) }
     }
 
     fun saveWorkspaceCookie(draft: WorkspaceCookieDraft) {
@@ -2642,7 +2644,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             workspaceState = workspaceState.copy(actionMessage = error)
             return
         }
-        runWorkspaceAction("Cookie \u914d\u7f6e\u5df2\u4fdd\u5b58") {
+        runWorkspaceAction("Cookie 配置已保存") {
             if (draft.id == null) {
                 api.createWorkspaceCookie(
                     configKey = draft.configKey,
@@ -2664,13 +2666,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun toggleWorkspaceCookie(config: com.novalpie.nativeapp.model.WorkspaceCookieConfig) {
-        runWorkspaceAction("Cookie \u72b6\u6001\u5df2\u66f4\u65b0") {
+        runWorkspaceAction("Cookie 状态已更新") {
             api.setWorkspaceCookieActive(config.id, !config.isActive)
         }
     }
 
     fun deleteWorkspaceCookie(config: com.novalpie.nativeapp.model.WorkspaceCookieConfig) {
-        runWorkspaceAction("Cookie \u914d\u7f6e\u5df2\u5220\u9664") {
+        runWorkspaceAction("Cookie 配置已删除") {
             api.deleteWorkspaceCookie(config.id)
         }
     }
@@ -2679,7 +2681,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         workspaceLocalStore.upsertJob(job.copy(status = status, updatedAt = System.currentTimeMillis().toString()))
         workspaceState = workspaceState.copy(
             jobs = workspaceLocalStore.loadJobs(),
-            actionMessage = "\u4efb\u52a1\u72b6\u6001\u5df2\u66f4\u65b0"
+            actionMessage = "任务状态已更新"
         )
     }
 
@@ -2687,7 +2689,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         workspaceLocalStore.deleteJob(job.id)
         workspaceState = workspaceState.copy(
             jobs = workspaceLocalStore.loadJobs(),
-            actionMessage = "\u4efb\u52a1\u5df2\u5220\u9664"
+            actionMessage = "任务已删除"
         )
     }
 
@@ -2880,7 +2882,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                         replyingToCommentId = null,
                         replyingToName = null,
                         actionLoading = false,
-                        actionMessage = it.message ?: "\u8bc4\u8bba\u5df2\u63d0\u4ea4"
+                        actionMessage = it.message ?: "评论已提交"
                     )
                 },
                 onFailure = {
@@ -2936,7 +2938,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 onSuccess = {
                     forumPostDetailState.copy(
                         actionLoading = false,
-                        actionMessage = it.message ?: "$label \u5df2\u540c\u6b65"
+                        actionMessage = it.message ?: "$label 已同步"
                     )
                 },
                 onFailure = {
@@ -2960,7 +2962,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 onSuccess = {
                     forumPostDetailState.copy(
                         actionLoading = false,
-                        actionMessage = it.message ?: "$label \u5df2\u540c\u6b65"
+                        actionMessage = it.message ?: "$label 已同步"
                     )
                 },
                 onFailure = {
@@ -3984,7 +3986,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             if (!isFreshBookDetailResult(currentRoute, bookDetailState, bookId)) return@launch
             bookDetailState = bookDetailState.copy(
                 comments = comments.await().toLoadResult("评论区"),
-                favoriteStatus = favoriteStatus.await().toLoadResult("\u6536\u85cf\u72b6\u6001"),
+                favoriteStatus = favoriteStatus.await().toLoadResult("收藏状态"),
                 readerProgress = readerProgressStore.load(bookId)
             )
         }
@@ -4015,8 +4017,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             readerState = ReaderState(
                 bookId = bookId,
                 chapterId = chapterId,
-                content = contentResult.toLoadResult("\u9605\u8bfb\u5668\u6b63\u6587"),
-                chapters = chaptersResult.toLoadResult("\u9605\u8bfb\u5668\u76ee\u5f55"),
+                content = contentResult.toLoadResult("阅读器正文"),
+                chapters = chaptersResult.toLoadResult("阅读器目录"),
                 comments = commentsResult.toLoadResult(VisibleUiLabels.ChapterComments)
             )
         }
@@ -4071,7 +4073,7 @@ internal fun resolveUserLoadResult(
     onSuccess = { LoadResult.Success(it) },
     onFailure = { failure ->
         tokenProfile?.let { LoadResult.Success(it) }
-            ?: LoadResult.Error(apiFailureMessage("\u767b\u5f55\u72b6\u6001", failure))
+            ?: LoadResult.Error(apiFailureMessage("登录状态", failure))
     }
 )
 

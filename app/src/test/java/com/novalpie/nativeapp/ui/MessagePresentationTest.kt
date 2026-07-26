@@ -37,11 +37,11 @@ class MessagePresentationTest {
     fun validatesQuietHoursAndAutoReadDays() {
         assertNull(validateMessageSettings(MessageSettings()))
         assertEquals(
-            "\u514d\u6253\u6270\u5f00\u59cb\u65f6\u95f4\u683c\u5f0f\u65e0\u6548",
+            "免打扰开始时间格式无效",
             validateMessageSettings(MessageSettings(quietHoursStart = "25:99"))
         )
         assertEquals(
-            "\u81ea\u52a8\u5df2\u8bfb\u5929\u6570\u4e0d\u80fd\u5c0f\u4e8e 0",
+            "自动已读天数不能小于 0",
             validateMessageSettings(MessageSettings(autoReadAfterDays = -1))
         )
     }
@@ -49,7 +49,7 @@ class MessagePresentationTest {
     @Test
     fun validatesQuietHoursEndSeparately() {
         assertEquals(
-            "\u514d\u6253\u6270\u7ed3\u675f\u65f6\u95f4\u683c\u5f0f\u65e0\u6548",
+            "免打扰结束时间格式无效",
             validateMessageSettings(MessageSettings(quietHoursEnd = "7pm"))
         )
     }
@@ -73,11 +73,11 @@ class MessagePresentationTest {
 
     @Test
     fun messageTypeLabelsMatchCurrentWebsite() {
-        assertEquals("\u5168\u90e8\u7c7b\u578b", messageTypeLabel(null))
-        assertEquals("\u7528\u6237\u4e92\u52a8", messageTypeLabel(1))
-        assertEquals("\u79c1\u4fe1", messageTypeLabel(8))
-        assertEquals("\u4e3e\u62a5\u901a\u77e5", messageTypeLabel(10))
-        assertEquals("\u672a\u77e5\u7c7b\u578b", messageTypeLabel(99))
+        assertEquals("全部类型", messageTypeLabel(null))
+        assertEquals("用户互动", messageTypeLabel(1))
+        assertEquals("私信", messageTypeLabel(8))
+        assertEquals("举报通知", messageTypeLabel(10))
+        assertEquals("未知类型", messageTypeLabel(99))
         assertEquals((1..10).toList(), messageTypeOptions().map { it.value })
     }
 

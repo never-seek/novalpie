@@ -9,22 +9,22 @@ class WorkspacePresentationTest {
     fun masksApiKeysWithoutExposingFullCredential() {
         assertEquals("sk-s******alue", maskWorkspaceApiKey("sk-secret-value"))
         assertEquals("********", maskWorkspaceApiKey("short"))
-        assertEquals("\u672a\u914d\u7f6e", maskWorkspaceApiKey(null))
+        assertEquals("未配置", maskWorkspaceApiKey(null))
     }
 
     @Test
     fun validatesApiDraftAgainstWebsiteRequiredFields() {
         assertNull(validateWorkspaceApiDraft(WorkspaceApiDraft(name = "A", model = "m", endpoint = "https://api.example.com", apiKey = "sk", concurrency = "10")))
-        assertEquals("API \u540d\u79f0\u4e0d\u80fd\u4e3a\u7a7a", validateWorkspaceApiDraft(WorkspaceApiDraft()))
-        assertEquals("API \u7aef\u70b9\u5fc5\u987b\u662f http(s) URL", validateWorkspaceApiDraft(WorkspaceApiDraft(name = "A", model = "m", endpoint = "file://x", apiKey = "sk")))
-        assertEquals("\u5e76\u53d1\u6570\u5fc5\u987b\u4ecb\u4e8e 1 \u5230 100", validateWorkspaceApiDraft(WorkspaceApiDraft(name = "A", model = "m", endpoint = "https://api.example.com", apiKey = "sk", concurrency = "0")))
+        assertEquals("API 名称不能为空", validateWorkspaceApiDraft(WorkspaceApiDraft()))
+        assertEquals("API 端点必须是 http(s) URL", validateWorkspaceApiDraft(WorkspaceApiDraft(name = "A", model = "m", endpoint = "file://x", apiKey = "sk")))
+        assertEquals("并发数必须介于 1 到 100", validateWorkspaceApiDraft(WorkspaceApiDraft(name = "A", model = "m", endpoint = "https://api.example.com", apiKey = "sk", concurrency = "0")))
     }
 
     @Test
     fun validatesCookieDraftAndProxyFormat() {
         assertNull(validateWorkspaceCookieDraft(WorkspaceCookieDraft(configKey = "main", cookieRaw = "a=b", proxyIp = "10.0.2.2:7890")))
-        assertEquals("\u914d\u7f6e\u952e\u540d\u4e0d\u80fd\u4e3a\u7a7a", validateWorkspaceCookieDraft(WorkspaceCookieDraft(cookieRaw = "a=b")))
-        assertEquals("Cookie \u5185\u5bb9\u4e0d\u80fd\u4e3a\u7a7a", validateWorkspaceCookieDraft(WorkspaceCookieDraft(configKey = "main")))
-        assertEquals("\u4ee3\u7406\u683c\u5f0f\u5e94\u4e3a IP:PORT \u6216 http(s)://...", validateWorkspaceCookieDraft(WorkspaceCookieDraft(configKey = "main", cookieRaw = "a=b", proxyIp = "bad")))
+        assertEquals("配置键名不能为空", validateWorkspaceCookieDraft(WorkspaceCookieDraft(cookieRaw = "a=b")))
+        assertEquals("Cookie 内容不能为空", validateWorkspaceCookieDraft(WorkspaceCookieDraft(configKey = "main")))
+        assertEquals("代理格式应为 IP:PORT 或 http(s)://...", validateWorkspaceCookieDraft(WorkspaceCookieDraft(configKey = "main", cookieRaw = "a=b", proxyIp = "bad")))
     }
 }

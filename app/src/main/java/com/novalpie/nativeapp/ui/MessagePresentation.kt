@@ -25,13 +25,13 @@ internal fun directMessageTargetUserId(
 
 internal fun validateMessageSettings(settings: MessageSettings): String? {
     if (!isValidOptionalClockTime(settings.quietHoursStart)) {
-        return "\u514d\u6253\u6270\u5f00\u59cb\u65f6\u95f4\u683c\u5f0f\u65e0\u6548"
+        return "免打扰开始时间格式无效"
     }
     if (!isValidOptionalClockTime(settings.quietHoursEnd)) {
-        return "\u514d\u6253\u6270\u7ed3\u675f\u65f6\u95f4\u683c\u5f0f\u65e0\u6548"
+        return "免打扰结束时间格式无效"
     }
     if ((settings.autoReadAfterDays ?: 0) < 0) {
-        return "\u81ea\u52a8\u5df2\u8bfb\u5929\u6570\u4e0d\u80fd\u5c0f\u4e8e 0"
+        return "自动已读天数不能小于 0"
     }
     return null
 }

@@ -26,6 +26,15 @@ any removed string, this is what makes "retain every feature and content element
 
 ## Caveats
 
+- **Section 08's `\uXXXX` escape counts are wrong, and so were the figures repeated from them.**
+  They came from `grep -c '\\u'`, which on this grep matches any line containing the letter `u`
+  rather than an escape sequence — `grep -c '\\u'` and `grep -c 'u'` return the identical 1173 for
+  `NovalPieApp.kt`. The real totals, measured by `tools/decode_unicode_escapes.py` (which parses
+  backslash parity so an escaped `\\u` is not miscounted), are **1560 escapes across 15 files**, the
+  largest being `MessageScreens.kt` (407) and `WorkspaceScreens.kt` (362) — not `NovalPieApp.kt`
+  (109) and `NovalPieViewModel.kt` (198) as claimed. The escapes were decoded in place afterwards,
+  so the counts are now zero either way; the lesson is that the surrounding prose about "~5000
+  escapes" overstated the problem roughly threefold.
 - Line numbers refer to the tree at `fc1d555` and drift as the refactor proceeds.
 - Section 08 cites `qa-screenshots/turn36`–`turn39`. Those PNGs predate the current blue-grey
   palette: the large pink surfaces they show came from an older rose palette and the composables

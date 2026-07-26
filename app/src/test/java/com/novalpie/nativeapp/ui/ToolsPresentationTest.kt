@@ -31,9 +31,9 @@ class ToolsPresentationTest {
 
     @Test
     fun messageTypeLabelsMatchCurrentWebsiteTypes() {
-        assertEquals("\u79c1\u4fe1", messageTypeLabel(8))
-        assertEquals("\u7cfb\u7edf\u516c\u544a", messageTypeLabel(9))
-        assertEquals("\u4e3e\u62a5\u901a\u77e5", messageTypeLabel(10))
-        assertEquals("\u672a\u77e5\u7c7b\u578b", messageTypeLabel(99))
+        assertEquals("私信", messageTypeLabel(8))
+        assertEquals("系统公告", messageTypeLabel(9))
+        assertEquals("举报通知", messageTypeLabel(10))
+        assertEquals("未知类型", messageTypeLabel(99))
     }
 }

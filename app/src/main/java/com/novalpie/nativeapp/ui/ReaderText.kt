@@ -79,7 +79,7 @@ internal fun readerParagraphsFromContent(raw: String): List<String> {
 
     val decoded = Html.fromHtml(prepared, Html.FROM_HTML_MODE_LEGACY)
         .toString()
-        .replace('\u00A0', ' ')
+        .replace(' ', ' ')
         .replace(LINE_BREAK_MARKER, "\n")
         .replace(PARAGRAPH_BREAK_MARKER, "\n\n")
         .replace("\r\n", "\n")
@@ -103,8 +103,8 @@ private val readerImagePattern = Regex(
     setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
 )
 
-private const val LINE_BREAK_MARKER = "\uE000"
-private const val PARAGRAPH_BREAK_MARKER = "\uE001"
+private const val LINE_BREAK_MARKER = ""
+private const val PARAGRAPH_BREAK_MARKER = ""
 
 private fun normalizeReaderParagraph(value: String): String? {
     val lines = value
@@ -141,5 +141,5 @@ private fun normalizeReaderImageUrl(raw: String?, baseUrl: String): String? {
 }
 
 private fun decodeHtmlValue(value: String?): String = value?.let {
-    Html.fromHtml(it, Html.FROM_HTML_MODE_LEGACY).toString().replace('\u00A0', ' ')
+    Html.fromHtml(it, Html.FROM_HTML_MODE_LEGACY).toString().replace(' ', ' ')
 }.orEmpty()

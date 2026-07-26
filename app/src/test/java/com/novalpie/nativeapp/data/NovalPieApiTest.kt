@@ -1074,7 +1074,7 @@ class NovalPieApiTest {
 
         val page = api.messagePage(
             query = MessageQuery(
-                keyword = "\u66f4\u65b0",
+                keyword = "更新",
                 messageType = 4,
                 isRead = false,
                 priority = 2
@@ -1106,7 +1106,7 @@ class NovalPieApiTest {
         assertEquals("4", request.requestUrl?.queryParameter("message_type"))
         assertEquals("false", request.requestUrl?.queryParameter("is_read"))
         assertEquals("2", request.requestUrl?.queryParameter("priority"))
-        assertEquals("\u66f4\u65b0", request.requestUrl?.queryParameter("keyword"))
+        assertEquals("更新", request.requestUrl?.queryParameter("keyword"))
     }
 
     @Test
@@ -1366,7 +1366,7 @@ class NovalPieApiTest {
             assertEquals(20L, body.getLong("user_id"))
             assertEquals(10L, body.getLong("execute_user_id"))
             assertEquals(8, body.getInt("message_type"))
-            assertEquals("\u6765\u81ea Alice \u7684\u79c1\u4fe1", body.getString("message_title"))
+            assertEquals("来自 Alice 的私信", body.getString("message_title"))
             assertEquals("Hello from Android", body.getString("message_content"))
         }
         Unit

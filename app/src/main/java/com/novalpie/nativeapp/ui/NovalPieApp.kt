@@ -2305,9 +2305,9 @@ private fun ToolsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("\u529f\u80fd\u4e2d\u5fc3", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text("功能中心", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Text(
-                        "\u6d88\u606f\u3001\u5de5\u4f5c\u533a\u4e0e\u7f51\u7ad9\u7ba1\u7406\u5165\u53e3",
+                        "消息、工作区与网站管理入口",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2315,7 +2315,7 @@ private fun ToolsScreen(
                 OutlinedButton(onClick = onRefresh) {
                     Icon(Icons.Filled.Refresh, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("\u5237\u65b0")
+                    Text("刷新")
                 }
             }
         }
@@ -2326,17 +2326,17 @@ private fun ToolsScreen(
 
         item { ToolsMessageStats(state.stats) }
         item {
-            Text("\u6700\u8fd1\u6d88\u606f", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("最近消息", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         }
         when (val messages = state.messages) {
-            LoadResult.Idle -> item { StatusText("\u6253\u5f00\u529f\u80fd\u4e2d\u5fc3\u540e\u540c\u6b65\u6d88\u606f") }
-            LoadResult.Loading -> item { LoadingBlock("\u6b63\u5728\u540c\u6b65\u6d88\u606f") }
+            LoadResult.Idle -> item { StatusText("打开功能中心后同步消息") }
+            LoadResult.Loading -> item { LoadingBlock("正在同步消息") }
             is LoadResult.Error -> item {
-                ErrorBlock(messages.message, retryLabel = "\u91cd\u8bd5\u6d88\u606f", onRetry = onRefresh)
+                ErrorBlock(messages.message, retryLabel = "重试消息", onRetry = onRefresh)
             }
             is LoadResult.Success -> {
                 if (messages.value.isEmpty()) {
-                    item { StatusText("\u6682\u65e0\u6d88\u606f") }
+                    item { StatusText("暂无消息") }
                 } else {
                     items(messages.value.take(6), key = { it.id }) { message ->
                         ToolsMessageRow(message = message, onOpenMessage = onOpenMessage)
@@ -2348,12 +2348,12 @@ private fun ToolsScreen(
             OutlinedButton(onClick = onOpenMessages, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Forum, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("\u6253\u5f00\u5b8c\u6574\u6d88\u606f\u4e2d\u5fc3")
+                Text("打开完整消息中心")
             }
         }
 
         item {
-            Text("\u7f51\u7ad9\u529f\u80fd", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("网站功能", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         }
         items(entries.chunked(2), key = { row -> row.joinToString("|") { it.path } }) { rowEntries ->
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2379,15 +2379,15 @@ private fun ToolsLoginPrompt(onOpenLogin: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("\u767b\u5f55\u540e\u540c\u6b65", fontWeight = FontWeight.Bold)
+                Text("登录后同步", fontWeight = FontWeight.Bold)
                 Text(
-                    "\u6d88\u606f\u3001\u5de5\u4f5c\u533a\u548c\u7ba1\u7406\u529f\u80fd\u9700\u8981\u7f51\u7ad9\u8d26\u53f7",
+                    "消息、工作区和管理功能需要网站账号",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Spacer(Modifier.width(12.dp))
-            Button(onClick = onOpenLogin) { Text("\u767b\u5f55") }
+            Button(onClick = onOpenLogin) { Text("登录") }
         }
     }
 }
@@ -2395,15 +2395,15 @@ private fun ToolsLoginPrompt(onOpenLogin: () -> Unit) {
 @Composable
 private fun ToolsMessageStats(stats: LoadResult<MessageStats>) {
     when (stats) {
-        LoadResult.Idle -> StatusText("\u7b49\u5f85\u540c\u6b65\u6d88\u606f\u7edf\u8ba1")
-        LoadResult.Loading -> LoadingBlock("\u6b63\u5728\u540c\u6b65\u6d88\u606f\u7edf\u8ba1")
+        LoadResult.Idle -> StatusText("等待同步消息统计")
+        LoadResult.Loading -> LoadingBlock("正在同步消息统计")
         is LoadResult.Error -> ErrorBlock(stats.message)
         is LoadResult.Success -> LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { LibraryStatPill("\u672a\u8bfb ${stats.value.unreadCount}") }
-            item { LibraryStatPill("\u5168\u90e8 ${stats.value.totalCount}") }
-            item { LibraryStatPill("\u91cd\u8981 ${stats.value.importantCount}") }
-            item { LibraryStatPill("7\u65e5 ${stats.value.recentSevenDaysCount}") }
-            item { LibraryStatPill("\u661f\u6807 ${stats.value.starredCount}") }
+            item { LibraryStatPill("未读 ${stats.value.unreadCount}") }
+            item { LibraryStatPill("全部 ${stats.value.totalCount}") }
+            item { LibraryStatPill("重要 ${stats.value.importantCount}") }
+            item { LibraryStatPill("7日 ${stats.value.recentSevenDaysCount}") }
+            item { LibraryStatPill("星标 ${stats.value.starredCount}") }
         }
     }
 }

@@ -995,7 +995,7 @@ class NovalPieApi(
             .put("user_id", targetUserId)
             .put("execute_user_id", currentUserId)
             .put("message_type", 8)
-            .put("message_title", "\u6765\u81ea ${currentUserName.trim()} \u7684\u79c1\u4fe1")
+            .put("message_title", "来自 ${currentUserName.trim()} 的私信")
             .put("message_content", content.trim())
         normalizeMessageActionResult(post("/api/messages", body))
     }
