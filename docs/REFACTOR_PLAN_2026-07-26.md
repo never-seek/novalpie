@@ -99,6 +99,50 @@ Non-negotiable properties the refactor must preserve.
 
 ---
 
+## 3a. Progress and a revised order
+
+**Status at 2026-07-26.** Phases 0-2 are done and committed. Part of Phase 7 was pulled forward,
+which is a deliberate change to the order below and the reason is worth recording.
+
+| Commit | Phase | Verified |
+|---|---|---|
+| `fc1d555` | 0 - baseline | the tree did not compile; fixed, 252 tests |
+| `f2cc124` | 0 - golden master | 1236 strings, round-trips |
+| `af1fd4e` | 1 - toolchain | 252 tests, release APK 11.03 -> 2.18 MB under R8 |
+| `de39ba4` | 2 - design system | 262 tests |
+| `799d39b` | 7a - error legibility, pagination | 274 tests |
+
+**Why 7 moved ahead of 3-6.** The original order put the architectural work first, on the grounds
+that readable, split code makes everything after it easier. That is true, but it front-loads all the
+invisible work: several sessions could pass with the app no better from a user's point of view. The
+bug list turned out to contain a handful of items that were both severe and surgical -- requests
+stalling on a dead proxy, fabricated forum content, an unthrottled POST loop, unreadable error
+messages, pagination discarding loaded pages -- so those were taken first. Each is independently
+committed and tested, so if work stops the app is genuinely better rather than half-refactored.
+
+**Remaining order, in the sequence to be worked:**
+
+1. **Phase 3, string externalisation.** Next. Mechanical, guarded by the golden master, and it makes
+   the two 4000-line files readable — which every later phase depends on.
+2. **Phase 6 partial: the high-traffic screens** (bookshelf, search, book detail, reader) onto the
+   design system. Visible improvement, and it exercises the components built in Phase 2 before the
+   rest of the app commits to them.
+3. **Phases 4 and 5, the data and presentation splits.** Deliberately after the screens above,
+   because those four screens will expose whether the component set is right; discovering that
+   during a 7500-line split would be worse.
+4. **Phase 6 remainder**, then **Phase 7 remainder**, then 8 and 9.
+
+**One finding deliberately deferred rather than patched.** Bug 2 — a mutation's success or failure
+message is destroyed by the reload fired immediately after it, across roughly 11 sites — is a symptom
+rather than a defect in its own right: each reload rebuilds its whole state object, so the message
+has nowhere to survive. Patching 11 call sites now would mean rewriting all 11 again in Phase 5,
+where a single snackbar and event channel fixes the class of problem. `NpSnackbarHost` is the
+intended home for it.
+
+**Also carried over from Phase 2**: `PullToRefreshBox` and route transitions. Both were held back
+only because the Material3 1.3.1 AAR was not yet in the local cache to check the API signature
+against, and a wrong guess costs a 7-minute build.
+
 ## 4. Phases
 
 Every phase ends green: unit tests pass, `assembleDebug` and `assembleRelease` succeed, and a
