@@ -1,6 +1,7 @@
 package com.novalpie.nativeapp.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -102,6 +103,7 @@ import com.novalpie.nativeapp.ui.design.NovalPieRadius
 import com.novalpie.nativeapp.ui.design.NovalPieSize
 import com.novalpie.nativeapp.ui.design.NovalPieSpacing
 import com.novalpie.nativeapp.ui.design.NpBookRowSkeleton
+import com.novalpie.nativeapp.ui.design.NpCard
 import com.novalpie.nativeapp.ui.design.NpChip
 import com.novalpie.nativeapp.ui.design.NpChipRow
 import com.novalpie.nativeapp.ui.design.NpChipTone
@@ -1092,29 +1094,38 @@ private fun ForumCommentComposer(
     onSubmit: () -> Unit,
     onCancelReply: () -> Unit
 ) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            replyingToName?.let {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("回复 $it", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    TextButton(onClick = onCancelReply) { Text("取消") }
-                }
+    NpCard(contentPadding = NovalPieSpacing.md) {
+        replyingToName?.let {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)
+            ) {
+                Text("回复 $it", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                TextButton(onClick = onCancelReply) { Text("取消") }
             }
-            OutlinedTextField(
-                value = draft,
-                onValueChange = onDraftChange,
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
-                shape = RoundedCornerShape(12.dp),
-                label = { Text("写评论") }
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(enabled = !loading && draft.isNotBlank(), onClick = onSubmit) { Text(if (loading) "发送中" else "发送") }
-                message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        OutlinedTextField(
+            value = draft,
+            onValueChange = onDraftChange,
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 2,
+            shape = MaterialTheme.shapes.medium,
+            label = { Text("写评论") }
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Button(enabled = !loading && draft.isNotBlank(), onClick = onSubmit) { Text(if (loading) "发送中" else "发送") }
+            // The result message is unweighted no more: a long failure string used to be pushed off
+            // the row by the button rather than wrapping under it.
+            message?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }
@@ -1842,14 +1853,25 @@ private fun BookDetailScreen(
     val progressForBook = readerProgress?.takeIf { it.bookId == state.bookId }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        contentPadding = PaddingValues(
+            start = NovalPieSpacing.screenHorizontal,
+            end = NovalPieSpacing.screenHorizontal,
+            top = NovalPieSpacing.sm,
+            bottom = NovalPieSpacing.listBottom
+        ),
+        verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.md)
     ) {
         item {
             when (val book = state.book) {
-                LoadResult.Idle -> StatusText("等待加载书籍详情")
-                LoadResult.Loading -> LoadingBlock("正在加载书籍详情")
-                is LoadResult.Error -> ErrorBlock(book.message, retryLabel = retryActionLabel("书籍详情"), onRetry = onRetry)
+                LoadResult.Idle -> LibraryStatusLine("等待加载书籍详情")
+                LoadResult.Loading -> LibraryLoadingBlock("正在加载书籍详情")
+                is LoadResult.Error -> NpErrorState(
+                    message = book.message,
+                    retryLabel = retryActionLabel("书籍详情"),
+                    onRetry = onRetry,
+                    secondaryLabel = "打开网页",
+                    onSecondary = onOpenWeb
+                )
                 is LoadResult.Success -> BookDetailHero(
                     book = book.value,
                     favoriteStatus = state.favoriteStatus,
@@ -1863,12 +1885,18 @@ private fun BookDetailScreen(
                 )
             }
         }
-        item { Text(sectionTitles[2], style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        item { NpSectionHeader(title = sectionTitles[2]) }
         item { CatalogFilterField(catalogQuery, onCatalogQueryChange) }
         when (val chapters = state.chapters) {
-            LoadResult.Idle -> item { StatusText("等待加载章节") }
-            LoadResult.Loading -> item { LoadingBlock("正在加载章节目录") }
-            is LoadResult.Error -> item { ErrorBlock(chapters.message, retryLabel = retryActionLabel("章节目录"), onRetry = onRetry) }
+            LoadResult.Idle -> item { LibraryStatusLine("等待加载章节") }
+            LoadResult.Loading -> item { LibraryLoadingBlock("正在加载章节目录") }
+            is LoadResult.Error -> item {
+                NpErrorState(
+                    message = chapters.message,
+                    retryLabel = retryActionLabel("章节目录"),
+                    onRetry = onRetry
+                )
+            }
             is LoadResult.Success -> {
                 val visible = filterChapters(chapters.value, catalogQuery)
                 item {
@@ -1881,8 +1909,8 @@ private fun BookDetailScreen(
                     )
                 }
                 when {
-                    chapters.value.isEmpty() -> item { StatusText("章节目录为空，可打开网页详情。") }
-                    visible.isEmpty() -> item { StatusText("没有匹配的章节") }
+                    chapters.value.isEmpty() -> item { LibraryStatusLine("章节目录为空，可打开网页详情。") }
+                    visible.isEmpty() -> item { NpEmptyState(title = "没有匹配的章节") }
                     else -> items(visible, key = { it.id }) { chapter ->
                         ChapterRow(
                             chapter = chapter,
@@ -2253,6 +2281,7 @@ private fun ReaderChapterCommentRow(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ChapterCommentActionRow(
     comment: ChapterComment,
@@ -2262,12 +2291,18 @@ private fun ChapterCommentActionRow(
     onAward: () -> Unit,
     onReply: () -> Unit
 ) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { ForumActionIcon(Icons.Filled.ThumbUp, "赞 ${comment.likeCount ?: 0}", onLike) }
-        item { ForumActionIcon(Icons.Filled.ThumbDown, "踩 ${comment.dislikeCount ?: 0}", onDislike) }
-        item { ForumActionIcon(Icons.Filled.EmojiEmotions, "表情 ${comment.reactionCount ?: 0}", onEmoji) }
-        item { ForumActionIcon(Icons.Filled.CardGiftcard, "打赏 ${comment.awardPoints ?: 0}", onAward) }
-        item { ForumActionIcon(Icons.AutoMirrored.Filled.Reply, "回复", onReply) }
+    // Five labelled actions in a LazyRow ran past the right edge of a narrow screen and clipped the
+    // last one mid-glyph, with nothing to suggest it was there -- the same defect as the search
+    // filter rail. They wrap now, so 回复 is always reachable.
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
+        verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs)
+    ) {
+        ForumActionIcon(Icons.Filled.ThumbUp, "赞 ${comment.likeCount ?: 0}", onLike)
+        ForumActionIcon(Icons.Filled.ThumbDown, "踩 ${comment.dislikeCount ?: 0}", onDislike)
+        ForumActionIcon(Icons.Filled.EmojiEmotions, "表情 ${comment.reactionCount ?: 0}", onEmoji)
+        ForumActionIcon(Icons.Filled.CardGiftcard, "打赏 ${comment.awardPoints ?: 0}", onAward)
+        ForumActionIcon(Icons.AutoMirrored.Filled.Reply, "回复", onReply)
     }
 }
 
@@ -3256,102 +3291,77 @@ private fun BookDetailHero(
     onOpenWeb: () -> Unit
 ) {
     val displayCoverUrl = novelDisplayCoverUrl(book)
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface
-    ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                BookCover(book.title, displayCoverUrl, 100.dp, 150.dp, previewUrl = displayCoverUrl)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text(
-                        book.title,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    novelOriginalTitleLabel(book)?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    BookDetailFavoriteChip(favoriteStatus)
-                    progress?.chapterTitle?.takeIf { it.isNotBlank() }?.let {
-                        Text("上次读到: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-            val facts = bookDetailFacts(book)
-            if (facts.isNotEmpty()) {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    facts.forEach { fact ->
-                        BookDetailFactLabel(fact)
-                    }
-                }
-            }
-            if (book.tags.isNotEmpty()) {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    book.tags.forEach { tag ->
-                        NovelTagPill(tag)
-                    }
-                }
-            }
-            book.description?.takeIf { it.isNotBlank() }?.let {
+    NpCard {
+        Row(horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.md)) {
+            BookCover(
+                book.title,
+                displayCoverUrl,
+                NovalPieSize.coverWidthHero,
+                NovalPieSize.coverWidthHero / NovalPieSize.coverAspectRatio,
+                previewUrl = displayCoverUrl
+            )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)) {
                 Text(
-                    it,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 6,
+                    book.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis
                 )
+                novelOriginalTitleLabel(book)?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                BookDetailFavoriteChip(favoriteStatus)
+                progress?.chapterTitle?.takeIf { it.isNotBlank() }?.let {
+                    Text("上次读到: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
-            BookDetailActionRow(
-                bookId = book.id,
-                progress = progress,
-                firstChapter = firstChapter,
-                onOpenReader = onOpenReader,
-                onEditInfo = onEditInfo,
-                onManageChapters = onManageChapters,
-                onAppendChapters = onAppendChapters,
-                onOpenWeb = onOpenWeb
+        }
+        // Quantitative facts are neutral chips; genre/website tags are outlined Tag chips. Both wrap.
+        val facts = bookDetailFacts(book)
+        if (facts.isNotEmpty()) {
+            NpChipRow {
+                facts.forEach { fact -> NpChip(label = fact, tone = NpChipTone.Neutral) }
+            }
+        }
+        if (book.tags.isNotEmpty()) {
+            NpChipRow {
+                book.tags.forEach { tag -> NpChip(label = tag, tone = NpChipTone.Tag) }
+            }
+        }
+        book.description?.takeIf { it.isNotBlank() }?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 6,
+                overflow = TextOverflow.Ellipsis
             )
         }
+        BookDetailActionRow(
+            bookId = book.id,
+            progress = progress,
+            firstChapter = firstChapter,
+            onOpenReader = onOpenReader,
+            onEditInfo = onEditInfo,
+            onManageChapters = onManageChapters,
+            onAppendChapters = onAppendChapters,
+            onOpenWeb = onOpenWeb
+        )
     }
 }
 
 @Composable
 private fun BookDetailFavoriteChip(status: LoadResult<FavoriteStatus>) {
-    val label = when (status) {
-        LoadResult.Idle, LoadResult.Loading -> bookDetailFavoriteLoadingLabel()
-        is LoadResult.Error -> bookDetailFavoriteUnavailableLabel()
-        is LoadResult.Success -> bookDetailFavoriteLabel(status.value.isFavorited)
+    // The colour now carries the meaning: collected is a positive status, an unavailable status is a
+    // warning, everything else is neutral -- instead of every state sharing one primaryContainer pill.
+    val (label, tone) = when (status) {
+        LoadResult.Idle, LoadResult.Loading -> bookDetailFavoriteLoadingLabel() to NpChipTone.Neutral
+        is LoadResult.Error -> bookDetailFavoriteUnavailableLabel() to NpChipTone.Warning
+        is LoadResult.Success ->
+            bookDetailFavoriteLabel(status.value.isFavorited) to
+                if (status.value.isFavorited) NpChipTone.Status else NpChipTone.Neutral
     }
-    Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-        Text(
-            label,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            fontWeight = FontWeight.SemiBold
-        )
-    }
-}
-
-@Composable
-private fun BookDetailFactLabel(label: String) {
-    Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
-        Text(
-            label,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSecondaryContainer
-        )
-    }
+    NpChip(label = label, tone = tone)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -3371,8 +3381,8 @@ private fun BookDetailActionRow(
     val startLabel = if (progress != null) actions.getOrElse(1) { "开始阅读" } else actions.first()
     val webLabel = actions.last()
     FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
+        verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)
     ) {
         if (progress != null) {
             Button(onClick = { onOpenReader(progress.bookId, progress.chapterId) }) {
@@ -3406,37 +3416,34 @@ private fun BookCommentsSection(
     onAward: (ChapterComment) -> Unit,
     onOpenWeb: () -> Unit
 ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(title.ifBlank { bookCommentsSectionTitle() }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                OutlinedButton(onClick = onOpenWeb) {
-                    Icon(Icons.Filled.OpenInBrowser, contentDescription = bookCommentsFallbackLabel(), modifier = Modifier.width(18.dp).height(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(bookCommentsFallbackLabel(), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            ForumCommentComposer(
-                draft = state.commentDraft,
-                replyingToName = state.replyingToName,
-                loading = state.actionLoading,
-                message = state.actionMessage,
-                onDraftChange = onDraftChange,
-                onSubmit = onSubmit,
-                onCancelReply = onCancelReply
+    Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)) {
+        NpSectionHeader(
+            title = title.ifBlank { bookCommentsSectionTitle() },
+            actionLabel = bookCommentsFallbackLabel(),
+            onAction = onOpenWeb
+        )
+        ForumCommentComposer(
+            draft = state.commentDraft,
+            replyingToName = state.replyingToName,
+            loading = state.actionLoading,
+            message = state.actionMessage,
+            onDraftChange = onDraftChange,
+            onSubmit = onSubmit,
+            onCancelReply = onCancelReply
+        )
+        when (comments) {
+            LoadResult.Idle -> LibraryStatusLine("等待加载评论")
+            LoadResult.Loading -> LibraryLoadingBlock("正在同步评论")
+            is LoadResult.Error -> NpErrorState(
+                message = comments.message,
+                retryLabel = retryActionLabel("评论区"),
+                onRetry = onRetry
             )
-            when (comments) {
-                LoadResult.Idle -> StatusText("等待加载评论")
-                LoadResult.Loading -> LoadingBlock("正在同步评论")
-                is LoadResult.Error -> ErrorBlock(comments.message, retryLabel = retryActionLabel("评论区"), onRetry = onRetry)
-                is LoadResult.Success -> {
-                    if (comments.value.isEmpty()) {
-                        StatusText("还没有评论")
-                    } else {
+            is LoadResult.Success -> {
+                if (comments.value.isEmpty()) {
+                    LibraryStatusLine("还没有评论")
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)) {
                         comments.value.take(6).forEach { comment ->
                             BookCommentRow(
                                 comment = comment,
@@ -3465,34 +3472,41 @@ private fun BookCommentRow(
 ) {
     val paragraphs = readerParagraphsFromContent(comment.content).ifEmpty { listOf(comment.content) }
     val links = forumContentLinks(paragraphs)
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant
-    ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                Text(comment.authorName ?: "匿名用户", fontWeight = FontWeight.SemiBold)
-                comment.createdAt?.let {
-                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            comment.replyToName?.let {
-                Text("回复 $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-            }
-            paragraphs.forEach { paragraph ->
-                Text(paragraph, style = MaterialTheme.typography.bodyMedium)
-            }
-            ForumLinkPreviewRows(links)
-            ChapterCommentActionRow(
-                comment = comment,
-                onLike = onLike,
-                onDislike = onDislike,
-                onEmoji = onEmoji,
-                onAward = onAward,
-                onReply = onReply
+    NpCard {
+        // The header Row was SpaceBetween with neither child weighted, so a long display name pushed
+        // the timestamp off the right edge. The name takes the slack and ellipsises instead.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                comment.authorName ?: "匿名用户",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
             )
+            comment.createdAt?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
+        comment.replyToName?.let {
+            Text("回复 $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+        }
+        paragraphs.forEach { paragraph ->
+            Text(paragraph, style = MaterialTheme.typography.bodyMedium)
+        }
+        ForumLinkPreviewRows(links)
+        ChapterCommentActionRow(
+            comment = comment,
+            onLike = onLike,
+            onDislike = onDislike,
+            onEmoji = onEmoji,
+            onAward = onAward,
+            onReply = onReply
+        )
     }
 }
 
@@ -3592,18 +3606,37 @@ internal fun novelGridColumnCount(): Int = 2
 
 @Composable
 private fun ChapterRow(chapter: Chapter, selected: Boolean, onClick: () -> Unit) {
-    ElevatedCard(
+    // Separation comes from container colour plus a hairline, like every other card in the system;
+    // the chapter the reader is on gets a primary-coloured border rather than only a bold title.
+    Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
+        shape = MaterialTheme.shapes.medium,
+        color = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            NovalPieSize.hairline,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
         )
     ) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(chapter.number?.let { "#$it" } ?: "CH", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.width(12.dp))
+        Row(
+            Modifier.padding(NovalPieSpacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.md)
+        ) {
+            Text(
+                chapter.number?.let { "#$it" } ?: "CH",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Column(Modifier.weight(1f)) {
                 Text(chapter.title, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
-                chapter.wordCount?.let { Text("$it 字", style = MaterialTheme.typography.labelSmall) }
+                chapter.wordCount?.let {
+                    Text(
+                        "$it 字",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
@@ -3616,12 +3649,14 @@ private fun CatalogSummaryText(value: String) {
 
 @Composable
 private fun CatalogFilterField(value: String, onValueChange: (String) -> Unit) {
-    OutlinedTextField(
+    // The one search input, shared with the reader's catalog panel. Filters as you type, so there is
+    // no submit action; clearing is one tap on the trailing icon.
+    NpSearchField(
         value = value,
         onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = true,
-        label = { Text("筛选目录") }
+        onSearch = {},
+        placeholder = "筛选目录",
+        clearContentDescription = "清除筛选"
     )
 }
 
