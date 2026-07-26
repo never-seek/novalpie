@@ -269,6 +269,7 @@ fun NovalPieApp(
                     onSearch = { submittedKeyword -> viewModel.performSearch(submittedKeyword) },
                     searchCanLoadMore = viewModel.searchCanLoadMore,
                     searchLoadingMore = viewModel.searchLoadingMore,
+                    searchLoadMoreError = viewModel.searchLoadMoreError,
                     onLoadMore = viewModel::loadMoreSearch,
                     onOpenBook = viewModel::openBook,
                     onOpenWeb = { viewModel.openWebFallback("https://novalpie.cc/search?sort_by=relevance") }
@@ -1343,6 +1344,17 @@ private fun HomeScreen(
                         }
                     }
                 }
+                // Reported beside the control that triggered it. A failed extra page no longer
+                // replaces the books already loaded.
+                state.favoritesLoadMoreError?.let { loadMoreError ->
+                    item {
+                        NpErrorState(
+                            message = loadMoreError,
+                            retryLabel = "重试加载更多",
+                            onRetry = onLoadMoreFavorites,
+                        )
+                    }
+                }
                 if (favorites.value.isNotEmpty()) {
                     item {
                         LoadMoreRow(
@@ -1381,6 +1393,7 @@ private fun SearchScreen(
     onSearch: (String?) -> Unit,
     searchCanLoadMore: Boolean,
     searchLoadingMore: Boolean,
+    searchLoadMoreError: String?,
     onLoadMore: () -> Unit,
     onOpenBook: (Long) -> Unit,
     onOpenWeb: () -> Unit
@@ -1408,6 +1421,7 @@ private fun SearchScreen(
                     results = results,
                     searchCanLoadMore = searchCanLoadMore,
                     searchLoadingMore = searchLoadingMore,
+                    searchLoadMoreError = searchLoadMoreError,
                     onSearch = { onSearch(null) },
                     onLoadMore = onLoadMore,
                     onOpenBook = onOpenBook
@@ -1453,6 +1467,7 @@ private fun LazyListScope.searchResultItems(
     results: LoadResult<List<NovelCard>>,
     searchCanLoadMore: Boolean,
     searchLoadingMore: Boolean,
+    searchLoadMoreError: String?,
     onSearch: () -> Unit,
     onLoadMore: () -> Unit,
     onOpenBook: (Long) -> Unit
@@ -1476,6 +1491,17 @@ private fun LazyListScope.searchResultItems(
                         for (i in 0 until (columns - rowBooks.size)) {
                             Spacer(Modifier.weight(1f))
                         }
+                    }
+                }
+                // A failed extra page is reported here, beside the control that triggered it,
+                // rather than replacing the results the user already has.
+                if (searchLoadMoreError != null) {
+                    item {
+                        NpErrorState(
+                            message = searchLoadMoreError,
+                            retryLabel = "重试加载更多",
+                            onRetry = onLoadMore,
+                        )
                     }
                 }
                 item {

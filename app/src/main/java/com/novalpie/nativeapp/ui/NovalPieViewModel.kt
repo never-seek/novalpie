@@ -135,6 +135,14 @@ data class HomeState(
     val favoritesPage: Int = 1,
     val favoritesCanLoadMore: Boolean = false,
     val favoritesLoadingMore: Boolean = false,
+    /**
+     * A failed *additional* page, kept separate from [favorites].
+     *
+     * Load-more failures used to overwrite `favorites` with `LoadResult.Error`, so a user who had
+     * paged through 80 books and then hit one timeout lost all 80 and had to start from page 1.
+     * The already-loaded pages are still perfectly good data; only the new page failed.
+     */
+    val favoritesLoadMoreError: String? = null,
     val selectedFavoriteGroupId: Long? = null
 )
 
@@ -533,6 +541,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     var searchCanLoadMore by mutableStateOf(false)
         private set
     var searchLoadingMore by mutableStateOf(false)
+        private set
+
+    /** See [HomeState.favoritesLoadMoreError]; search had the identical defect. */
+    var searchLoadMoreError by mutableStateOf<String?>(null)
         private set
     var bookCatalogQuery by mutableStateOf("")
         private set
@@ -3798,7 +3810,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val nextPage = homeState.favoritesPage + 1
         val requestSerial = homeRequestSerial
         val favoriteGroupId = homeState.selectedFavoriteGroupId
-        homeState = homeState.copy(favoritesLoadingMore = true)
+        homeState = homeState.copy(favoritesLoadingMore = true, favoritesLoadMoreError = null)
         viewModelScope.launch {
             val result = runCatching { api.favorites(page = nextPage, limit = PAGE_SIZE, groupId = favoriteGroupId) }
             if (!isFreshRequestSerial(requestSerial, homeRequestSerial)) return@launch
@@ -3809,13 +3821,16 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                         favorites = LoadResult.Success(merged),
                         favoritesPage = nextPage,
                         favoritesCanLoadMore = nextItems.size == PAGE_SIZE,
-                        favoritesLoadingMore = false
+                        favoritesLoadingMore = false,
+                        favoritesLoadMoreError = null
                     )
                 },
                 onFailure = {
+                    // Keep the pages already loaded; report only that this page failed. The page
+                    // counter is left alone so retrying asks for the same page again.
                     homeState.copy(
-                        favorites = LoadResult.Error(apiFailureMessage(VisibleUiLabels.Bookshelf, it)),
-                        favoritesLoadingMore = false
+                        favoritesLoadingMore = false,
+                        favoritesLoadMoreError = apiFailureMessage(VisibleUiLabels.Bookshelf, it)
                     )
                 }
             )
@@ -3830,6 +3845,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         searchPage = 1
         searchCanLoadMore = false
         searchLoadingMore = false
+        searchLoadMoreError = null
         val options = searchOptions
         val request = SearchRequestSnapshot(
             serial = requestSerial,
@@ -3913,9 +3929,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     searchResults = LoadResult.Success(mergeBooksById(currentResults, nextItems))
                     searchPage = nextPage
                     searchCanLoadMore = nextItems.size == PAGE_SIZE
+                    searchLoadMoreError = null
                 },
                 onFailure = {
-                    searchResults = LoadResult.Error(apiFailureMessage(VisibleUiLabels.Search, it))
+                    // Same reasoning as loadMoreFavorites: the results already on screen are good
+                    // data, so a failed extra page must not replace them with an error card.
+                    searchLoadMoreError = apiFailureMessage(VisibleUiLabels.Search, it)
                 }
             )
             searchLoadingMore = false

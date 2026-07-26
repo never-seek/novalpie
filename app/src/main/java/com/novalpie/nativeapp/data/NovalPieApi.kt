@@ -1661,7 +1661,13 @@ class NovalPieApi(
         callClient.newCall(request).execute().use { response ->
             val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException("NovalPie API ${response.code}: $path")
+                // The body was already read; carry the server's own explanation instead of
+                // discarding it and leaving the user with only a status code.
+                throw NovalPieApiException(
+                    statusCode = response.code,
+                    path = path,
+                    serverMessage = NovalPieApiException.extractServerMessage(responseBody),
+                )
             }
             return parseJsonOrString(responseBody)
         }
@@ -1678,7 +1684,15 @@ class NovalPieApi(
         }
         callClient.newCall(request).execute().use { response ->
             val responseBody = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw IOException("External API ${response.code}: $label")
+            if (!response.isSuccessful) {
+                // Same reasoning as execute(): the AI-regex helper used to discard the reason the
+                // external service rejected the call.
+                throw NovalPieApiException(
+                    statusCode = response.code,
+                    path = label,
+                    serverMessage = NovalPieApiException.extractServerMessage(responseBody),
+                )
+            }
             return parseJsonOrString(responseBody)
         }
     }
