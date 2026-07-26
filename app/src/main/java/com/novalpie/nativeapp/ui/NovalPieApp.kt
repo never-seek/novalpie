@@ -23,16 +23,14 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -88,12 +86,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -1444,14 +1440,29 @@ private fun SearchScreen(
 ) {
     val overview = discoverOverview(results)
     val sectionOrder = discoverSectionOrder(results, searchHistory.isNotEmpty())
-    LazyColumn(
+    // One LazyVerticalGrid, matching the bookshelf. Results are a real adaptive grid keyed on the
+    // book id, not a hand-chunked LazyColumn keyed on the joined ids of a row -- that old key re-keyed
+    // every row after an inserted page and defeated item reuse, and it hardcoded two columns so a
+    // tablet showed two enormous covers. Every non-result section rides along as a full-width span,
+    // so the search field and results stay one continuous scroll.
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = NovalPieSize.coverWidthGrid),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        contentPadding = PaddingValues(
+            start = NovalPieSpacing.screenHorizontal,
+            end = NovalPieSpacing.screenHorizontal,
+            top = NovalPieSpacing.sm,
+            bottom = NovalPieSpacing.listBottom
+        ),
+        horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.md),
+        verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.md)
     ) {
         sectionOrder.forEach { section ->
             when (section) {
-                DiscoverSection.SearchPanel -> item {
+                DiscoverSection.SearchPanel -> item(
+                    key = "discover-panel",
+                    span = { GridItemSpan(maxLineSpan) }
+                ) {
                     DiscoverSearchPanel(
                         overview = overview,
                         keyword = keyword,
@@ -1461,30 +1472,40 @@ private fun SearchScreen(
                         onOpenWeb = onOpenWeb
                     )
                 }
-                DiscoverSection.Results -> searchResultItems(
+                DiscoverSection.Results -> searchResultGridItems(
                     results = results,
                     searchCanLoadMore = searchCanLoadMore,
                     searchLoadingMore = searchLoadingMore,
                     searchLoadMoreError = searchLoadMoreError,
                     onSearch = { onSearch(null) },
                     onLoadMore = onLoadMore,
-                    onOpenBook = onOpenBook
+                    onOpenBook = onOpenBook,
+                    onOpenWeb = onOpenWeb
                 )
-                DiscoverSection.History -> item {
+                DiscoverSection.History -> item(
+                    key = "discover-history",
+                    span = { GridItemSpan(maxLineSpan) }
+                ) {
                     SearchHistorySection(
                         history = searchHistory,
                         onUseKeyword = onUseSearchHistory,
                         onClear = onClearSearchHistory
                     )
                 }
-                DiscoverSection.Tags -> item {
+                DiscoverSection.Tags -> item(
+                    key = "discover-tags",
+                    span = { GridItemSpan(maxLineSpan) }
+                ) {
                     SearchTagSection(
                         tags = tags,
                         onUseTag = onUseTag,
                         onRefresh = onRefreshTags
                     )
                 }
-                DiscoverSection.Filters -> item {
+                DiscoverSection.Filters -> item(
+                    key = "discover-filters",
+                    span = { GridItemSpan(maxLineSpan) }
+                ) {
                     SearchOptionSection(
                         options = options,
                         onSortByChange = onSortByChange,
@@ -1496,7 +1517,10 @@ private fun SearchScreen(
                         onWordCountRangeChange = onWordCountRangeChange
                     )
                 }
-                DiscoverSection.IdlePrompts -> item {
+                DiscoverSection.IdlePrompts -> item(
+                    key = "discover-idle",
+                    span = { GridItemSpan(maxLineSpan) }
+                ) {
                     DiscoverIdlePanel(
                         onUsePrompt = onKeywordChange,
                         onSearch = onSearch
@@ -1507,48 +1531,53 @@ private fun SearchScreen(
     }
 }
 
-private fun LazyListScope.searchResultItems(
+private fun LazyGridScope.searchResultGridItems(
     results: LoadResult<List<NovelCard>>,
     searchCanLoadMore: Boolean,
     searchLoadingMore: Boolean,
     searchLoadMoreError: String?,
     onSearch: () -> Unit,
     onLoadMore: () -> Unit,
-    onOpenBook: (Long) -> Unit
+    onOpenBook: (Long) -> Unit,
+    onOpenWeb: () -> Unit
 ) {
     when (results) {
         LoadResult.Idle -> Unit
-        LoadResult.Loading -> item { LoadingBlock("正在请求 NovalPie 搜索") }
-        is LoadResult.Error -> item { ErrorBlock(results.message, retryLabel = retryActionLabel("搜索"), onRetry = onSearch) }
+        LoadResult.Loading -> item(key = "search-results-loading", span = { GridItemSpan(maxLineSpan) }) {
+            LibraryLoadingBlock("正在请求 NovalPie 搜索")
+        }
+        is LoadResult.Error -> item(key = "search-results-error", span = { GridItemSpan(maxLineSpan) }) {
+            NpErrorState(
+                message = results.message,
+                retryLabel = retryActionLabel("搜索"),
+                onRetry = onSearch,
+                secondaryLabel = "打开网页",
+                onSecondary = onOpenWeb
+            )
+        }
         is LoadResult.Success -> {
             if (results.value.isEmpty()) {
-                item { StatusText("没有找到搜索结果") }
+                item(key = "search-results-empty", span = { GridItemSpan(maxLineSpan) }) {
+                    NpEmptyState(title = "没有找到搜索结果")
+                }
             } else {
-                val columns = novelGridColumnCount()
-                items(results.value.chunked(columns), key = { it.joinToString { b -> b.id.toString() } }) { rowBooks ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                        for (book in rowBooks) {
-                            Box(Modifier.weight(1f)) {
-                                NovelCardItem(book = book, onClick = { onOpenBook(book.id) })
-                            }
-                        }
-                        for (i in 0 until (columns - rowBooks.size)) {
-                            Spacer(Modifier.weight(1f))
-                        }
-                    }
+                // Adaptive grid cells keyed on the book id: no more re-keying a whole row when a page
+                // is appended, and covers size off the token instead of a hardcoded column count.
+                items(items = results.value, key = { book -> book.id }) { book ->
+                    NovelCardItem(book = book, onClick = { onOpenBook(book.id) })
                 }
                 // A failed extra page is reported here, beside the control that triggered it,
                 // rather than replacing the results the user already has.
-                if (searchLoadMoreError != null) {
-                    item {
+                searchLoadMoreError?.let { loadMoreError ->
+                    item(key = "search-results-loadmore-error", span = { GridItemSpan(maxLineSpan) }) {
                         NpErrorState(
-                            message = searchLoadMoreError,
+                            message = loadMoreError,
                             retryLabel = "重试加载更多",
                             onRetry = onLoadMore,
                         )
                     }
                 }
-                item {
+                item(key = "search-results-loadmore", span = { GridItemSpan(maxLineSpan) }) {
                     LoadMoreRow(
                         canLoadMore = searchCanLoadMore,
                         loading = searchLoadingMore,
@@ -1563,46 +1592,36 @@ private fun LazyListScope.searchResultItems(
 }
 
 @Composable
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 private fun SearchTagSection(
     tags: LoadResult<List<NovelTag>>,
     onUseTag: (String) -> Unit,
     onRefresh: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface
-    ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("热门标签", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                TextButton(onClick = onRefresh) {
-                    Icon(Icons.Filled.Refresh, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("刷新")
-                }
-            }
-            when (tags) {
-                LoadResult.Idle -> StatusText("打开发现页后同步网站标签")
-                LoadResult.Loading -> LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                is LoadResult.Error -> ErrorBlock(tags.message, retryLabel = "重试标签", onRetry = onRefresh)
-                is LoadResult.Success -> {
-                    if (tags.value.isEmpty()) {
-                        StatusText("暂无可显示标签")
-                    } else {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(tags.value) { tag ->
-                                FilterChip(
-                                    selected = false,
-                                    onClick = { onUseTag(tag.name) },
-                                    label = { Text(discoverTagLabels(listOf(tag)).single()) }
-                                )
-                            }
+    // A flat section like the bookshelf, not a Surface card: header with a 刷新 action, then content.
+    Column {
+        NpSectionHeader(title = "热门标签", actionLabel = "刷新", onAction = onRefresh)
+        when (tags) {
+            LoadResult.Idle -> LibraryStatusLine("打开发现页后同步网站标签")
+            // Reserve the height a chip row will take, so arriving tags do not shove the filters down.
+            LoadResult.Loading -> NpSkeleton(height = NovalPieSize.minTouchTarget, widthFraction = 0.7f)
+            is LoadResult.Error -> NpErrorState(
+                message = tags.message,
+                retryLabel = "重试标签",
+                onRetry = onRefresh
+            )
+            is LoadResult.Success -> {
+                if (tags.value.isEmpty()) {
+                    LibraryStatusLine("暂无可显示标签")
+                } else {
+                    // FlowRow, not LazyRow: hot tags wrap instead of clipping the last one mid-glyph.
+                    NpChipRow {
+                        tags.value.forEach { tag ->
+                            FilterChip(
+                                selected = false,
+                                onClick = { onUseTag(tag.name) },
+                                label = { Text(discoverTagLabels(listOf(tag)).single()) }
+                            )
                         }
                     }
                 }
@@ -1612,25 +1631,27 @@ private fun SearchTagSection(
 }
 
 @Composable
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 private fun DiscoverIdlePanel(
     onUsePrompt: (String) -> Unit,
     onSearch: (String) -> Unit
 ) {
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(discoverIdleMessage(), style = MaterialTheme.typography.bodyMedium)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(discoverQuickPrompts()) { prompt ->
-                    FilterChip(
-                        selected = false,
-                        onClick = {
-                            onUsePrompt(prompt)
-                            onSearch(prompt)
-                        },
-                        label = { Text(prompt) }
-                    )
-                }
+    Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)) {
+        Text(
+            discoverIdleMessage(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        NpChipRow {
+            discoverQuickPrompts().forEach { prompt ->
+                FilterChip(
+                    selected = false,
+                    onClick = {
+                        onUsePrompt(prompt)
+                        onSearch(prompt)
+                    },
+                    label = { Text(prompt) }
+                )
             }
         }
     }
@@ -1660,89 +1681,63 @@ private fun DiscoverSearchPanel(
     onSearch: (String?) -> Unit,
     onOpenWeb: () -> Unit
 ) {
-    val focusManager = LocalFocusManager.current
-    val submitSearch = {
-        focusManager.clearFocus()
-        onSearch(keyword)
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(overview.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text(
-                    overview.subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
-                    Text(
-                        overview.statusLabel,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-                IconButton(onClick = onOpenWeb) {
-                    Icon(Icons.Filled.OpenInBrowser, contentDescription = "打开网页搜索")
-                }
-            }
-        }
-        OutlinedTextField(
+    Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)) {
+        // One search input, the same NpSearchField the bookshelf uses, replacing the OutlinedTextField
+        // with a floating label -- two adjacent tabs no longer offer two different-looking search
+        // boxes. Submitting runs the search and dismisses the keyboard. The screen is named once, by
+        // the top bar and the tab, so the old titleLarge 发现 heading that pushed results below the
+        // fold is gone.
+        NpSearchField(
             value = keyword,
             onValueChange = onKeywordChange,
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text(overview.hint) },
-            trailingIcon = {
-                IconButton(onClick = submitSearch) {
-                    Icon(Icons.Filled.Search, contentDescription = "搜索", tint = MaterialTheme.colorScheme.primary)
-                }
-            },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { submitSearch() })
+            onSearch = { onSearch(keyword) },
+            placeholder = overview.hint,
+            clearContentDescription = "清除关键词"
         )
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+        // Live search status and the web-search escape hatch on one compact line.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)
         ) {
+            NpChip(label = overview.statusLabel, tone = NpChipTone.Neutral)
+            Spacer(modifier = Modifier.weight(1f))
+            IconButton(
+                onClick = onOpenWeb,
+                modifier = Modifier.size(NovalPieSize.minTouchTarget)
+            ) {
+                Icon(
+                    Icons.Filled.OpenInBrowser,
+                    contentDescription = "打开网页搜索",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(NovalPieSize.iconLg)
+                )
+            }
+        }
+        // The active filter selections, read-only summaries that wrap instead of clipping. The
+        // editable chips live in the 筛选 section below.
+        NpChipRow {
             discoverSelectedFilterSummaries(options).forEach { summary ->
-                LibraryStatPill(summary)
+                NpChip(label = summary, tone = NpChipTone.Neutral)
             }
         }
     }
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun SearchHistorySection(
     history: List<String>,
     onUseKeyword: (String) -> Unit,
     onClear: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface
-    ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("搜索历史", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                TextButton(onClick = onClear) { Text("清空") }
-            }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(history, key = { it }) { keyword ->
-                    OutlinedButton(onClick = { onUseKeyword(keyword) }) {
-                        Text(keyword, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
+    Column {
+        NpSectionHeader(title = "搜索历史", actionLabel = "清空", onAction = onClear)
+        // Wrapping row of recent keywords, not a LazyRow that scrolled the oldest ones off-screen.
+        NpChipRow {
+            history.forEach { keyword ->
+                OutlinedButton(onClick = { onUseKeyword(keyword) }) {
+                    Text(keyword, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -1760,46 +1755,40 @@ private fun SearchOptionSection(
     onSourceChange: (String) -> Unit,
     onWordCountRangeChange: (String) -> Unit
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface
-    ) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(Icons.Filled.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Text("筛选", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                discoverFilterGroups(options).forEach { group ->
-                    FilterChoiceRail(
-                        group = group,
-                        onSelected = when (group.label) {
-                            "排序" -> onSortByChange
-                            "顺序" -> onSortOrderChange
-                            "范围" -> onScopeChange
-                            "内容" -> onAdultFilterChange
-                            "字数" -> onWordCountRangeChange
-                            "来源" -> onSourceChange
-                            else -> onMatchTypeChange
-                        }
-                    )
+    Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.md)) {
+        NpSectionHeader(title = "筛选")
+        // The callback is chosen by the Chinese group label, so the labels below and in
+        // discoverFilterGroups must stay in lockstep -- renaming one silently rewires the screen.
+        discoverFilterGroups(options).forEach { group ->
+            FilterChoiceRail(
+                group = group,
+                onSelected = when (group.label) {
+                    "排序" -> onSortByChange
+                    "顺序" -> onSortOrderChange
+                    "范围" -> onScopeChange
+                    "内容" -> onAdultFilterChange
+                    "字数" -> onWordCountRangeChange
+                    "来源" -> onSourceChange
+                    else -> onMatchTypeChange
                 }
-            }
+            )
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun FilterChoiceRail(group: DiscoverFilterGroup, onSelected: (String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(group.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(horizontal = 2.dp)
-        ) {
-            items(group.choices) { choice ->
+    Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs)) {
+        Text(
+            group.label,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        // FlowRow, not LazyRow: this is the row that clipped "字…" through the glyph at the screen
+        // edge with nothing to say more choices existed.
+        NpChipRow {
+            group.choices.forEach { choice ->
                 FilterChip(
                     selected = choice.selected,
                     onClick = { onSelected(choice.value) },
