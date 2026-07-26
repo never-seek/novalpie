@@ -19,11 +19,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -36,6 +41,7 @@ import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -84,6 +90,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -95,9 +102,18 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
+import com.novalpie.nativeapp.ui.design.NovalPieRadius
+import com.novalpie.nativeapp.ui.design.NovalPieSize
+import com.novalpie.nativeapp.ui.design.NovalPieSpacing
 import com.novalpie.nativeapp.ui.design.NpBookRowSkeleton
+import com.novalpie.nativeapp.ui.design.NpChip
+import com.novalpie.nativeapp.ui.design.NpChipRow
+import com.novalpie.nativeapp.ui.design.NpChipTone
 import com.novalpie.nativeapp.ui.design.NpEmptyState
 import com.novalpie.nativeapp.ui.design.NpErrorState
+import com.novalpie.nativeapp.ui.design.NpSearchField
+import com.novalpie.nativeapp.ui.design.NpSectionHeader
+import com.novalpie.nativeapp.ui.design.NpSkeleton
 import com.novalpie.nativeapp.model.Chapter
 import com.novalpie.nativeapp.model.ChapterComment
 import com.novalpie.nativeapp.model.FavoriteGroup
@@ -1272,12 +1288,27 @@ private fun HomeScreen(
         recentCount = recentReaderProgresses.size
     )
 
-    LazyColumn(
+    val secondaryRecent = recentReaderProgresses.filterNot { it == readerProgress }
+
+    // One LazyVerticalGrid, not a LazyColumn of hand-chunked rows. The old grid keyed each row on
+    // the joined ids of the books in it, so loading one more page re-keyed every row after the
+    // insertion point and threw away item reuse; and it hardcoded two columns, so a tablet or a
+    // landscape phone showed two enormous covers. Adaptive columns size off the cover token, and
+    // the header blocks ride along as full-width spans so the whole screen stays one scroll.
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = NovalPieSize.coverWidthGrid),
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+        // No extra bottom inset on top of the Scaffold's: listBottom is the whole budget.
+        contentPadding = PaddingValues(
+            start = NovalPieSpacing.screenHorizontal,
+            end = NovalPieSpacing.screenHorizontal,
+            top = NovalPieSpacing.sm,
+            bottom = NovalPieSpacing.listBottom
+        ),
+        horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.md),
+        verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.md)
     ) {
-        item {
+        item(key = "library-overview", span = { GridItemSpan(maxLineSpan) }) {
             LibraryOverviewBlock(
                 overview = overview,
                 onRefresh = onRefresh,
@@ -1287,7 +1318,7 @@ private fun HomeScreen(
             )
         }
         readerProgress?.let { progress ->
-            item {
+            item(key = "library-continue", span = { GridItemSpan(maxLineSpan) }) {
                 ContinueReadingCard(
                     progress = progress,
                     onContinue = { onContinueReading(progress) },
@@ -1295,59 +1326,72 @@ private fun HomeScreen(
                 )
             }
         }
-        val secondaryRecent = recentReaderProgresses.filterNot { it == readerProgress }
         if (secondaryRecent.isNotEmpty()) {
-            item {
+            item(key = "library-recent", span = { GridItemSpan(maxLineSpan) }) {
                 RecentReadingSection(
                     progresses = secondaryRecent,
                     onContinueReading = onContinueReading
                 )
             }
         }
-        item {
+        item(key = "library-controls", span = { GridItemSpan(maxLineSpan) }) {
             LibraryShelfControls(
                 groups = state.groups,
                 selectedGroupId = state.selectedFavoriteGroupId,
                 value = bookshelfQuery,
                 onValueChange = onBookshelfQueryChange,
-                onGroupSelected = onFavoriteGroupSelected
+                onGroupSelected = onFavoriteGroupSelected,
+                onRetry = onRefresh
             )
         }
-        item { Text(libraryFavoritesTitle(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        item(key = "library-favorites-header", span = { GridItemSpan(maxLineSpan) }) {
+            NpSectionHeader(title = libraryFavoritesTitle())
+        }
         when (val favorites = state.favorites) {
-            LoadResult.Idle -> item { StatusText("等待加载书架") }
-            LoadResult.Loading -> item { LoadingBlock("正在加载收藏书籍") }
-            is LoadResult.Error -> item { ErrorBlock(favorites.message, retryLabel = retryActionLabel("书架"), onRetry = onRefresh) }
+            LoadResult.Idle -> item(key = "library-favorites-idle", span = { GridItemSpan(maxLineSpan) }) {
+                LibraryStatusLine("等待加载书架")
+            }
+            LoadResult.Loading -> item(key = "library-favorites-loading", span = { GridItemSpan(maxLineSpan) }) {
+                LibraryLoadingBlock("正在加载收藏书籍")
+            }
+            is LoadResult.Error -> item(key = "library-favorites-error", span = { GridItemSpan(maxLineSpan) }) {
+                NpErrorState(
+                    message = favorites.message,
+                    retryLabel = retryActionLabel("书架"),
+                    onRetry = onRefresh,
+                    secondaryLabel = "打开网页",
+                    onSecondary = onOpenWeb
+                )
+            }
             is LoadResult.Success -> {
                 val visibleBooks = filterBooks(favorites.value, bookshelfQuery)
                 when {
-                    favorites.value.isEmpty() -> item {
+                    favorites.value.isEmpty() -> item(
+                        key = "library-favorites-empty",
+                        span = { GridItemSpan(maxLineSpan) }
+                    ) {
                         EmptyCollectionState(
                             onOpenLogin = onOpenLogin,
                             onOpenWeb = onOpenWeb
                         )
                     }
-                    visibleBooks.isEmpty() -> item { StatusText("没有匹配的收藏") }
-                    else -> {
-                        val columns = novelGridColumnCount()
-                        items(visibleBooks.chunked(columns), key = { it.joinToString { b -> b.id.toString() } }) { rowBooks ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                                for (book in rowBooks) {
-                                    Box(Modifier.weight(1f)) {
-                                        NovelCardItem(book = book, onClick = { onOpenBook(book.id) })
-                                    }
-                                }
-                                for (i in 0 until (columns - rowBooks.size)) {
-                                    Spacer(Modifier.weight(1f))
-                                }
-                            }
-                        }
+                    visibleBooks.isEmpty() -> item(
+                        key = "library-favorites-nomatch",
+                        span = { GridItemSpan(maxLineSpan) }
+                    ) {
+                        NpEmptyState(
+                            title = "没有匹配的收藏",
+                            description = "换个关键词，或清空筛选后重新浏览书架。"
+                        )
+                    }
+                    else -> items(items = visibleBooks, key = { book -> book.id }) { book ->
+                        NovelCardItem(book = book, onClick = { onOpenBook(book.id) })
                     }
                 }
                 // Reported beside the control that triggered it. A failed extra page no longer
                 // replaces the books already loaded.
                 state.favoritesLoadMoreError?.let { loadMoreError ->
-                    item {
+                    item(key = "library-loadmore-error", span = { GridItemSpan(maxLineSpan) }) {
                         NpErrorState(
                             message = loadMoreError,
                             retryLabel = "重试加载更多",
@@ -1356,7 +1400,7 @@ private fun HomeScreen(
                     }
                 }
                 if (favorites.value.isNotEmpty()) {
-                    item {
+                    item(key = "library-loadmore", span = { GridItemSpan(maxLineSpan) }) {
                         LoadMoreRow(
                             canLoadMore = state.favoritesCanLoadMore,
                             loading = state.favoritesLoadingMore,
@@ -2694,6 +2738,14 @@ private fun UserSection(user: LoadResult<UserProfile>) {
     }
 }
 
+/**
+ * The bookshelf header.
+ *
+ * This block used to own the whole first screen: a title pair, a sync pill, two icon buttons, a
+ * full-height search bar and a 3-cell metric card with titleLarge numbers — roughly 200dp of chrome
+ * before the first book cover. The counts are metadata, not the point of the tab, so they now ride
+ * in one wrapping chip row beside the sync state instead of a card of their own.
+ */
 @Composable
 private fun LibraryOverviewBlock(
     overview: LibraryOverview,
@@ -2702,148 +2754,224 @@ private fun LibraryOverviewBlock(
     onOpenLogin: () -> Unit,
     onOpenWeb: () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(overview.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    overview.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.semantics { heading() }
+                )
                 Text(
                     overview.subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Surface(shape = RoundedCornerShape(4.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
-                    Text(
-                        overview.syncLabel,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                }
-                IconButton(onClick = onRefresh) {
-                    Icon(Icons.Filled.Refresh, contentDescription = "同步书架", tint = MaterialTheme.colorScheme.primary)
-                }
-                IconButton(onClick = onOpenWeb) {
-                    Icon(Icons.Filled.OpenInBrowser, contentDescription = "打开网页收藏")
-                }
+            IconButton(
+                onClick = onRefresh,
+                modifier = Modifier.size(NovalPieSize.minTouchTarget)
+            ) {
+                Icon(
+                    Icons.Filled.Refresh,
+                    contentDescription = "同步书架",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(NovalPieSize.iconLg)
+                )
+            }
+            IconButton(
+                onClick = onOpenWeb,
+                modifier = Modifier.size(NovalPieSize.minTouchTarget)
+            ) {
+                Icon(
+                    Icons.Filled.OpenInBrowser,
+                    contentDescription = "打开网页收藏",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(NovalPieSize.iconLg)
+                )
             }
         }
-        Surface(
-            modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenSearch),
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.surface
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    "搜索小说、作者或标签",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+        // Sync state and the three counts, coloured by meaning: an unsynced shelf is the one thing
+        // here the user may need to act on, so it is the only warning-toned chip.
+        NpChipRow {
+            NpChip(
+                label = overview.syncLabel,
+                tone = if (overview.syncLabel == "已同步") NpChipTone.Status else NpChipTone.Warning
+            )
+            overview.stats.take(3).forEachIndexed { index, stat ->
+                LibraryMetricCell(
+                    label = when (index) {
+                        0 -> "收藏"
+                        1 -> "分组"
+                        else -> "最近"
+                    },
+                    value = stat.filter(Char::isDigit)
                 )
-                Icon(Icons.Filled.Search, contentDescription = "进入搜索", tint = MaterialTheme.colorScheme.primary)
             }
         }
         if (overview.syncLabel == "未同步") {
-            TextButton(onClick = onOpenLogin, modifier = Modifier.align(Alignment.Start)) {
-                Text("登录后同步收藏")
+            TextButton(
+                onClick = onOpenLogin,
+                modifier = Modifier
+                    .align(Alignment.Start)
+                    .heightIn(min = NovalPieSize.minTouchTarget)
+            ) {
+                Text("登录后同步收藏", maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.secondaryContainer
+        LibrarySearchEntry(onOpenSearch = onOpenSearch)
+    }
+}
+
+/** One shelf count. A chip, not a titleLarge number in a card: it is metadata about the grid. */
+@Composable
+private fun LibraryMetricCell(label: String, value: String) {
+    NpChip(label = "$label ${value.ifBlank { "0" }}", tone = NpChipTone.Neutral)
+}
+
+/** Entry point to the Discover tab. Distinct from the local 筛选书架 field below. */
+@Composable
+private fun LibrarySearchEntry(onOpenSearch: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = NovalPieSize.minTouchTarget)
+            .clickable(onClick = onOpenSearch),
+        shape = RoundedCornerShape(NovalPieRadius.pill),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
+    ) {
+        Row(
+            modifier = Modifier.padding(
+                horizontal = NovalPieSpacing.md,
+                vertical = NovalPieSpacing.sm
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)
         ) {
-            Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                overview.stats.take(3).forEachIndexed { index, stat ->
-                    LibraryMetricCell(
-                        modifier = Modifier.weight(1f),
-                        label = when (index) {
-                            0 -> "收藏"
-                            1 -> "分组"
-                            else -> "最近"
-                        },
-                        value = stat.filter(Char::isDigit)
-                    )
-                }
-            }
+            Icon(
+                Icons.Filled.Search,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(NovalPieSize.iconMd)
+            )
+            Text(
+                "搜索小说、作者或标签",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Icon(
+                Icons.Filled.Explore,
+                contentDescription = "进入搜索",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(NovalPieSize.iconMd)
+            )
         }
     }
 }
 
+/** An Idle / not-yet-requested notice. Quiet, because nothing has gone wrong. */
 @Composable
-private fun LibraryMetricCell(modifier: Modifier, label: String, value: String) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun LibraryStatusLine(message: String) {
+    Text(
+        message,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = NovalPieSpacing.sm)
+    )
+}
+
+/**
+ * A pending shelf request. Reserves roughly the space the books will take, so the arriving grid
+ * does not shove the header off the screen the way a bare progress bar did.
+ */
+@Composable
+private fun LibraryLoadingBlock(message: String, rows: Int = 3) {
+    Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)) {
         Text(
-            value.ifBlank { "0" },
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface
+            message,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
+        repeat(rows) { NpBookRowSkeleton() }
     }
 }
 
 @Composable
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 private fun LibraryShelfControls(
     groups: LoadResult<List<FavoriteGroup>>,
     selectedGroupId: Long?,
     value: String,
     onValueChange: (String) -> Unit,
-    onGroupSelected: (Long?) -> Unit
+    onGroupSelected: (Long?) -> Unit,
+    onRetry: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface
-    ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(Icons.Filled.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Text("分组与筛选", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            }
-            when (groups) {
-                LoadResult.Idle -> StatusText("等待加载分组")
-                LoadResult.Loading -> LoadingBlock("正在加载收藏分组")
-                is LoadResult.Error -> Text(groups.message, style = MaterialTheme.typography.bodySmall)
-                is LoadResult.Success -> {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        item {
-                            FilterChip(
-                                selected = selectedGroupId == null,
-                                onClick = { onGroupSelected(null) },
-                                label = { Text("全部") }
-                            )
-                        }
-                        items(groups.value.take(8)) { group ->
-                            FilterChip(
-                                selected = group.id != null && selectedGroupId == group.id,
-                                enabled = group.id != null,
-                                onClick = { onGroupSelected(group.id) },
-                                label = { Text("${group.name}${group.count?.let { " $it" } ?: ""}") }
-                            )
-                        }
+    Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)) {
+        when (groups) {
+            LoadResult.Idle -> LibraryStatusLine("等待加载分组")
+            // Reserves the height a chip row will occupy, so the controls do not jump when the
+            // groups arrive.
+            LoadResult.Loading -> NpSkeleton(height = NovalPieSize.minTouchTarget, widthFraction = 0.6f)
+            // Was a bare Text of the message: indistinguishable from ordinary copy, and with no way
+            // to retry a failed group load short of refreshing the whole screen.
+            is LoadResult.Error -> NpErrorState(
+                message = groups.message,
+                retryLabel = "重新加载分组",
+                onRetry = onRetry
+            )
+            is LoadResult.Success -> {
+                // FlowRow, not LazyRow. The group chips used to scroll horizontally and clip the
+                // last one mid-glyph with no affordance suggesting more existed.
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs),
+                    verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs)
+                ) {
+                    FilterChip(
+                        selected = selectedGroupId == null,
+                        onClick = { onGroupSelected(null) },
+                        label = { Text("全部") }
+                    )
+                    groups.value.take(8).forEach { group ->
+                        FilterChip(
+                            selected = group.id != null && selectedGroupId == group.id,
+                            enabled = group.id != null,
+                            onClick = { onGroupSelected(group.id) },
+                            label = {
+                                Text(
+                                    "${group.name}${group.count?.let { " $it" } ?: ""}",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        )
                     }
                 }
             }
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text("筛选书架") }
-            )
         }
+        NpSearchField(
+            value = value,
+            onValueChange = onValueChange,
+            onSearch = {},
+            placeholder = "筛选书架",
+            clearContentDescription = "清除筛选"
+        )
     }
 }
 
