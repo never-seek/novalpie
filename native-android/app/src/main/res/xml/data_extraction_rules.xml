@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ (android:dataExtractionRules).
+
+  The auth JWT is excluded from both cloud backup and device-to-device transfer.
+  A transferred token would be a live session on another device.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="novalpie_native_auth.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="novalpie_native_auth.xml" />
+    </device-transfer>
+</data-extraction-rules>

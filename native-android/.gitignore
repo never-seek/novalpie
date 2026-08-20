@@ -1,0 +1,30 @@
+# Build output
+build/
+app/build/
+.gradle/
+.cxx/
+
+# Local machine configuration
+local.properties
+signing.properties
+*.jks
+*.keystore
+
+# JVM crash / replay logs from the Gradle memory failures on this machine
+hs_err_pid*.log
+replay_pid*.log
+*.hprof
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+
+# QA evidence — large binaries, regenerated per run
+qa-screenshots/
+
+# Backups produced during the refactor
+*.prebaseline
+
+# Kotlin compiler error logs
+.kotlin/

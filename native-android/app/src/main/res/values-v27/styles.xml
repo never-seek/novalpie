@@ -1,0 +1,10 @@
+<resources>
+    <!-- API 27 introduced light navigation-bar icons; keep it out of the Android 6 base theme. -->
+    <style name="Theme.NovalPie" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

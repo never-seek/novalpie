@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 11 and below (android:fullBackupContent).
+
+  novalpie_native_auth holds the site JWT. allowBackup was true with no exclusions,
+  so `adb backup` could lift a logged-in session off the device. Reading preferences
+  (theme, font size, shelf filters, drafts) are still worth backing up.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="novalpie_native_auth.xml" />
+</full-backup-content>

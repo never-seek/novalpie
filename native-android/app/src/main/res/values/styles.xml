@@ -1,0 +1,37 @@
+<resources>
+    <!--
+      The launch theme. This is the only styling that exists before Compose draws its first
+      frame, so it decides what a cold start looks like.
+
+      Two defects are fixed here.
+
+      The parent was @android:style/Theme.Material.NoActionBar — the *dark* platform theme; the
+      light variant is Theme.Material.Light.NoActionBar. Its windowBackground is dark grey, so
+      every cold start of this light app flashed dark before Compose took over.
+
+      statusBarColor and navigationBarColor were hardcoded to #FFF8F4, a warm cream that appears
+      nowhere else in the app. Against the #F2F2F2 page and #FFFFFF top bar that produced a
+      three-band seam across the top of every screen, and in dark mode it left cream bars with
+      dark icons above a near-black app. The bars are now transparent and NovalPieTheme drives
+      their icon tint from the active colour scheme, so they can never disagree with the content
+      again.
+    -->
+    <style name="Theme.NovalPie" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- Seed values only; NovalPieTheme sets these per theme at runtime via WindowCompat. -->
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <!--
+      Splash theme. The app previously had no splash at all, so a cold start showed a bare
+      window until the first Compose frame. Uses the platform splash on API 31+ and the
+      androidx compat implementation below that (minSdk is 23).
+    -->
+    <style name="Theme.NovalPie.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.NovalPie</item>
+    </style>
+</resources>
