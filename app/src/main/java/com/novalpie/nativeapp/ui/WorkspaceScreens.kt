@@ -45,7 +45,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -80,6 +79,7 @@ internal fun WorkspaceScreen(
     onSaveApi: (WorkspaceApiDraft) -> Unit,
     onDeleteLocalApi: (WorkspaceLocalApiConfig) -> Unit,
     onDeleteServerApi: (WorkspaceApiConfig) -> Unit,
+    onToggleServerApi: (WorkspaceApiConfig) -> Unit,
     onSaveCookie: (WorkspaceCookieDraft) -> Unit,
     onToggleCookie: (WorkspaceCookieConfig) -> Unit,
     onDeleteCookie: (WorkspaceCookieConfig) -> Unit,
@@ -108,7 +108,13 @@ internal fun WorkspaceScreen(
 
         when (state.selectedTab) {
             WorkspaceTab.Overview -> workspaceOverviewItems(state, onRefresh, onOpenUpload)
-            WorkspaceTab.Apis -> workspaceApiItems(state, onSaveApi, onDeleteLocalApi, onDeleteServerApi)
+            WorkspaceTab.Apis -> workspaceApiItems(
+                state = state,
+                onSaveApi = onSaveApi,
+                onDeleteLocalApi = onDeleteLocalApi,
+                onDeleteServerApi = onDeleteServerApi,
+                onToggleServerApi = onToggleServerApi
+            )
             WorkspaceTab.Cookies -> workspaceCookieItems(state, onSaveCookie, onToggleCookie, onDeleteCookie)
             WorkspaceTab.Queue -> workspaceQueueItems(state.jobs, onUpdateJobStatus, onDeleteJob, onOpenUpload)
         }
@@ -225,7 +231,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.workspaceApiItems(
     state: WorkspaceState,
     onSaveApi: (WorkspaceApiDraft) -> Unit,
     onDeleteLocalApi: (WorkspaceLocalApiConfig) -> Unit,
-    onDeleteServerApi: (WorkspaceApiConfig) -> Unit
+    onDeleteServerApi: (WorkspaceApiConfig) -> Unit,
+    onToggleServerApi: (WorkspaceApiConfig) -> Unit
 ) {
     item { WorkspaceApiHeader(onSaveApi) }
     item { Text("本地 API", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
@@ -240,7 +247,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.workspaceApiItems(
         is LoadResult.Success -> {
             if (configs.value.isEmpty()) item { WorkspaceEmpty("暂无服务器共享 API") }
             items(configs.value, key = { "server-${it.id}" }) { config ->
-                WorkspaceServerApiCard(config, onSaveApi, onDeleteServerApi)
+                WorkspaceServerApiCard(config, onSaveApi, onDeleteServerApi, onToggleServerApi)
             }
         }
     }
@@ -287,23 +294,53 @@ private fun WorkspaceLocalApiCard(
 private fun WorkspaceServerApiCard(
     config: WorkspaceApiConfig,
     onSave: (WorkspaceApiDraft) -> Unit,
-    onDelete: (WorkspaceApiConfig) -> Unit
+    onDelete: (WorkspaceApiConfig) -> Unit,
+    onToggle: (WorkspaceApiConfig) -> Unit
 ) {
     var editing by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
+    var confirmingToggle by remember { mutableStateOf(false) }
     if (editing) WorkspaceApiDialog(
         WorkspaceApiDraft(serverId = config.id, name = config.name, model = config.model, endpoint = config.endpoint, apiKey = config.apiKey.orEmpty(), concurrency = config.concurrency.toString(), shareToServer = true),
         { editing = false }
     ) { editing = false; onSave(it) }
     if (deleting) WorkspaceDeleteDialog("删除共享 API", "该配置将从服务器删除。", { deleting = false }) { deleting = false; onDelete(config) }
+    if (confirmingToggle) {
+        val actionLabel = workspaceApiToggleActionLabel(config.isActive)
+        AlertDialog(
+            onDismissRequest = { confirmingToggle = false },
+            title = { Text("${actionLabel}共享 API") },
+            text = { Text("确定要${actionLabel} ${config.name} 吗？这会立即影响服务器上的翻译服务。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmingToggle = false
+                    onToggle(config)
+                }) { Text(actionLabel) }
+            },
+            dismissButton = { TextButton(onClick = { confirmingToggle = false }) { Text("取消") } }
+        )
+    }
+    val actualStatus = config.actualStatus?.takeIf(String::isNotBlank)
+    val activationLabel = workspaceApiStatusLabel(config.activationStatus, config.isActive)
     WorkspaceApiCardBody(
         name = config.name,
         model = config.model,
         endpoint = config.endpoint,
         apiKey = config.apiKey,
-        badges = listOfNotNull(config.approvalStatus, if (config.isHealthy == true) "健康" else "未检测", "${config.totalRequests} 次"),
+        badges = buildList {
+            add(activationLabel)
+            actualStatus?.let { raw ->
+                val actualLabel = workspaceApiStatusLabel(raw, config.isActive)
+                if (actualLabel != activationLabel) add("实际 $actualLabel")
+            }
+            config.approvalStatus?.let(::add)
+            add(if (config.isHealthy == true) "健康" else "未检测")
+            add("${config.totalRequests} 次")
+        },
         onEdit = { editing = true },
-        onDelete = { deleting = true }
+        onDelete = { deleting = true },
+        statusActionLabel = workspaceApiToggleActionLabel(config.isActive),
+        onStatusAction = { confirmingToggle = true }
     )
 }
 
@@ -315,7 +352,9 @@ private fun WorkspaceApiCardBody(
     apiKey: String?,
     badges: List<String>,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    statusActionLabel: String? = null,
+    onStatusAction: (() -> Unit)? = null
 ) {
     ElevatedCard(shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -326,6 +365,9 @@ private fun WorkspaceApiCardBody(
             Text("$model · ${maskWorkspaceApiKey(apiKey)}", style = MaterialTheme.typography.bodySmall)
             Text(endpoint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) { items(badges) { AssistChip(onClick = {}, label = { Text(it) }) } }
+            if (statusActionLabel != null && onStatusAction != null) {
+                OutlinedButton(onClick = onStatusAction) { Text(statusActionLabel) }
+            }
         }
     }
 }

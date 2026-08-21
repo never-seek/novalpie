@@ -11,13 +11,16 @@ import com.novalpie.nativeapp.model.BookEditPermissions
 import com.novalpie.nativeapp.model.BookEditRequest
 import com.novalpie.nativeapp.model.BookEditResult
 import com.novalpie.nativeapp.model.DirectMessage
+import com.novalpie.nativeapp.model.FavoriteEntry
 import com.novalpie.nativeapp.model.FavoriteGroup
+import com.novalpie.nativeapp.model.FavoritePage
 import com.novalpie.nativeapp.model.FavoriteStatus
 import com.novalpie.nativeapp.model.ForumActionResult
 import com.novalpie.nativeapp.model.ForumComment
 import com.novalpie.nativeapp.model.ForumCreateRequest
 import com.novalpie.nativeapp.model.ForumCreateResult
 import com.novalpie.nativeapp.model.ForumPost
+import com.novalpie.nativeapp.model.ForumPostPage
 import com.novalpie.nativeapp.model.ForumPostDetail
 import com.novalpie.nativeapp.model.MessageStats
 import com.novalpie.nativeapp.model.MessageActionResult
@@ -29,9 +32,14 @@ import com.novalpie.nativeapp.model.ManagedBookAccessPolicy
 import com.novalpie.nativeapp.model.ManagedBookTransferResult
 import com.novalpie.nativeapp.model.NovelCard
 import com.novalpie.nativeapp.model.NovelTag
+import com.novalpie.nativeapp.model.SearchPage
+import com.novalpie.nativeapp.model.ShopItem
+import com.novalpie.nativeapp.model.ShopPurchaseResult
 import com.novalpie.nativeapp.model.ReaderContent
 import com.novalpie.nativeapp.model.SiteMessage
 import com.novalpie.nativeapp.model.ParsedEpub
+import com.novalpie.nativeapp.model.TerminologyEntry
+import com.novalpie.nativeapp.model.TerminologyPage
 import com.novalpie.nativeapp.model.PoliticalExamAnswers
 import com.novalpie.nativeapp.model.PoliticalExamDetail
 import com.novalpie.nativeapp.model.PoliticalExamPaper
@@ -42,11 +50,16 @@ import com.novalpie.nativeapp.model.UploadActionResult
 import com.novalpie.nativeapp.model.UploadBookRequest
 import com.novalpie.nativeapp.model.UploadChapter
 import com.novalpie.nativeapp.model.UserProfile
+import com.novalpie.nativeapp.model.UserBadge
 import com.novalpie.nativeapp.model.UserCheckinAction
 import com.novalpie.nativeapp.model.UserCheckinStats
 import com.novalpie.nativeapp.model.UserActivity
+import com.novalpie.nativeapp.model.UserContentActivityFeed
 import com.novalpie.nativeapp.model.UserCheckinRecord
 import com.novalpie.nativeapp.model.UserCheckinSettings
+import com.novalpie.nativeapp.model.UserInventory
+import com.novalpie.nativeapp.model.UserInventoryItem
+import com.novalpie.nativeapp.model.UserQuizRewardStatus
 import com.novalpie.nativeapp.model.WorkspaceActionResult
 import com.novalpie.nativeapp.model.WorkspaceApiConfig
 import com.novalpie.nativeapp.model.WorkspaceApiStatus
@@ -66,6 +79,11 @@ import com.novalpie.nativeapp.model.AdminReviewRequest
 import com.novalpie.nativeapp.model.AdminReviewSettings
 import com.novalpie.nativeapp.model.AdminSchedulerLogs
 import com.novalpie.nativeapp.model.AdminShopItem
+import com.novalpie.nativeapp.model.AuthActionResult
+import com.novalpie.nativeapp.model.AuthSession
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -79,18 +97,59 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSink
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.io.IOException
+import java.io.InputStream
+import java.net.ConnectException
 import java.net.Proxy
 import java.net.ProxySelector
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
+import java.util.concurrent.CancellationException
 import java.util.concurrent.TimeUnit
 import kotlin.math.min
 import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
+
+data class EpubDownloadTicket(
+    val fileName: String,
+    val userPointsAfter: Long? = null,
+    val hasDownloadPurchase: Boolean = false,
+)
+
+/**
+ * The source normally applies `platform` server-side, but older responses and proxy caches have
+ * occasionally returned mixed cards. Keep the native source selector strict at the response
+ * boundary without changing the source's pagination envelope.
+ */
+internal fun filterSearchPageByPlatform(
+    page: SearchPage,
+    source: String?,
+    platform: String?,
+): SearchPage {
+    val requested = canonicalSearchPlatform(platform ?: source) ?: return page
+    return page.copy(items = page.items.filter { canonicalSearchPlatform(it.platform) == requested })
+}
+
+private fun canonicalSearchPlatform(value: String?): String? {
+    val normalized = value
+        ?.trim()
+        ?.lowercase()
+        ?.filter(Char::isLetterOrDigit)
+        ?.takeIf(String::isNotBlank)
+        ?: return null
+    return when (normalized) {
+        "all", "any" -> null
+        "novelpia" -> "novelpia"
+        "upload", "uploaded", "userupload", "useruploaded" -> "upload"
+        else -> normalized
+    }
+}
 
 class NovalPieApi(
     private val client: OkHttpClient = defaultClient(),
@@ -100,6 +159,102 @@ class NovalPieApi(
     private val proxyProvider: () -> Proxy? = { null },
     private val proxySelectorProvider: () -> ProxySelector? = { null }
 ) {
+    @Volatile
+    private var cachedReaderSession: ReaderSessionKey? = null
+    private val readerSessionLock = Any()
+
+    /** Current source contract: POST /api/sessions with a provider-agnostic CAPTCHA token. */
+    suspend fun loginPassword(
+        username: String,
+        password: String,
+        captchaToken: String
+    ): AuthSession = withContext(Dispatchers.IO) {
+        normalizeAuthSession(
+            postUnauthenticated(
+                "/api/sessions",
+                JSONObject()
+                    .put("username", username.trim())
+                    .put("password", password)
+                    .put("turnstile_token", captchaToken.trim())
+            )
+        )
+    }
+
+    suspend fun sendLoginVerificationCode(email: String, captchaToken: String): AuthActionResult =
+        withContext(Dispatchers.IO) {
+            normalizeAuthAction(
+                postUnauthenticated(
+                    "/api/verification-codes/login",
+                    JSONObject()
+                        .put("email", email.trim())
+                        .put("turnstile_token", captchaToken.trim())
+                )
+            )
+        }
+
+    suspend fun loginWithVerificationCode(
+        email: String,
+        code: String,
+        captchaToken: String
+    ): AuthSession = withContext(Dispatchers.IO) {
+        normalizeAuthSession(
+            postUnauthenticated(
+                "/api/verification-codes/login/verify",
+                JSONObject()
+                    .put("email", email.trim())
+                    .put("code", code.trim())
+                    .put("turnstile_token", captchaToken.trim())
+            )
+        )
+    }
+
+    suspend fun sendRegistrationVerificationCode(email: String, captchaToken: String): AuthActionResult =
+        withContext(Dispatchers.IO) {
+            normalizeAuthAction(
+                postUnauthenticated(
+                    "/api/verification-codes/email",
+                    JSONObject()
+                        .put("email", email.trim())
+                        .put("turnstile_token", captchaToken.trim())
+                )
+            )
+        }
+
+    suspend fun verifyRegistrationEmail(email: String, code: String): AuthActionResult = withContext(Dispatchers.IO) {
+        normalizeAuthAction(
+            postUnauthenticated(
+                "/api/verification-codes/email/verify",
+                JSONObject().put("email", email.trim()).put("code", code.trim())
+            )
+        )
+    }
+
+    suspend fun registerAccount(username: String, email: String, password: String): AuthSession =
+        withContext(Dispatchers.IO) {
+            normalizeAuthSession(
+                postUnauthenticated(
+                    "/api/users",
+                    JSONObject()
+                        .put("username", username.trim())
+                        .put("email", email.trim())
+                        .put("password", password)
+                )
+            )
+        }
+
+    suspend fun requestPasswordReset(email: String): AuthActionResult = withContext(Dispatchers.IO) {
+        normalizeAuthAction(postUnauthenticated("/api/password-resets", JSONObject().put("email", email.trim())))
+    }
+
+    suspend fun resetPassword(token: String, password: String): AuthActionResult = withContext(Dispatchers.IO) {
+        normalizeAuthAction(
+            putUnauthenticated(
+                "/api/password-resets",
+                JSONObject().put("token", token.trim()).put("password", password)
+            )
+        )
+    }
+
     suspend fun search(
         keyword: String,
         page: Int = 1,
@@ -107,35 +262,243 @@ class NovalPieApi(
         sortBy: String = "relevance",
         sortOrder: String = "desc",
         scope: String = "all",
-        matchType: String = "ai",
-        adultFilter: String = "all",
+        matchType: String = "fuzzy_strict",
+        adultFilter: String = "unrestricted",
         source: String = "",
         minWordCount: Long? = null,
-        maxWordCount: Long? = null
-    ): List<NovelCard> =
+        maxWordCount: Long? = null,
+        requiredTags: List<String> = emptyList(),
+        blockedTags: List<String> = emptyList(),
+        tagsAny: List<String> = emptyList(),
+        tagsExpression: String? = null,
+        blockedTerms: List<String> = emptyList(),
+        platform: String? = null,
+        novelType: String? = null,
+        status: String? = null
+    ): List<NovelCard> = searchPage(
+        keyword = keyword,
+        page = page,
+        limit = limit,
+        sortBy = sortBy,
+        sortOrder = sortOrder,
+        scope = scope,
+        matchType = matchType,
+        adultFilter = adultFilter,
+        source = source,
+        minWordCount = minWordCount,
+        maxWordCount = maxWordCount,
+        requiredTags = requiredTags,
+        blockedTags = blockedTags,
+        tagsAny = tagsAny,
+        tagsExpression = tagsExpression,
+        blockedTerms = blockedTerms,
+        platform = platform,
+        novelType = novelType,
+        status = status
+    ).items
+
+    /**
+     * Preserves the live `/api/search` pagination envelope instead of deriving it from a short
+     * page. The public `search` method remains as a list-only compatibility wrapper.
+     */
+    suspend fun searchPage(
+        keyword: String,
+        page: Int = 1,
+        limit: Int = 20,
+        sortBy: String = "relevance",
+        sortOrder: String = "desc",
+        scope: String = "all",
+        matchType: String = "fuzzy_strict",
+        adultFilter: String = "unrestricted",
+        source: String = "",
+        minWordCount: Long? = null,
+        maxWordCount: Long? = null,
+        requiredTags: List<String> = emptyList(),
+        blockedTags: List<String> = emptyList(),
+        tagsAny: List<String> = emptyList(),
+        tagsExpression: String? = null,
+        blockedTerms: List<String> = emptyList(),
+        platform: String? = null,
+        novelType: String? = null,
+        status: String? = null
+    ): SearchPage =
         withContext(Dispatchers.IO) {
             val params = mutableMapOf(
-                "q" to keyword.trim(),
                 "page" to page.toString(),
                 "limit" to limit.toString(),
                 "sort_by" to sortBy,
                 "sort_order" to sortOrder,
                 "scope" to scope,
                 "match_type" to matchType,
-                "adult_filter" to adultFilter,
-                "source" to source
+                "adult_filter" to adultFilter
             )
+            keyword.trim().takeIf { it.isNotEmpty() }?.let { params["q"] = it }
+            // The search UI calls this control "source", but the live website sends its
+            // NovelPia/upload value as `platform`; `source` is ignored by `/api/search`.
+            // Advanced syntax wins when it explicitly supplied a platform, including `all` which
+            // intentionally clears the basic source selector. Older persisted settings used the
+            // same `all` sentinel, and the website interprets it as a nonexistent platform.
+            val sourcePlatform = if (platform != null) {
+                platform.trim().takeIf { it.isNotEmpty() && !it.equals("all", ignoreCase = true) }
+            } else {
+                source.trim().takeIf { it.isNotEmpty() && !it.equals("all", ignoreCase = true) }
+            }
+            sourcePlatform?.let { params["platform"] = it }
             minWordCount?.takeIf { it > 0 }?.let { params["min_word_count"] = it.toString() }
             maxWordCount?.takeIf { it > 0 }?.let { params["max_word_count"] = it.toString() }
+            requiredTags.toSearchTagParam()?.let { params["tags"] = it }
+            blockedTags.toSearchTagParam()?.let { params["blocked_tags"] = it }
+            tagsAny.toSearchTagParam()?.let { params["tags_any"] = it }
+            tagsExpression?.trim()?.takeIf { it.isNotEmpty() }?.let { params["tags_expr"] = it }
+            blockedTerms.toSearchTermParam()?.let { params["blocked_terms"] = it }
+            novelType?.trim()?.takeIf { it.isNotEmpty() }?.let { params["type"] = it }
+            status?.trim()?.takeIf { it.isNotEmpty() }?.let { params["status"] = it }
             val raw = get(
                 "/api/search",
                 params
             )
-            normalizeNovelList(raw)
+            filterSearchPageByPlatform(
+                page = normalizeSearchPage(raw, requestedPage = page, requestedLimit = limit),
+                source = source,
+                platform = platform,
+            )
         }
+
+    private fun List<String>.toSearchTagParam(): String? =
+        asSequence()
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinctBy { it.lowercase() }
+            .joinToString(",")
+            .takeIf(String::isNotBlank)
+
+    private fun List<String>.toSearchTermParam(): String? =
+        asSequence()
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinctBy { it.lowercase() }
+            .joinToString(",")
+            .takeIf(String::isNotBlank)
+
+    /**
+     * Requests the source site's normal EPUB authorization. The server performs the points and
+     * permission checks; the native client only consumes the returned TXT ticket afterwards.
+     */
+    suspend fun requestEpubDownload(bookId: Long): EpubDownloadTicket =
+        requestDownloadAuthorization(bookId, downloadType = "epub")
+
+    /** Requests the source site's TXT authorization; its returned file is written natively. */
+    suspend fun requestTxtDownload(bookId: Long): EpubDownloadTicket =
+        requestDownloadAuthorization(bookId, downloadType = "txt")
+
+    private suspend fun requestDownloadAuthorization(
+        bookId: Long,
+        downloadType: String,
+    ): EpubDownloadTicket = withContext(Dispatchers.IO) {
+        require(bookId > 0) { "书籍 ID 无效" }
+        normalizeEpubDownloadTicket(
+            post(
+                "/api/downloads",
+                JSONObject()
+                    .put("novel_id", bookId)
+                    .put("download_type", downloadType)
+            )
+        )
+    }
+
+    /** Streams the authorized source TXT without materializing the complete book as a String. */
+    suspend fun streamDownloadFile(
+        fileName: String,
+        consumer: suspend (InputStream) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        val safeName = fileName.trim()
+        require(safeName.isNotEmpty()) { "下载文件名为空" }
+        val url = baseUrl.toHttpUrl().newBuilder()
+            .addPathSegment("api")
+            .addPathSegment("downloads")
+            .addPathSegment(safeName)
+            .build()
+        streamResponse(
+            label = "/downloads/$safeName",
+            requestBuilder = baseRequestBuilder(url.toString()).header("accept", "text/plain, */*"),
+            consumer = { input, _ -> consumer(input) },
+            callTimeoutSeconds = EPUB_DOWNLOAD_CALL_TIMEOUT_SECONDS,
+            readTimeoutSeconds = EPUB_DOWNLOAD_READ_TIMEOUT_SECONDS,
+        )
+    }
+
+    /** Streams an original illustration and exposes its content type for lossless EPUB output. */
+    suspend fun streamAsset(
+        url: String,
+        consumer: suspend (InputStream, String?) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        val resolved = resolveAssetUrl(url)
+            ?: throw IOException("插图链接无效")
+        streamResponse(
+            label = resolved.toString(),
+            requestBuilder = baseRequestBuilder(resolved.toString()).header("accept", "*/*"),
+            consumer = consumer,
+            callTimeoutSeconds = ASSET_CALL_TIMEOUT_SECONDS,
+            readTimeoutSeconds = ASSET_READ_TIMEOUT_SECONDS,
+        )
+    }
 
     suspend fun currentUser(): UserProfile = withContext(Dispatchers.IO) {
         normalizeUser(get("/api/users/me"))
+    }
+
+    /**
+     * Source account cosmetics are exposed separately from the profile payload.  This stays
+     * read-only: equipping an item is a distinct, user-confirmed write action.
+     */
+    suspend fun currentUserInventory(): UserInventory = withContext(Dispatchers.IO) {
+        normalizeUserInventory(get("/api/users/me/inventory"))
+    }
+
+    /** The ordinary storefront; do not substitute the administrator-only shop route here. */
+    suspend fun shopItems(): List<ShopItem> = withContext(Dispatchers.IO) {
+        normalizeShopItems(get("/api/shop/items"))
+    }
+
+    /**
+     * Mirrors the website's cosmetic action contract. Callers keep the UI disabled until the
+     * following inventory refresh completes, so the server remains the source of truth.
+     */
+    suspend fun setCurrentUserEquipment(itemId: Long, action: String): UserCheckinAction =
+        withContext(Dispatchers.IO) {
+            require(itemId > 0) { "shop item id must be positive" }
+            require(action in setOf("equip", "unequip")) { "unsupported equipment action" }
+            normalizeAdminAction(
+                post(
+                    "/api/users/me/equipment",
+                    JSONObject()
+                        .put("item_id", itemId)
+                        .put("action", action)
+                )
+            )
+        }
+
+    suspend fun purchaseShopItem(itemId: Long): ShopPurchaseResult = withContext(Dispatchers.IO) {
+        require(itemId > 0) { "shop item id must be positive" }
+        normalizeShopPurchase(post("/api/shop/purchases", JSONObject().put("item_id", itemId)))
+    }
+
+    /** Read-only state for the source site's account quiz reward. */
+    suspend fun currentUserQuizRewardStatus(): UserQuizRewardStatus = withContext(Dispatchers.IO) {
+        normalizeUserQuizRewardStatus(get("/api/users/me/quiz-reward"))
+    }
+
+    /** The source's owner profile loads its uploaded books from the authenticated books endpoint. */
+    suspend fun currentUserUploadedBooks(): List<NovelCard> = withContext(Dispatchers.IO) {
+        normalizeNovelList(
+            get("/api/users/me/books"),
+            "uploads",
+            "items",
+            "novels",
+            "books",
+            "data",
+            "result"
+        )
     }
 
     suspend fun userProfile(userId: Long): UserProfile = withContext(Dispatchers.IO) {
@@ -157,10 +520,102 @@ class NovalPieApi(
                 mapOf(
                     "type" to type,
                     "page" to page.coerceAtLeast(1).toString(),
-                    "limit" to limit.coerceIn(1, 100).toString()
+                    // The source ActivityTab requests its first window with limit=200.
+                    // Keep the public helper's 100 default, but do not silently clamp an
+                    // explicit source-sized request back to 100.
+                    "limit" to limit.coerceIn(1, 200).toString()
                 )
             )
         )
+    }
+
+    /**
+     * The legacy `/users/{id}/activities` route is still advertised by the web bundle, but the
+     * live Laravel service returns an empty or unimplemented response for it.  The website's
+     * visible user content is instead backed by these three user-filtered feeds.  Keep all of
+     * them here so a temporary failure in one feed cannot turn the whole profile timeline blank.
+     */
+    suspend fun userContentActivities(
+        userId: Long,
+        page: Int = 1,
+        limit: Int = 100
+    ): List<UserActivity> = userContentActivityFeed(userId, page, limit).activities
+
+    /**
+     * Preserves source pagination totals for profile counters while still isolating a transient
+     * failure in any single feed. The visible timeline remains sorted across all feeds.
+     */
+    suspend fun userContentActivityFeed(
+        userId: Long,
+        page: Int = 1,
+        limit: Int = 100
+    ): UserContentActivityFeed = withContext(Dispatchers.IO) {
+        require(userId > 0) { "userId must be positive" }
+        val safePage = page.coerceAtLeast(1)
+        val safeLimit = limit.coerceIn(1, 200)
+        val userFeedParams = linkedMapOf(
+            "page" to safePage.toString(),
+            "limit" to safeLimit.toString(),
+            "user_id" to userId.toString()
+        )
+
+        coroutineScope {
+            // This is the canonical source ActivityTab contract. Some current Laravel
+            // deployments still answer 404, so it is intentionally merged with the older
+            // user-filtered feeds below instead of being treated as the only source.
+            val canonical = async {
+                captureUserActivityFeed {
+                    normalizeCanonicalUserActivityFeed(
+                        get(
+                            "/api/users/$userId/activities",
+                            mapOf(
+                                "page" to safePage.toString(),
+                                "limit" to safeLimit.toString(),
+                            )
+                        )
+                    )
+                }
+            }
+            val posts = async {
+                captureUserActivityFeed {
+                    normalizeUserPostActivityFeed(get("/api/posts", userFeedParams))
+                }
+            }
+            val comments = async {
+                captureUserActivityFeed {
+                    normalizeUserPostCommentActivityFeed(get("/api/posts/comments", userFeedParams))
+                }
+            }
+            val reviews = async {
+                captureUserActivityFeed {
+                    normalizeUserBookReviewActivityFeed(
+                        get(
+                            "/api/comments/book-reviews",
+                            userFeedParams + ("hide_spoilers" to "1")
+                        )
+                    )
+                }
+            }
+
+            val canonicalResult = canonical.await()
+            val postResult = posts.await()
+            val commentResult = comments.await()
+            val reviewResult = reviews.await()
+            val results = listOf(canonicalResult, postResult, commentResult, reviewResult)
+            val availableActivities = results.flatMap { it.getOrNull()?.activities.orEmpty() }
+            if (availableActivities.isEmpty()) {
+                results.mapNotNull(Result<UserContentActivityFeed>::exceptionOrNull).firstOrNull()?.let { throw it }
+            }
+            UserContentActivityFeed(
+                activities = mergeUserContentActivities(availableActivities, safeLimit),
+                postCount = canonicalResult.getOrNull()?.postCount
+                    ?: postResult.getOrNull()?.postCount,
+                forumCommentCount = canonicalResult.getOrNull()?.forumCommentCount
+                    ?: commentResult.getOrNull()?.forumCommentCount,
+                bookReviewCount = canonicalResult.getOrNull()?.bookReviewCount
+                    ?: reviewResult.getOrNull()?.bookReviewCount
+            )
+        }
     }
 
     suspend fun userNovels(userId: Long? = null): List<NovelCard> = withContext(Dispatchers.IO) {
@@ -372,6 +827,10 @@ class NovalPieApi(
             pendingReviewTotal = source.intOrNull("pending_review_total") ?: 0,
             pendingReviewUpload = source.intOrNull("pending_review_upload") ?: 0,
             pendingReviewDelete = source.intOrNull("pending_review_delete") ?: 0,
+            pendingKeys = source.intOrNull("pending_keys") ?: 0,
+            approvedKeys = source.intOrNull("approved_keys") ?: 0,
+            activeTranslators = source.intOrNull("active_translators") ?: 0,
+            todayUsers = source.intOrNull("today_users") ?: 0,
             activeNovelTotal = source.intOrNull("novel_active_total") ?: 0,
             registeredUserTotal = source.intOrNull("user_registered_total") ?: 0,
             recentUserDaily = daily
@@ -408,14 +867,22 @@ class NovalPieApi(
             "requests"
         ).mapNotNull { value ->
             val source = value as? JSONObject ?: return@mapNotNull null
+            val user = source.opt("user") as? JSONObject
+            val novel = source.opt("novel") as? JSONObject
             AdminReviewRequest(
                 id = source.longOrNull("id") ?: return@mapNotNull null,
                 type = source.firstStringOrNull("type", "request_type") ?: "unknown",
                 status = source.firstStringOrNull("status", "review_status") ?: "pending",
-                username = source.firstStringOrNull("username", "user_name", "userName"),
-                userId = source.longOrNull("user_id") ?: source.longOrNull("userId"),
-                novelId = source.longOrNull("novel_id") ?: source.longOrNull("novelId"),
-                title = source.firstStringOrNull("title", "novel_title", "name"),
+                username = source.firstStringOrNull("username", "user_name", "userName")
+                    ?: user?.firstStringOrNull("username", "name"),
+                userId = source.longOrNull("user_id")
+                    ?: source.longOrNull("userId")
+                    ?: user?.longOrNull("id"),
+                novelId = source.longOrNull("novel_id")
+                    ?: source.longOrNull("novelId")
+                    ?: novel?.longOrNull("id"),
+                title = source.firstStringOrNull("title", "novel_title", "name")
+                    ?: novel?.firstStringOrNull("title", "name"),
                 reason = source.firstStringOrNull("reason", "description", "message"),
                 createdAt = source.firstStringOrNull("created_at", "createdAt")
             )
@@ -469,9 +936,18 @@ class NovalPieApi(
                 action = item.firstStringOrNull("action", "operation") ?: "unknown",
                 status = item.firstStringOrNull("status", "state") ?: "unknown",
                 userId = item.longOrNull("user_id") ?: item.longOrNull("userId"),
+                username = item.firstStringOrNull("username", "user_name", "userName"),
+                email = item.firstStringOrNull("email", "user_email", "userEmail"),
                 novelId = item.longOrNull("novel_id") ?: item.longOrNull("novelId"),
+                novelTitle = item.firstStringOrNull("novel_title", "novelTitle"),
+                chapterId = item.longOrNull("chapter_id") ?: item.longOrNull("chapterId"),
+                ipAddress = item.firstStringOrNull("ip_address", "ipAddress", "ip"),
                 message = item.firstStringOrNull("message", "detail", "error_message"),
-                createdAt = item.firstStringOrNull("created_at", "createdAt")
+                content = item.firstStringOrNull("content", "request_content", "payload"),
+                result = item.firstStringOrNull("result", "response", "operation_result"),
+                userAgent = item.firstStringOrNull("user_agent", "userAgent"),
+                createdAt = item.firstStringOrNull("created_at", "createdAt"),
+                updatedAt = item.firstStringOrNull("updated_at", "updatedAt")
             )
         }
         AdminOperationLogPage(
@@ -492,7 +968,12 @@ class NovalPieApi(
                 description = source.stringOrNull("description"),
                 proxyIp = source.firstStringOrNull("proxy_ip", "proxyIp"),
                 isActive = source.firstBooleanOrNull("is_active", "isActive", "active") ?: false,
-                updatedAt = source.firstStringOrNull("updated_at", "updatedAt")
+                isHealthy = source.firstBooleanOrNull("is_healthy", "isHealthy"),
+                lastError = source.firstStringOrNull("last_error", "lastError"),
+                updatedAt = source.firstStringOrNull("updated_at", "updatedAt"),
+                updatedByUsername = source.firstStringOrNull("updated_by_username", "updatedByUsername"),
+                successCount = source.intOrNull("success_count") ?: 0,
+                failCount = source.intOrNull("fail_count") ?: 0
             )
         }
     }
@@ -504,7 +985,8 @@ class NovalPieApi(
                 id = source.longOrNull("id") ?: return@mapNotNull null,
                 pattern = source.firstStringOrNull("pattern", "base_url", "baseUrl") ?: return@mapNotNull null,
                 action = source.firstStringOrNull("action", "policy") ?: "manual",
-                description = source.stringOrNull("description")
+                description = source.stringOrNull("description"),
+                createdAt = source.firstStringOrNull("created_at", "createdAt")
             )
         }
     }
@@ -539,7 +1021,11 @@ class NovalPieApi(
                 "/api/admin/shop/items",
                 mapOf(
                     "type" to type,
-                    "is_active" to (active?.toString() ?: ""),
+                    "is_active" to when (active) {
+                        true -> "1"
+                        false -> "0"
+                        null -> ""
+                    },
                     "keyword" to keyword,
                     "page" to "1",
                     "page_size" to "100"
@@ -730,10 +1216,26 @@ class NovalPieApi(
         val params = publicUserId?.let { mapOf("user_id" to it.toString()) }.orEmpty()
         val source = unwrapObject(get(path, params), "stats", "data", "result")
         UserCheckinStats(
-            totalDays = source.intOrNull("total_days") ?: 0,
-            totalPoints = source.longOrNull("total_points") ?: 0L,
-            maxStreak = source.intOrNull("max_streak") ?: 0,
-            currentStreak = source.intOrNull("current_streak") ?: 0
+            totalDays = source.intOrNull("total_days")
+                ?: source.intOrNull("totalDays")
+                ?: source.intOrNull("days")
+                ?: source.intOrNull("total")
+                ?: source.intOrNull("checkin_days")
+                ?: 0,
+            totalPoints = source.longOrNull("total_points")
+                ?: source.longOrNull("totalPoints")
+                ?: source.longOrNull("points")
+                ?: source.longOrNull("point")
+                ?: 0L,
+            maxStreak = source.intOrNull("max_streak")
+                ?: source.intOrNull("maxStreak")
+                ?: source.intOrNull("longest_streak")
+                ?: source.intOrNull("longestStreak")
+                ?: 0,
+            currentStreak = source.intOrNull("current_streak")
+                ?: source.intOrNull("currentStreak")
+                ?: source.intOrNull("streak")
+                ?: 0
         )
     }
 
@@ -746,8 +1248,16 @@ class NovalPieApi(
         )
     }
 
-    suspend fun favoriteGroups(): List<FavoriteGroup> = withContext(Dispatchers.IO) {
-        normalizeFavoriteGroups(get("/api/favorites/groups", mapOf("preview_limit" to "6", "with_preview" to "true")))
+    suspend fun favoriteGroups(previewLimit: Int = 6): List<FavoriteGroup> = withContext(Dispatchers.IO) {
+        normalizeFavoriteGroups(
+            get(
+                "/api/favorites/groups",
+                mapOf(
+                    "preview_limit" to previewLimit.coerceIn(1, 10).toString(),
+                    "with_preview" to "true"
+                )
+            )
+        )
     }
 
     suspend fun tags(sort: String = "count", limit: Int = 24): List<NovelTag> = withContext(Dispatchers.IO) {
@@ -858,6 +1368,12 @@ class NovalPieApi(
 
     suspend fun deleteWorkspaceApi(id: Long): WorkspaceActionResult = withContext(Dispatchers.IO) {
         normalizeWorkspaceActionResult(delete("/workspace/apis/$id"))
+    }
+
+    /** Matches the current workspace's server-side active/inactive toggle control. */
+    suspend fun toggleWorkspaceApi(id: Long): WorkspaceActionResult = withContext(Dispatchers.IO) {
+        require(id > 0) { "workspace api id must be positive" }
+        normalizeWorkspaceActionResult(post("/workspace/apis/$id/toggle"))
     }
 
     suspend fun createWorkspaceCookie(
@@ -1017,13 +1533,164 @@ class NovalPieApi(
         )
     }
 
-    suspend fun forumPosts(page: Int = 1, limit: Int = 20, type: String = "all"): List<ForumPost> = withContext(Dispatchers.IO) {
+    /**
+     * Source-compatible favourite query. The website uses a dedicated group-items endpoint rather
+     * than a `group_id` parameter when a named group is open, and each result retains the favourite
+     * record metadata needed by management actions.
+     */
+    suspend fun favoritePage(
+        page: Int = 1,
+        limit: Int = 20,
+        groupId: Long? = null,
+        search: String = "",
+        sortField: String = "created_at",
+        sortOrder: String = "desc",
+        excludeAdult: Boolean = false
+    ): FavoritePage = withContext(Dispatchers.IO) {
+        val params = mutableMapOf(
+            "type" to "novel",
+            "page" to page.coerceAtLeast(1).toString(),
+            "limit" to limit.coerceIn(1, 100).toString(),
+            "sort_field" to sortField.trim().ifBlank { "created_at" },
+            "sort_order" to (sortOrder.trim().lowercase().takeIf { it in setOf("asc", "desc") } ?: "desc")
+        )
+        search.trim().takeIf(String::isNotBlank)?.let { params["search"] = it }
+        if (excludeAdult) params["exclude_adult"] = "1"
+        val raw = if (groupId == null) {
+            get("/api/favorites", params)
+        } else {
+            get("/api/favorites/groups/$groupId/items", params)
+        }
+        normalizeFavoritePage(raw, requestedPage = page, requestedPageSize = limit)
+    }
+
+    suspend fun readingHistoryPage(
+        page: Int = 1,
+        limit: Int = 20,
+        type: String = "novel"
+    ): FavoritePage = withContext(Dispatchers.IO) {
+        normalizeFavoritePage(
+            get(
+                "/api/favorites/history",
+                mapOf(
+                    "type" to type.trim().ifBlank { "novel" },
+                    "page" to page.coerceAtLeast(1).toString(),
+                    "limit" to limit.coerceIn(1, 100).toString()
+                )
+            ),
+            requestedPage = page,
+            requestedPageSize = limit
+        )
+    }
+
+    suspend fun createFavoriteGroup(name: String): FavoriteGroup = withContext(Dispatchers.IO) {
+        val normalized = name.trim()
+        require(normalized.isNotBlank()) { "group name is required" }
+        normalizeFavoriteGroup(post("/api/favorites/groups", JSONObject().put("name", normalized)))
+    }
+
+    suspend fun renameFavoriteGroup(groupId: Long, name: String): FavoriteGroup = withContext(Dispatchers.IO) {
+        val normalized = name.trim()
+        require(groupId > 0) { "group id is required" }
+        require(normalized.isNotBlank()) { "group name is required" }
+        normalizeFavoriteGroup(put("/api/favorites/groups/$groupId", JSONObject().put("name", normalized)))
+    }
+
+    suspend fun deleteFavoriteGroup(groupId: Long) = withContext(Dispatchers.IO) {
+        require(groupId > 0) { "group id is required" }
+        delete("/api/favorites/groups/$groupId")
+    }
+
+    suspend fun moveFavoriteToGroup(favoriteId: Long, groupId: Long?) = withContext(Dispatchers.IO) {
+        require(favoriteId > 0) { "favorite id is required" }
+        post(
+            "/api/favorites/management",
+            JSONObject()
+                .put("action", "move_group")
+                .put("favorite_id", favoriteId)
+                .put("group_id", groupId ?: JSONObject.NULL)
+        )
+    }
+
+    suspend fun removeFavorite(favoriteId: Long) = withContext(Dispatchers.IO) {
+        require(favoriteId > 0) { "favorite id is required" }
+        post(
+            "/api/favorites/management",
+            JSONObject().put("action", "remove").put("favorite_id", favoriteId)
+        )
+    }
+
+    suspend fun setFavoritePinned(favoriteId: Long, isPinned: Boolean) = withContext(Dispatchers.IO) {
+        require(favoriteId > 0) { "favorite id is required" }
+        post(
+            "/api/favorites/management",
+            JSONObject()
+                .put("action", "set_pin")
+                .put("favorite_id", favoriteId)
+                .put("is_pinned", isPinned)
+        )
+    }
+
+    suspend fun deleteReadingHistory(favoriteIds: List<Long> = emptyList(), clearAll: Boolean = false) =
+        withContext(Dispatchers.IO) {
+            require(clearAll || favoriteIds.isNotEmpty()) { "history selection is required" }
+            val body = JSONObject()
+            if (clearAll) {
+                body.put("clear_all", true)
+            } else {
+                body.put("novel_ids", JSONArray(favoriteIds.filter { it > 0 }.distinct()))
+            }
+            delete("/api/favorites/history", body)
+        }
+
+    suspend fun forumPosts(
+        page: Int = 1,
+        limit: Int = 20,
+        type: String = "all",
+        search: String = "",
+        hideSpoilers: Boolean = true
+    ): List<ForumPost> = forumPostsPage(
+        page = page,
+        limit = limit,
+        type = type,
+        search = search,
+        hideSpoilers = hideSpoilers
+    ).posts
+
+    /**
+     * Mirrors the mobile forum's review request. When spoilers are visible the source omits
+     * `hide_spoilers` entirely instead of sending a false-like value.
+     */
+    suspend fun forumPostsPage(
+        page: Int = 1,
+        limit: Int = 20,
+        type: String = "all",
+        search: String = "",
+        hideSpoilers: Boolean = true
+    ): ForumPostPage = withContext(Dispatchers.IO) {
         val params = mutableMapOf(
             "page" to page.toString(),
             "limit" to limit.toString()
         )
-        if (type.isNotBlank() && type != "all") params["type"] = type
-        normalizeForumPosts(get("/api/posts", params))
+        if (search.isNotBlank()) params["search"] = search.trim()
+        if (type.trim().equals("review", ignoreCase = true)) {
+            // The forum's 书评 rail is a book-comment feed, not a /api/posts type.
+            // The latter returns an empty list on the live source for type=review.
+            if (hideSpoilers) params["hide_spoilers"] = "1"
+            normalizeForumPostsPage(
+                get("/api/comments/book-reviews", params),
+                forceBookReview = true,
+                requestedPage = page,
+                requestedLimit = limit
+            )
+        } else {
+            if (type.isNotBlank() && type != "all") params["type"] = type
+            normalizeForumPostsPage(
+                get("/api/posts", params),
+                requestedPage = page,
+                requestedLimit = limit
+            )
+        }
     }
 
     suspend fun forumPostDetail(postId: Long): ForumPostDetail = withContext(Dispatchers.IO) {
@@ -1067,7 +1734,11 @@ class NovalPieApi(
         normalizeForumCreateResult(post("/api/posts", body))
     }
 
-    suspend fun forumPostComments(postId: Long, page: Int = 1, limit: Int = 20): List<ForumComment> = withContext(Dispatchers.IO) {
+    /**
+     * The mobile forum detail loads its complete first reply window with limit=100.
+     * Keep that source contract here instead of inheriting a generic list-page size.
+     */
+    suspend fun forumPostComments(postId: Long, page: Int = 1, limit: Int = 100): List<ForumComment> = withContext(Dispatchers.IO) {
         normalizeForumComments(
             get(
                 "/api/posts/$postId/comments",
@@ -1168,29 +1839,90 @@ class NovalPieApi(
         )
     }
 
+    /** Mirrors the website reader's favourite action and returns the server-confirmed state. */
+    suspend fun toggleFavorite(
+        bookId: Long,
+        isFavorited: Boolean,
+        groupId: Long = 0L,
+    ): FavoriteStatus = withContext(Dispatchers.IO) {
+        require(bookId > 0) { "book id is required" }
+        post(
+            "/api/favorites",
+            JSONObject()
+                .put("object_id", bookId)
+                .put("favorite_type", "novel")
+                .put("action", if (isFavorited) "remove" else "add")
+                .put("group_id", groupId.coerceAtLeast(0L))
+        )
+        // The action response has changed shape between source deployments. A follow-up status
+        // read keeps the native button honest instead of guessing from a success message.
+        favoriteStatus(bookId)
+    }
+
+    /**
+     * Reads the source terminology table without guessing at a client-side maximum. The website
+     * uses zero-based pages here, unlike its favourites and search routes.
+     */
+    suspend fun terminologyPage(
+        novelId: Long,
+        keyword: String = "",
+        page: Int = 0,
+    ): TerminologyPage = withContext(Dispatchers.IO) {
+        require(novelId > 0L) { "novel id is required" }
+        val requestedPage = page.coerceAtLeast(0)
+        normalizeTerminologyPage(
+            raw = get(
+                "/api/terminologies",
+                mapOf(
+                    "novel_id" to novelId.toString(),
+                    "keyword" to keyword.trim(),
+                    "page" to requestedPage.toString(),
+                ),
+            ),
+            requestedNovelId = novelId,
+            requestedPage = requestedPage,
+        )
+    }
+
     suspend fun bookDetail(bookId: Long): NovelCard = withContext(Dispatchers.IO) {
         normalizeBook(get("/api/novels/$bookId/detail"))
     }
 
     suspend fun bookCoverPhoto(bookId: Long, favoriteType: String = "novel"): String? =
+        bookCoverPhotoInfo(bookId, favoriteType).originalUrl
+
+    /**
+     * The source deliberately publishes two cover URLs for some layered/animated images:
+     * [BookCoverPhoto.previewUrl] is the lightweight card image and [BookCoverPhoto.originalUrl]
+     * is the image used by its full-screen viewer. Keep both values so native cards never need to
+     * guess the inner image from a filename.
+     */
+    internal suspend fun bookCoverPhotoInfo(bookId: Long, favoriteType: String = "novel"): BookCoverPhoto =
         withContext(Dispatchers.IO) {
             val raw = get(
                 "/api/novels/$bookId/photo",
                 mapOf("favorite_type" to favoriteType)
             )
             val source = unwrapObject(raw, "photo", "novel", "data", "result")
-            normalizeAssetUrl(
+            val previewUrl = normalizeAssetUrl(
+                source.firstStringOrNull(
+                    "photo_url",
+                    "photoUrl",
+                    "cover_url",
+                    "coverUrl"
+                )
+            )
+            val originalUrl = normalizeAssetUrl(
                 source.firstStringOrNull(
                     "photo_true_url",
                     "photoTrueUrl",
                     "full_cover_url",
                     "fullCoverUrl",
                     "original_cover_url",
-                    "originalCoverUrl",
-                    "photo_url",
-                    "photoUrl"
+                    "originalCoverUrl"
                 )
-            )
+            ) ?: previewUrl
+            BookCoverPhoto(previewUrl = previewUrl, originalUrl = originalUrl)
         }
 
     suspend fun generateEditorRegex(
@@ -1245,6 +1977,39 @@ class NovalPieApi(
         regex.takeIf(String::isNotBlank) ?: throw IOException("AI did not return a regex pattern")
     }
 
+    /**
+     * Implements the source upload editor's local processor contract:
+     * POST JSON {"text":"..."} and accept either {"text"}, {"data"}, or a JSON string.
+     * The request deliberately omits NovalPie session headers so a user-selected processor never
+     * receives the website authentication token.
+     */
+    suspend fun processEditorTextWithApi(
+        endpoint: String,
+        text: String,
+        timeoutSeconds: Int = 30
+    ): String = withContext(Dispatchers.IO) {
+        require(text.isNotBlank()) { "Text is required" }
+        require(timeoutSeconds in 1..120) { "Timeout must be between 1 and 120 seconds" }
+        val url = normalizeEditorProcessorUrl(endpoint)
+        val requestBody = JSONObject()
+            .put("text", text)
+            .toString()
+            .toRequestBody("application/json; charset=utf-8".toMediaType())
+        val result = executeExternal(
+            label = "editor processor",
+            requestBuilder = baseRequestBuilder(url)
+                .header("content-type", "application/json")
+                .post(requestBody),
+            callTimeoutSeconds = timeoutSeconds.toLong()
+        )
+        when (result) {
+            is JSONObject -> result.firstStringOrNull("text", "data")
+                ?: throw IOException("Processor response must contain text or data")
+            is String -> decodeEditorProcessorString(result)
+            else -> throw IOException("Processor returned an invalid response")
+        }
+    }
+
     suspend fun startPoliticalExam(): PoliticalExamSession = withContext(Dispatchers.IO) {
         normalizePoliticalExamSession(post("/api/political-exams/sessions", JSONObject()))
     }
@@ -1275,22 +2040,48 @@ class NovalPieApi(
     }
 
     suspend fun chapters(bookId: Long): List<Chapter> = withContext(Dispatchers.IO) {
-        normalizeChapters(get("/api/novels/$bookId/chapters"))
+        // Current source detail pages request the v2 directory endpoint.  It includes per-chapter
+        // image_count and is the contract used by the web catalogue.
+        normalizeChapters(get("/api/v2/novels/$bookId/chapters"))
     }
 
-    suspend fun chapterContent(chapterId: Long): ReaderContent = withContext(Dispatchers.IO) {
-        val session = readerSessionKey()
-        normalizeReaderContent(
-            raw = get(
-                "/api/chapters/$chapterId/content",
-                mapOf(
-                    "session" to session.sessionId,
-                    "replace_mode" to "india",
-                    "show_images" to "1"
+    suspend fun chapterContent(
+        chapterId: Long,
+        replaceMode: String = "india",
+        showImages: Boolean = true,
+    ): ReaderContent = withContext(Dispatchers.IO) {
+        var latestFailure: Throwable? = null
+        for (attempt in 0 until READER_CONTENT_MAX_ATTEMPTS) {
+            try {
+                // The website keeps this short-lived reader session around for adjacent chapters.
+                // Reusing it removes one proxy round trip from every infinite-scroll append.
+                val session = readerSessionKey(forceRefresh = attempt > 0)
+                return@withContext normalizeReaderContent(
+                    raw = get(
+                        "/api/chapters/$chapterId/content",
+                        mapOf(
+                            "session" to session.sessionId,
+                            "replace_mode" to replaceMode,
+                            "show_images" to if (showImages) "1" else "0"
+                        ),
+                        callTimeoutSeconds = READER_CONTENT_CALL_TIMEOUT_SECONDS,
+                        readTimeoutSeconds = READER_CONTENT_READ_TIMEOUT_SECONDS,
+                    ),
+                    readerSessionKey = session.sessionKey
                 )
-            ),
-            readerSessionKey = session.sessionKey
-        )
+            } catch (failure: Throwable) {
+                if (failure is CancellationException) throw failure
+                latestFailure = failure
+                if (attempt == READER_CONTENT_MAX_ATTEMPTS - 1 || !isRetryableReaderContentFailure(failure)) {
+                    throw failure
+                }
+                // A timeout can leave either the proxy tunnel or the source reader session stale.
+                // A single fresh-session retry recovers transient failures without repeating writes.
+                invalidateReaderSession()
+                delay(READER_CONTENT_RETRY_DELAY_MS)
+            }
+        }
+        throw latestFailure ?: IOException("Chapter content request did not complete.")
     }
 
     suspend fun managedChapterIllustrations(chapterId: Long): ChapterIllustrationPage = withContext(Dispatchers.IO) {
@@ -1440,7 +2231,7 @@ class NovalPieApi(
         lastResult
     }
 
-    suspend fun bookComments(bookId: Long, page: Int = 1, limit: Int = 20): List<ChapterComment> = withContext(Dispatchers.IO) {
+    suspend fun bookComments(bookId: Long, page: Int = 1, limit: Int = 30): List<ChapterComment> = withContext(Dispatchers.IO) {
         normalizeChapterComments(
             get(
                 "/api/comments",
@@ -1553,17 +2344,38 @@ class NovalPieApi(
     private fun get(
         path: String,
         params: Map<String, String> = emptyMap(),
-        headers: Map<String, String> = emptyMap()
+        headers: Map<String, String> = emptyMap(),
+        callTimeoutSeconds: Long? = null,
+        readTimeoutSeconds: Long? = null,
     ): Any {
-        return request(path = path, params = params, method = "GET", headers = headers)
+        return request(
+            path = path,
+            params = params,
+            method = "GET",
+            headers = headers,
+            callTimeoutSeconds = callTimeoutSeconds,
+            readTimeoutSeconds = readTimeoutSeconds,
+        )
+    }
+
+    private fun post(path: String): Any {
+        return requestBody(path, "POST", ByteArray(0).toRequestBody())
     }
 
     private fun post(path: String, body: JSONObject): Any {
         return request(path = path, method = "POST", body = body)
     }
 
+    private fun postUnauthenticated(path: String, body: JSONObject): Any {
+        return request(path = path, method = "POST", body = body, includeSession = false)
+    }
+
     private fun put(path: String, body: JSONObject): Any {
         return request(path = path, method = "PUT", body = body)
+    }
+
+    private fun putUnauthenticated(path: String, body: JSONObject): Any {
+        return request(path = path, method = "PUT", body = body, includeSession = false)
     }
 
     private fun patch(path: String, body: JSONObject): Any {
@@ -1588,7 +2400,10 @@ class NovalPieApi(
         params: Map<String, String> = emptyMap(),
         method: String,
         body: JSONObject? = null,
-        headers: Map<String, String> = emptyMap()
+        headers: Map<String, String> = emptyMap(),
+        includeSession: Boolean = true,
+        callTimeoutSeconds: Long? = null,
+        readTimeoutSeconds: Long? = null,
     ): Any {
         val builder = (baseUrl.trimEnd('/') + path).toHttpUrl().newBuilder()
         params.forEach { (key, value) ->
@@ -1625,7 +2440,13 @@ class NovalPieApi(
             else -> requestBuilder.get()
         }
 
-        return execute(path, requestBuilder)
+        return execute(
+            path = path,
+            requestBuilder = requestBuilder,
+            includeSession = includeSession,
+            callTimeoutSeconds = callTimeoutSeconds,
+            readTimeoutSeconds = readTimeoutSeconds,
+        )
     }
 
     private fun baseRequestBuilder(pathOrUrl: String): Request.Builder {
@@ -1640,22 +2461,39 @@ class NovalPieApi(
             .header("user-agent", USER_AGENT)
     }
 
-    private fun execute(path: String, requestBuilder: Request.Builder): Any {
-        cookieProvider()?.takeIf { it.isNotBlank() }?.let { cookie ->
-            requestBuilder.header("cookie", cookie)
-        }
-        authTokenProvider()?.takeIf { it.isNotBlank() }?.let { token ->
-            requestBuilder.header("authorization", "Bearer $token")
+    private fun execute(
+        path: String,
+        requestBuilder: Request.Builder,
+        includeSession: Boolean = true,
+        callTimeoutSeconds: Long? = null,
+        readTimeoutSeconds: Long? = null,
+    ): Any {
+        if (includeSession) {
+            cookieProvider()?.takeIf { it.isNotBlank() }?.let { cookie ->
+                requestBuilder.header("cookie", cookie)
+            }
+            authTokenProvider()?.takeIf { it.isNotBlank() }?.let { token ->
+                requestBuilder.header("authorization", "Bearer $token")
+            }
         }
 
         val request = requestBuilder.build()
 
         val explicitProxy = proxyProvider()
         val proxySelector = if (explicitProxy == null) proxySelectorProvider() else null
-        val callClient = when {
-            explicitProxy != null -> client.newBuilder().proxy(explicitProxy).build()
-            proxySelector != null -> client.newBuilder().proxySelector(proxySelector).build()
-            else -> client
+        val callClient = if (callTimeoutSeconds != null || readTimeoutSeconds != null ||
+            explicitProxy != null || proxySelector != null
+        ) {
+            client.newBuilder().apply {
+                when {
+                    explicitProxy != null -> proxy(explicitProxy)
+                    proxySelector != null -> this.proxySelector(proxySelector)
+                }
+                callTimeoutSeconds?.let { callTimeout(it, TimeUnit.SECONDS) }
+                readTimeoutSeconds?.let { readTimeout(it, TimeUnit.SECONDS) }
+            }.build()
+        } else {
+            client
         }
 
         callClient.newCall(request).execute().use { response ->
@@ -1673,15 +2511,22 @@ class NovalPieApi(
         }
     }
 
-    private fun executeExternal(label: String, requestBuilder: Request.Builder): Any {
+    private fun executeExternal(
+        label: String,
+        requestBuilder: Request.Builder,
+        callTimeoutSeconds: Long? = null
+    ): Any {
         val request = requestBuilder.build()
         val explicitProxy = proxyProvider()
         val proxySelector = if (explicitProxy == null) proxySelectorProvider() else null
-        val callClient = when {
-            explicitProxy != null -> client.newBuilder().proxy(explicitProxy).build()
-            proxySelector != null -> client.newBuilder().proxySelector(proxySelector).build()
-            else -> client
+        val callBuilder = client.newBuilder().apply {
+            when {
+                explicitProxy != null -> proxy(explicitProxy)
+                proxySelector != null -> proxySelector(proxySelector)
+            }
+            callTimeoutSeconds?.let { callTimeout(it, TimeUnit.SECONDS) }
         }
+        val callClient = callBuilder.build()
         callClient.newCall(request).execute().use { response ->
             val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
@@ -1694,6 +2539,50 @@ class NovalPieApi(
                 )
             }
             return parseJsonOrString(responseBody)
+        }
+    }
+
+    private suspend fun streamResponse(
+        label: String,
+        requestBuilder: Request.Builder,
+        consumer: suspend (InputStream, String?) -> Unit,
+        callTimeoutSeconds: Long,
+        readTimeoutSeconds: Long,
+    ) {
+        cookieProvider()?.takeIf { it.isNotBlank() }?.let { cookie ->
+            requestBuilder.header("cookie", cookie)
+        }
+        authTokenProvider()?.takeIf { it.isNotBlank() }?.let { token ->
+            requestBuilder.header("authorization", "Bearer $token")
+        }
+
+        val explicitProxy = proxyProvider()
+        val proxySelector = if (explicitProxy == null) proxySelectorProvider() else null
+        val callClient = client.newBuilder().apply {
+            when {
+                explicitProxy != null -> proxy(explicitProxy)
+                proxySelector != null -> this.proxySelector(proxySelector)
+            }
+            callTimeout(callTimeoutSeconds, TimeUnit.SECONDS)
+            readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
+        }.build()
+
+        val response = callClient.newCall(requestBuilder.build()).execute()
+        try {
+            if (!response.isSuccessful) {
+                val responseBody = response.body?.string().orEmpty()
+                throw NovalPieApiException(
+                    statusCode = response.code,
+                    path = label,
+                    serverMessage = NovalPieApiException.extractServerMessage(responseBody),
+                )
+            }
+            val body = response.body ?: throw IOException("响应没有内容")
+            body.byteStream().use { input ->
+                consumer(input, response.header("content-type"))
+            }
+        } finally {
+            response.close()
         }
     }
 
@@ -1760,6 +2649,57 @@ class NovalPieApi(
             trimmed.startsWith("[") -> JSONArray(trimmed)
             else -> trimmed
         }
+    }
+
+    private fun normalizeEpubDownloadTicket(raw: Any): EpubDownloadTicket {
+        val root = raw as? JSONObject ?: throw IOException("下载授权响应格式无效")
+        val source = unwrapObject(raw, "data", "result")
+        val success = source.firstBooleanOrNull("success", "ok")
+            ?: root.firstBooleanOrNull("success", "ok")
+        if (success == false) {
+            throw IOException(
+                source.firstStringOrNull("message", "error", "detail")
+                    ?: root.firstStringOrNull("message", "error", "detail")
+                    ?: "下载授权失败"
+            )
+        }
+        val fileName = source.firstStringOrNull("file_name", "fileName", "filename", "path")
+            ?: root.firstStringOrNull("file_name", "fileName", "filename", "path")
+            ?: throw IOException("下载授权未返回文件名")
+        return EpubDownloadTicket(
+            fileName = fileName,
+            userPointsAfter = source.firstLongOrNull("user_points_after", "userPointsAfter", "points_after")
+                ?: root.firstLongOrNull("user_points_after", "userPointsAfter", "points_after"),
+            hasDownloadPurchase = source.firstBooleanOrNull(
+                "has_download_purchase",
+                "hasDownloadPurchase",
+                "download_purchased",
+            ) ?: root.firstBooleanOrNull(
+                "has_download_purchase",
+                "hasDownloadPurchase",
+                "download_purchased",
+            ) ?: false,
+        )
+    }
+
+    private fun resolveAssetUrl(raw: String): okhttp3.HttpUrl? {
+        val value = raw.trim()
+        if (value.isBlank()) return null
+        return value.toHttpUrlOrNull() ?: baseUrl.toHttpUrl().resolve(value)
+    }
+
+    private fun normalizeEditorProcessorUrl(endpoint: String): String {
+        val candidate = endpoint.trim().let { value ->
+            if (value.startsWith("http://") || value.startsWith("https://")) value else "http://$value"
+        }
+        val parsed = candidate.toHttpUrlOrNull() ?: throw IllegalArgumentException("Processor endpoint is invalid")
+        require(parsed.scheme == "http" || parsed.scheme == "https") { "Processor endpoint must use HTTP or HTTPS" }
+        return parsed.toString()
+    }
+
+    private fun decodeEditorProcessorString(raw: String): String {
+        val decoded = runCatching { JSONTokener(raw).nextValue() }.getOrNull()
+        return decoded as? String ?: raw
     }
 
     private fun normalizePoliticalExamSession(raw: Any): PoliticalExamSession {
@@ -1844,14 +2784,75 @@ class NovalPieApi(
         return null
     }
 
-    private fun normalizeNovelList(raw: Any): List<NovelCard> {
-        return extractArray(raw).mapNotNull { value ->
+    private fun normalizeNovelList(raw: Any, vararg preferredKeys: String): List<NovelCard> {
+        val values = if (preferredKeys.isEmpty()) {
+            extractArray(raw)
+        } else {
+            extractArray(raw, *preferredKeys)
+                .ifEmpty { extractArray(unwrapObject(raw, *preferredKeys), *preferredKeys) }
+        }
+        return values.mapNotNull { value ->
             (value as? JSONObject)?.let(::normalizeBook)
         }
     }
 
+    private fun normalizeSearchPage(
+        raw: Any,
+        requestedPage: Int,
+        requestedLimit: Int
+    ): SearchPage {
+        val root = raw as? JSONObject
+        val nestedData = root?.optJSONObject("data")
+        val metadata = when {
+            root == null -> JSONObject()
+            root.has("total") || root.has("total_pages") || root.has("totalPages") || root.has("page") -> root
+            nestedData != null -> nestedData
+            else -> root
+        }
+        val pagination = metadata.optJSONObject("pagination")
+            ?: root?.optJSONObject("pagination")
+            ?: nestedData?.optJSONObject("pagination")
+        fun metadataInt(vararg names: String): Int? {
+            fun firstFrom(source: JSONObject?): Int? {
+                if (source == null) return null
+                for (name in names) {
+                    source.intOrNull(name)?.let { return it }
+                }
+                return null
+            }
+            return firstFrom(pagination) ?: firstFrom(metadata) ?: firstFrom(root)
+        }
+
+        val page = (metadataInt("page", "current_page", "currentPage") ?: requestedPage).coerceAtLeast(1)
+        val pageSize = (metadataInt("limit", "page_size", "pageSize", "per_page", "perPage")
+            ?: requestedLimit).coerceAtLeast(1)
+        val total = metadataInt("total", "total_count", "totalCount")?.takeIf { it >= 0 }
+        val totalPages = metadataInt("total_pages", "totalPages", "pages")
+            ?.takeIf { it > 0 }
+            ?: total?.let { count -> ((count.toLong() + pageSize - 1L) / pageSize).toInt().coerceAtLeast(1) }
+
+        return SearchPage(
+            items = normalizeNovelList(raw, "results", "items", "novels", "books", "data"),
+            page = page,
+            pageSize = pageSize,
+            total = total,
+            totalPages = totalPages
+        )
+    }
+
     private fun normalizeBook(raw: Any): NovelCard {
         val source = unwrapObject(raw, "novel", "item", "data")
+        // The detail endpoint exposes both a native and an original-platform read count.  Its
+        // `novelRead` field is ambiguous in search responses, but is the original-platform count
+        // when an explicit `siteReadCount` is present, as on the current source detail route.
+        val explicitSiteReadCount = source.longOrNull("site_read_count")
+            ?: source.longOrNull("siteReadCount")
+        val ambiguousNovelReadCount = source.longOrNull("novel_read")
+            ?: source.longOrNull("novelRead")
+        val explicitSourceReadCount = source.longOrNull("source_read_count")
+            ?: source.longOrNull("sourceReadCount")
+            ?: source.longOrNull("original_read_count")
+            ?: source.longOrNull("originalReadCount")
         val favoriteObjectId = source.longOrNull("object_id")
             ?: source.longOrNull("objectId")
         val favoriteType = source.firstStringOrNull("favorite_type", "favoriteType")
@@ -1961,7 +2962,9 @@ class NovalPieApi(
                 ?: source.stringOrNull("synopsis"),
             wordCount = source.longOrNull("word_count")
                 ?: source.longOrNull("wordCount")
-                ?: source.longOrNull("words"),
+                ?: source.longOrNull("words")
+                ?: source.longOrNull("font_number")
+                ?: source.longOrNull("fontNumber"),
             favoriteCount = source.longOrNull("favorite_count")
                 ?: source.longOrNull("favoriteCount")
                 ?: source.longOrNull("favorites")
@@ -1971,19 +2974,20 @@ class NovalPieApi(
                 ?: source.longOrNull("bookmarkCount")
                 ?: source.longOrNull("collect_count")
                 ?: source.longOrNull("collectCount"),
-            siteReadCount = source.longOrNull("site_read_count")
-                ?: source.longOrNull("siteReadCount")
-                ?: source.longOrNull("novel_read")
-                ?: source.longOrNull("novelRead")
+            siteReadCount = explicitSiteReadCount
+                ?: ambiguousNovelReadCount
                 ?: source.longOrNull("read_count")
                 ?: source.longOrNull("readCount")
                 ?: source.longOrNull("view_count")
                 ?: source.longOrNull("viewCount")
                 ?: source.longOrNull("views"),
-            sourceReadCount = source.longOrNull("source_read_count")
-                ?: source.longOrNull("sourceReadCount")
-                ?: source.longOrNull("original_read_count")
-                ?: source.longOrNull("originalReadCount"),
+            recommendCount = source.longOrNull("recommend")
+                ?: source.longOrNull("recommend_count")
+                ?: source.longOrNull("recommendCount")
+                ?: source.longOrNull("site_recommend_count")
+                ?: source.longOrNull("siteRecommendCount"),
+            sourceReadCount = explicitSourceReadCount
+                ?: ambiguousNovelReadCount?.takeIf { explicitSiteReadCount != null },
             sourceFavoriteCount = source.longOrNull("source_favorite_count")
                 ?: source.longOrNull("sourceFavoriteCount")
                 ?: source.longOrNull("original_favorite_count")
@@ -1991,7 +2995,30 @@ class NovalPieApi(
             updatedAt = source.stringOrNull("updated_at")
                 ?: source.stringOrNull("updateTime")
                 ?: source.stringOrNull("created_at"),
-            tags = normalizeBookTags(source)
+            tags = normalizeBookTags(source),
+            createdAt = source.firstStringOrNull("created_at", "createdAt", "published_at", "publishedAt"),
+            chapterCount = source.firstIntOrNull("chapter_num", "chapterNum", "chapter_count", "chapterCount"),
+            maxChapterNumber = source.firstIntOrNull(
+                "max_chapter_number",
+                "maxChapterNumber",
+                "max_chapter_num",
+                "maxChapterNum",
+            ),
+            guarantorId = source.firstLongOrNull("guarantor_id", "guarantorId")
+                ?: source.optJSONObject("guarantorInfo")?.firstLongOrNull("userId", "user_id")
+                ?: source.optJSONObject("guarantor_info")?.firstLongOrNull("userId", "user_id"),
+            guarantorName = source.firstStringOrNull("guarantor_name", "guarantorName")
+                ?: source.objectStringOrNull("guarantorInfo", "username", "name", "display_name")
+                ?: source.objectStringOrNull("guarantor_info", "username", "name", "display_name"),
+            guaranteedAt = source.firstStringOrNull("guaranteed_at", "guaranteedAt")
+                ?: source.optJSONObject("guarantorInfo")?.firstStringOrNull("guaranteedAt", "guaranteed_at")
+                ?: source.optJSONObject("guarantor_info")?.firstStringOrNull("guaranteedAt", "guaranteed_at"),
+            uploaderName = source.firstStringOrNull("uploader_name", "uploaderName", "uploaded_by", "uploadedBy")
+                ?: source.objectStringOrNull("uploader", "username", "name", "display_name")
+                ?: source.objectStringOrNull("uploaderInfo", "username", "name", "display_name")
+                ?: source.objectStringOrNull("uploadUser", "username", "name", "display_name"),
+            isAdult = source.firstBooleanOrNull("is_adult", "isAdult", "adult", "adultOnly"),
+            allowDownload = source.firstBooleanOrNull("allowDownload", "allow_download"),
         )
     }
 
@@ -2020,6 +3047,10 @@ class NovalPieApi(
                     wordCount = source.longOrNull("word_count")
                     ?: source.longOrNull("wordCount")
                     ?: source.longOrNull("words"),
+                    imageCount = source.intOrNull("image_count")
+                        ?: source.intOrNull("imageCount")
+                        ?: source.intOrNull("illustration_count")
+                        ?: source.intOrNull("illustrationCount"),
                     updatedAt = source.stringOrNull("updated_at")
                     ?: source.stringOrNull("updateTime")
                     ?: source.stringOrNull("created_at")
@@ -2032,16 +3063,94 @@ class NovalPieApi(
 
     private data class IndexedChapter(val index: Int, val chapter: Chapter)
 
-    private data class ReaderSessionKey(val sessionId: String, val sessionKey: String)
+    private data class ReaderSessionKey(
+        val sessionId: String,
+        val sessionKey: String,
+        val cacheUntilMillis: Long,
+    ) {
+        fun isUsableAt(nowMillis: Long): Boolean = nowMillis < cacheUntilMillis
+    }
 
-    private fun readerSessionKey(): ReaderSessionKey {
-        val raw = get("/api/reader/session-key", headers = readerSignatureHeaders())
-        val source = unwrapObject(raw, "data", "result", "session")
-        val sessionId = source.firstStringOrNull("session_id", "sessionId", "id")
-            ?: throw IOException("Reader session id is empty.")
-        val sessionKey = source.firstStringOrNull("session_key", "sessionKey", "key")
-            ?: throw IOException("Reader session key is empty.")
-        return ReaderSessionKey(sessionId = sessionId, sessionKey = sessionKey)
+    private fun readerSessionKey(forceRefresh: Boolean = false): ReaderSessionKey {
+        val now = System.currentTimeMillis()
+        cachedReaderSession?.takeIf { !forceRefresh && it.isUsableAt(now) }?.let { return it }
+
+        return synchronized(readerSessionLock) {
+            val synchronizedNow = System.currentTimeMillis()
+            cachedReaderSession
+                ?.takeIf { !forceRefresh && it.isUsableAt(synchronizedNow) }
+                ?.let { return@synchronized it }
+
+            val raw = get("/api/reader/session-key", headers = readerSignatureHeaders())
+            val source = unwrapObject(raw, "data", "result", "session")
+            val sessionId = source.firstStringOrNull("session_id", "sessionId", "id")
+                ?: throw IOException("Reader session id is empty.")
+            val sessionKey = source.firstStringOrNull("session_key", "sessionKey", "key")
+                ?: throw IOException("Reader session key is empty.")
+            ReaderSessionKey(
+                sessionId = sessionId,
+                sessionKey = sessionKey,
+                cacheUntilMillis = readerSessionCacheUntilMillis(source, synchronizedNow),
+            ).also { cachedReaderSession = it }
+        }
+    }
+
+    private fun invalidateReaderSession() {
+        cachedReaderSession = null
+    }
+
+    private fun readerSessionCacheUntilMillis(source: JSONObject, nowMillis: Long): Long {
+        val rawExpiry = source.firstLongOrNull(
+            "expires",
+            "expires_at",
+            "expiresAt",
+            "expiry",
+            "expiry_at",
+            "expiryAt",
+        )
+        val expiryMillis = rawExpiry?.let { value ->
+            if (value in 1L..9_999_999_999L) value * 1_000L else value
+        }
+        val serverDeadline = expiryMillis?.minus(READER_SESSION_EXPIRY_SKEW_MILLIS)
+        return serverDeadline
+            ?.takeIf { it > nowMillis + READER_SESSION_MIN_REUSE_MILLIS }
+            ?.coerceAtMost(nowMillis + READER_SESSION_MAX_CACHE_MILLIS)
+            ?: (nowMillis + READER_SESSION_FALLBACK_CACHE_MILLIS)
+    }
+
+    /** Only retry safe, idempotent reader reads when transport or a short-lived reader key is unstable. */
+    private fun isRetryableReaderContentFailure(failure: Throwable): Boolean {
+        var current: Throwable? = failure
+        repeat(5) {
+            when (current) {
+                is CancellationException -> return false
+                is NovalPieApiException -> {
+                    // Content reads are GETs protected by a short-lived reader session. A stale
+                    // key or transient proxy response should refresh the key once, not strand the
+                    // continuous reader at a chapter boundary.
+                    return current.statusCode in READER_CONTENT_RETRYABLE_STATUS_CODES
+                }
+                is ReaderContentUnavailableException -> return true
+                is SocketTimeoutException,
+                is ConnectException,
+                is UnknownHostException -> return true
+                is IOException -> {
+                    val detail = current?.message.orEmpty().lowercase()
+                    if (
+                        detail.contains("unexpected end") ||
+                        detail.contains("connection reset") ||
+                        detail.contains("connection aborted") ||
+                        detail.contains("broken pipe") ||
+                        detail.contains("stream was reset")
+                    ) {
+                        return true
+                    }
+                }
+            }
+            current = current?.cause
+            if (current == null) return false
+        }
+        return false
     }
 
     private fun normalizeReaderContent(raw: Any, readerSessionKey: String? = null): ReaderContent {
@@ -2049,7 +3158,17 @@ class NovalPieApi(
             return ReaderContent(title = null, content = raw, source = "plain")
         }
 
+        val topLevel = raw as? JSONObject
         val source = unwrapObject(raw, "data", "result", "chapter")
+        val success = source.firstBooleanOrNull("success", "ok")
+            ?: topLevel?.firstBooleanOrNull("success", "ok")
+        if (success == false) {
+            throw IOException(
+                source.firstStringOrNull("message", "error", "detail")
+                    ?: topLevel?.firstStringOrNull("message", "error", "detail")
+                    ?: "章节内容加载失败"
+            )
+        }
         val content = if (source.optBoolean("encrypted", false)) {
             decryptReaderContent(
                 encryptedContent = source.stringOrNull("content")
@@ -2068,7 +3187,10 @@ class NovalPieApi(
                 ?: source.stringOrNull("bodyHtml")
                 ?: source.stringOrNull("text")
                 ?: source.stringOrNull("body")
-                ?: throw IOException("Chapter content is empty.")
+                // A proxy tunnel that is dropped after headers can surface as a nominally
+                // successful response with an empty body. Mark it separately so the safe
+                // chapter-read retry can recover instead of leaving infinite scroll stranded.
+                ?: throw ReaderContentUnavailableException("Chapter content is empty.")
         }
         return ReaderContent(
             title = source.stringOrNull("title")
@@ -2085,24 +3207,67 @@ class NovalPieApi(
             extractArray(
                 source,
                 "illustrations",
+                "illustration_list",
+                "illustrationList",
                 "images",
                 "chapter_images",
                 "chapterImages",
+                "chapter_illustrations",
+                "chapterIllustrations",
                 "image_list",
-                "imageList"
+                "imageList",
+                "photo_list",
+                "photoList",
+                "photos",
+                "own_photos",
+                "ownPhotos"
             )
         )
         if (direct.isNotEmpty()) return direct
+
+        val nestedChapter = source.optJSONObject("chapter")
+        if (nestedChapter != null) {
+            val nested = normalizeChapterIllustrationItems(
+                extractArray(
+                    nestedChapter,
+                    "illustrations",
+                    "illustration_list",
+                    "illustrationList",
+                    "images",
+                    "chapter_images",
+                    "chapterImages",
+                    "chapter_illustrations",
+                    "chapterIllustrations",
+                    "image_list",
+                    "imageList",
+                    "photo_list",
+                    "photoList",
+                    "photos",
+                    "own_photos",
+                    "ownPhotos"
+                )
+            )
+            if (nested.isNotEmpty()) return nested
+        }
 
         return normalizeChapterIllustrationItems(
             extractArray(
                 raw,
                 "illustrations",
+                "illustration_list",
+                "illustrationList",
                 "images",
                 "chapter_images",
                 "chapterImages",
+                "chapter_illustrations",
+                "chapterIllustrations",
                 "image_list",
-                "imageList"
+                "imageList",
+                "photo_list",
+                "photoList",
+                "photos",
+                "own_photos",
+                "ownPhotos"
             )
         )
     }
@@ -2187,23 +3352,180 @@ class NovalPieApi(
 
     private fun normalizeFavoriteGroups(raw: Any): List<FavoriteGroup> {
         return extractArray(raw, "groups", "favorite_groups", "favoriteGroups", "items").mapNotNull { value ->
-            val source = value as? JSONObject ?: return@mapNotNull null
-            FavoriteGroup(
-                id = source.longOrNull("id") ?: source.longOrNull("group_id"),
-                name = source.stringOrNull("name")
-                    ?: source.stringOrNull("title")
-                    ?: source.stringOrNull("group_name")
-                    ?: source.stringOrNull("groupName")
-                    ?: "Group",
-                count = source.intOrNull("count")
-                    ?: source.intOrNull("novel_count")
-                    ?: source.intOrNull("novelCount")
-                    ?: source.intOrNull("book_count")
-                    ?: source.intOrNull("bookCount")
-                    ?: source.intOrNull("books_count")
-                    ?: source.intOrNull("booksCount")
-            )
+            (value as? JSONObject)?.let(::normalizeFavoriteGroup)
         }
+    }
+
+    private fun normalizeFavoriteGroup(raw: Any): FavoriteGroup =
+        normalizeFavoriteGroup(
+            unwrapObject(raw, "group", "favorite_group", "favoriteGroup", "data", "result")
+        )
+
+    private fun normalizeFavoriteGroup(source: JSONObject): FavoriteGroup {
+        val previewValues = sequenceOf("preview", "previews", "preview_items", "previewItems", "items")
+            .mapNotNull { key -> (source.opt(key) as? JSONArray)?.toList() }
+            .firstOrNull()
+            .orEmpty()
+        return FavoriteGroup(
+            id = source.longOrNull("id") ?: source.longOrNull("group_id"),
+            name = source.stringOrNull("name")
+                ?: source.stringOrNull("title")
+                ?: source.stringOrNull("group_name")
+                ?: source.stringOrNull("groupName")
+                ?: "Group",
+            count = source.intOrNull("count")
+                ?: source.intOrNull("novel_count")
+                ?: source.intOrNull("novelCount")
+                ?: source.intOrNull("book_count")
+                ?: source.intOrNull("bookCount")
+                ?: source.intOrNull("books_count")
+                ?: source.intOrNull("booksCount"),
+            previews = previewValues.mapNotNull { value ->
+                (value as? JSONObject)?.let(::normalizeFavoriteEntry)
+            }
+        )
+    }
+
+    private fun normalizeFavoritePage(
+        raw: Any,
+        requestedPage: Int,
+        requestedPageSize: Int
+    ): FavoritePage {
+        val root = raw as? JSONObject
+        val pagination = root?.optJSONObject("pagination")
+            ?: root?.optJSONObject("data")?.optJSONObject("pagination")
+        val entries = extractArray(raw, "favorites", "items", "history", "records", "list", "data")
+            .mapNotNull { value -> (value as? JSONObject)?.let(::normalizeFavoriteEntry) }
+        return FavoritePage(
+            items = entries,
+            page = pagination?.intOrNull("page") ?: requestedPage.coerceAtLeast(1),
+            pageSize = pagination?.intOrNull("page_size")
+                ?: pagination?.intOrNull("pageSize")
+                ?: pagination?.intOrNull("limit")
+                ?: requestedPageSize.coerceAtLeast(1),
+            total = pagination?.intOrNull("total")
+                ?: root?.optJSONObject("data")?.intOrNull("total")
+                ?: root?.intOrNull("total"),
+            totalPages = pagination?.intOrNull("total_pages")
+                ?: pagination?.intOrNull("totalPages")
+                ?: pagination?.intOrNull("pages")
+                ?: root?.optJSONObject("data")?.intOrNull("pages")
+                ?: root?.intOrNull("pages")
+        )
+    }
+
+    private fun normalizeFavoriteEntry(source: JSONObject): FavoriteEntry? {
+        val book = normalizeBook(source)
+        if (book.id <= 0L) return null
+        val objectId = source.longOrNull("object_id") ?: source.longOrNull("objectId")
+        val rawId = source.longOrNull("id")
+        val favoriteId = source.longOrNull("favorite_id")
+            ?: source.longOrNull("favoriteId")
+            ?: rawId?.takeIf { objectId == null || it != objectId }
+        return FavoriteEntry(
+            favoriteId = favoriteId,
+            book = book,
+            groupId = source.longOrNull("group_id") ?: source.longOrNull("groupId"),
+            groupName = source.firstStringOrNull("group_name", "groupName"),
+            isPinned = source.firstBooleanOrNull("is_pinned", "isPinned", "pinned") ?: false,
+            createdAt = source.firstStringOrNull("created_at", "createdAt", "favorited_at", "favoritedAt"),
+            lastReadAt = source.firstStringOrNull("last_read_time", "lastReadTime", "read_at", "readAt"),
+            lastChapterId = source.longOrNull("last_chapter_id")
+                ?: source.longOrNull("lastChapterId")
+                ?: source.longOrNull("chapter_id")
+                ?: source.longOrNull("chapterId"),
+            lastChapter = source.intOrNull("last_chapter")
+                ?: source.intOrNull("lastChapter"),
+            chapterCount = source.intOrNull("chapter_count")
+                ?: source.intOrNull("chapterCount")
+        )
+    }
+
+    /** Normalizes the current Spring-style `content` envelope used by `/api/terminologies`. */
+    private fun normalizeTerminologyPage(
+        raw: Any,
+        requestedNovelId: Long,
+        requestedPage: Int,
+    ): TerminologyPage {
+        val root = raw as? JSONObject
+        val data = root?.optJSONObject("data") ?: root ?: JSONObject()
+        val metadata = when {
+            data.has("page") || data.has("size") || data.has("total") || data.has("totalPages") -> data
+            root?.has("page") == true || root?.has("size") == true || root?.has("total") == true -> root
+            else -> data
+        }
+        fun metadataInt(vararg names: String): Int? {
+            fun firstFrom(source: JSONObject?): Int? {
+                if (source == null) return null
+                for (name in names) {
+                    source.intOrNull(name)?.let { return it }
+                }
+                return null
+            }
+            return firstFrom(metadata) ?: firstFrom(data) ?: firstFrom(root)
+        }
+
+        val entries = extractArray(data, "content", "items", "records", "list")
+            .ifEmpty { extractArray(raw, "content", "items", "records", "list") }
+            .mapNotNull { value ->
+                (value as? JSONObject)?.let { source ->
+                    normalizeTerminologyEntry(source, requestedNovelId)
+                }
+            }
+
+        val resolvedPage = (metadataInt("page", "current_page", "currentPage") ?: requestedPage)
+            .coerceAtLeast(0)
+        val pageSize = (metadataInt("size", "page_size", "pageSize", "limit", "per_page") ?: 20)
+            .coerceAtLeast(1)
+        val total = metadataInt("total", "total_count", "totalCount")?.takeIf { it >= 0 }
+        val totalPages = metadataInt("totalPages", "total_pages", "pages")
+            ?.takeIf { it > 0 }
+            ?: total?.let { count -> ((count.toLong() + pageSize - 1L) / pageSize).toInt().coerceAtLeast(1) }
+
+        return TerminologyPage(
+            items = entries,
+            page = resolvedPage,
+            pageSize = pageSize,
+            total = total,
+            totalPages = totalPages,
+        )
+    }
+
+    private fun normalizeTerminologyEntry(
+        source: JSONObject,
+        fallbackNovelId: Long,
+    ): TerminologyEntry? {
+        val id = source.longOrNull("id") ?: return null
+        if (id <= 0L) return null
+        val info = source.optJSONObject("info")
+        val sourceName = source.firstStringOrNull(
+            "sourceName",
+            "source_name",
+            "source",
+            "original",
+            "original_name",
+        ).orEmpty()
+        val targetName = source.firstStringOrNull(
+            "targetName",
+            "target_name",
+            "target",
+            "translation",
+            "translated_name",
+        ).orEmpty()
+        return TerminologyEntry(
+            id = id,
+            novelId = source.longOrNull("novelId")
+                ?: source.longOrNull("novel_id")
+                ?: fallbackNovelId,
+            sourceName = sourceName,
+            targetName = targetName,
+            description = info?.firstStringOrNull("description", "remark", "note")
+                ?: source.firstStringOrNull("description", "remark", "note"),
+            lockStatus = source.firstStringOrNull("lockStatus", "lock_status", "locked"),
+            isActive = source.firstBooleanOrNull("isActive", "is_active", "active", "enabled"),
+            createdAt = source.firstStringOrNull("createdAt", "created_at"),
+            updatedAt = source.firstStringOrNull("updatedAt", "updated_at"),
+        )
     }
 
     private fun normalizeNovelTags(raw: Any): List<NovelTag> {
@@ -2309,6 +3631,11 @@ class NovalPieApi(
         extractArray(raw, "data", "apis", "items", "list", "records").mapNotNull { value ->
             val source = value as? JSONObject ?: return@mapNotNull null
             val id = source.longOrNull("id") ?: return@mapNotNull null
+            val activationStatus = source.firstStringOrNull(
+                "status",
+                "activation_status",
+                "activationStatus"
+            )
             WorkspaceApiConfig(
                 id = id,
                 name = source.firstStringOrNull("name", "api_name", "apiName") ?: "API #$id",
@@ -2316,16 +3643,26 @@ class NovalPieApi(
                 endpoint = source.firstStringOrNull("endpoint", "base_url", "baseUrl").orEmpty(),
                 apiKey = source.firstStringOrNull("key", "api_key", "apiKey"),
                 concurrency = source.intOrNull("concurrency") ?: 10,
-                isActive = source.firstBooleanOrNull("is_active", "isActive", "active") ?: true,
+                isActive = source.firstBooleanOrNull("is_active", "isActive", "active")
+                    ?: workspaceApiStatusIsActive(activationStatus)
+                    ?: true,
                 isHealthy = source.firstBooleanOrNull("is_healthy", "isHealthy", "healthy"),
                 approvalStatus = source.firstStringOrNull("approval_status", "approvalStatus"),
                 totalRequests = source.longOrNull("totalRequests")
                     ?: source.longOrNull("total_requests")
                     ?: source.longOrNull("callCount")
                     ?: source.longOrNull("call_count")
-                    ?: 0
+                    ?: 0,
+                activationStatus = activationStatus,
+                actualStatus = source.firstStringOrNull("actual_status", "actualStatus")
             )
         }
+
+    private fun workspaceApiStatusIsActive(status: String?): Boolean? = when (status?.trim()?.lowercase()) {
+        "active", "enabled", "on" -> true
+        "inactive", "disabled", "off", "suspended" -> false
+        else -> null
+    }
 
     private fun normalizeWorkspaceCookieConfigs(raw: Any): WorkspaceCookieConfigs {
         val source = unwrapObject(raw, "data", "result")
@@ -2491,14 +3828,57 @@ class NovalPieApi(
         )
     }
 
-    private fun normalizeForumPosts(raw: Any): List<ForumPost> {
+    private fun normalizeForumPosts(raw: Any, forceBookReview: Boolean = false): List<ForumPost> {
         return extractArray(raw, "posts", "items", "records", "list", "data").mapNotNull { value ->
             val source = value as? JSONObject ?: return@mapNotNull null
-            normalizeForumPost(source)
+            normalizeForumPost(source, forceBookReview = forceBookReview)
         }
     }
 
-    private fun normalizeForumPost(raw: JSONObject): ForumPost {
+    private fun normalizeForumPostsPage(
+        raw: Any,
+        forceBookReview: Boolean = false,
+        requestedPage: Int = 1,
+        requestedLimit: Int = 20
+    ): ForumPostPage {
+        val root = raw as? JSONObject
+        val data = root?.optJSONObject("data")
+        val result = root?.optJSONObject("result")
+        val pagination = root?.optJSONObject("pagination")
+            ?: data?.optJSONObject("pagination")
+            ?: result?.optJSONObject("pagination")
+        val metadataSources = listOfNotNull(pagination, data, result, root)
+
+        fun metadataInt(vararg keys: String): Int? {
+            for (source in metadataSources) {
+                for (key in keys) {
+                    source.intOrNull(key)?.let { return it }
+                }
+            }
+            return null
+        }
+
+        val page = metadataInt("page", "current_page", "currentPage")?.coerceAtLeast(1)
+            ?: requestedPage.coerceAtLeast(1)
+        val pageSize = metadataInt("limit", "page_size", "pageSize", "per_page", "perPage")
+            ?.coerceAtLeast(1)
+            ?: requestedLimit.coerceAtLeast(1)
+        val total = metadataInt("total", "count", "total_count", "totalCount")
+        val totalPages = metadataInt("pages", "total_pages", "totalPages", "page_count", "pageCount")
+            ?.coerceAtLeast(1)
+            ?: total?.let { count ->
+                ((count.toLong() + pageSize - 1L) / pageSize).toInt().coerceAtLeast(1)
+            }
+
+        return ForumPostPage(
+            posts = normalizeForumPosts(raw, forceBookReview = forceBookReview),
+            total = total,
+            page = page,
+            totalPages = totalPages
+        )
+    }
+
+    private fun normalizeForumPost(raw: JSONObject, forceBookReview: Boolean = false): ForumPost {
         val source = unwrapObject(raw, "post", "item", "data")
         val id = source.longOrNull("id")
             ?: source.longOrNull("post_id")
@@ -2514,11 +3894,11 @@ class NovalPieApi(
             "section",
             "forum_type"
         )
+        val linkedBook = source.optJSONObject("book") ?: source.optJSONObject("novel")
         val title = source.firstStringOrNull("title", "subject", "name")
             ?: plainSnippet(source.firstStringOrNull("content", "body", "text", "summary", "excerpt"))?.take(32)
             ?: "站内讨论"
         val tags = linkedSetOf<String>()
-        rawCategory?.takeIf { it.isNotBlank() }?.let { tags.add(normalizeForumCategory(it)) }
         val tagAliases = arrayOf("tags", "tag", "tag_names", "tagNames", "labels", "keywords")
         for (key in tagAliases) {
             when (val tagValue = source.opt(key)) {
@@ -2534,15 +3914,66 @@ class NovalPieApi(
             authorName = source.objectStringOrNull("author", "name", "username", "display_name", "nickname")
                 ?: source.objectStringOrNull("user", "name", "username", "display_name", "nickname")
                 ?: source.firstStringOrNull("author_name", "authorName", "username", "nickname"),
+            authorAvatarUrl = normalizeAssetUrl(
+                source.firstStringOrNull("author_avatar", "authorAvatar", "avatar", "avatar_url", "avatarUrl")
+                    ?: source.objectStringOrNull("author", "avatar", "avatar_url", "avatarUrl")
+                    ?: source.objectStringOrNull("user", "avatar", "avatar_url", "avatarUrl")
+            ),
+            authorAvatarFrameUrl = normalizeAssetUrl(
+                source.firstStringOrNull(
+                    "author_avatar_frame",
+                    "authorAvatarFrame",
+                    "avatar_frame",
+                    "avatarFrame",
+                    "avatar_frame_url",
+                    "avatarFrameUrl"
+                )
+                    ?: source.objectStringOrNull("author", "avatar_frame", "avatarFrame", "avatar_frame_url", "avatarFrameUrl")
+                    ?: source.objectStringOrNull("user", "avatar_frame", "avatarFrame", "avatar_frame_url", "avatarFrameUrl")
+            ),
+            authorBadges = normalizeForumAuthorBadges(source),
+            authorBadgeVisuals = normalizeForumAuthorBadgeVisuals(source),
             authorId = source.optJSONObject("author")?.longOrNull("id")
                 ?: source.optJSONObject("user")?.longOrNull("id")
                 ?: source.longOrNull("user_id")
                 ?: source.longOrNull("userId")
                 ?: source.longOrNull("author_id")
                 ?: source.longOrNull("authorId"),
-            bookTitle = source.objectStringOrNull("novel", "title", "name", "novel_title")
-                ?: source.objectStringOrNull("book", "title", "name", "book_title")
+            bookId = source.longOrNull("book_id")
+                ?: source.longOrNull("bookId")
+                ?: source.longOrNull("novel_id")
+                ?: source.longOrNull("novelId")
+                ?: linkedBook?.longOrNull("id")
+                ?: linkedBook?.longOrNull("book_id")
+                ?: linkedBook?.longOrNull("bookId"),
+            bookTitle = linkedBook?.firstStringOrNull("title", "name", "novel_title", "novelTitle", "book_title", "bookTitle")
                 ?: source.firstStringOrNull("novel_title", "novelTitle", "book_title", "bookTitle"),
+            bookCoverUrl = normalizeAssetUrl(
+                source.firstStringOrNull(
+                    "book_cover",
+                    "bookCover",
+                    "book_cover_url",
+                    "bookCoverUrl",
+                    "novel_cover",
+                    "novelCover"
+                )
+                    ?: linkedBook?.firstStringOrNull(
+                        "cover",
+                        "cover_url",
+                        "coverUrl",
+                        "photo_url",
+                        "photoUrl",
+                        "book_cover",
+                        "bookCover"
+                    )
+            ),
+            isBookReview = forceBookReview || rawCategory?.trim()?.lowercase() in setOf(
+                "review",
+                "reviews",
+                "book_review",
+                "book-reviews",
+                "book_review_comment"
+            ),
             replyCount = source.intOrNull("reply_count")
                 ?: source.intOrNull("replyCount")
                 ?: source.intOrNull("comments_count")
@@ -2552,19 +3983,29 @@ class NovalPieApi(
             likeCount = source.intOrNull("like_count")
                 ?: source.intOrNull("likeCount")
                 ?: source.intOrNull("likes"),
+            helpfulCount = source.intOrNull("helpful_count")
+                ?: source.intOrNull("helpfulCount"),
+            notHelpfulCount = source.intOrNull("not_helpful_count")
+                ?: source.intOrNull("notHelpfulCount"),
+            funnyCount = source.intOrNull("funny_count")
+                ?: source.intOrNull("funnyCount"),
             reactionCount = source.intOrNull("reaction_count")
                 ?: source.intOrNull("reactionCount")
-                ?: source.intOrNull("reactions"),
+                ?: source.intOrNull("reactions")
+                ?: source.intOrNull("funny_count"),
             awardPoints = source.intOrNull("award_points")
                 ?: source.intOrNull("awardPoints")
                 ?: source.intOrNull("reward_points")
                 ?: source.intOrNull("rewardPoints")
+                ?: source.intOrNull("award_count")
+                ?: source.intOrNull("awardCount")
                 ?: source.intOrNull("awards"),
             viewCount = source.intOrNull("view_count")
                 ?: source.intOrNull("viewCount")
                 ?: source.intOrNull("views")
                 ?: source.intOrNull("read_count")
                 ?: source.intOrNull("readCount"),
+            createdAt = source.firstStringOrNull("created_at", "createdAt"),
             lastActiveLabel = source.firstStringOrNull(
                 "last_active_at",
                 "lastActiveAt",
@@ -2573,8 +4014,18 @@ class NovalPieApi(
                 "created_at",
                 "createdAt"
             ),
-            excerpt = plainSnippet(source.firstStringOrNull("excerpt", "summary", "content", "body", "text")),
-            tags = tags.toList().take(3),
+            excerpt = plainSnippet(
+                source.firstStringOrNull(
+                    "excerpt",
+                    "summary",
+                    "content",
+                    "full_content",
+                    "fullContent",
+                    "body",
+                    "text"
+                )
+            ),
+            tags = tags.toList().take(5),
             pinned = source.firstBooleanOrNull("pinned", "is_pinned", "isPinned", "top", "is_top", "isTop") ?: false,
             featured = source.firstBooleanOrNull(
                 "featured",
@@ -2588,6 +4039,43 @@ class NovalPieApi(
                 "isStarred"
             ) ?: false
         )
+    }
+
+    private fun normalizeForumAuthorBadges(source: JSONObject): List<String> {
+        val badgeOwners = listOfNotNull(source, source.optJSONObject("author"), source.optJSONObject("user"))
+        return buildList {
+            for (owner in badgeOwners) {
+                for (key in arrayOf("authorBadges", "author_badges", "badges")) {
+                    when (val value = owner.opt(key)) {
+                        is JSONArray -> addAll(normalizeTags(value.toList()))
+                        is JSONObject -> addAll(normalizeTags(listOf(value)))
+                        is String -> addAll(splitTagString(value))
+                    }
+                }
+            }
+        }.map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+            .take(4)
+    }
+
+    /**
+     * Forum/review APIs return badge records with optional HTML/CSS presentation metadata. Keep
+     * those records alongside the legacy text labels so Compose can render them safely without
+     * ever evaluating server-provided markup or stylesheet code.
+     */
+    private fun normalizeForumAuthorBadgeVisuals(source: JSONObject): List<UserBadge> {
+        val badgeOwners = listOfNotNull(source, source.optJSONObject("author"), source.optJSONObject("user"))
+        return buildList {
+            for (owner in badgeOwners) {
+                for (key in arrayOf("authorBadges", "author_badges", "badges")) {
+                    addAll(normalizeUserBadges(owner.opt(key)))
+                }
+            }
+        }
+            .filter { badge -> badge.name.isNotBlank() }
+            .distinctBy { badge -> badge.id?.let { "id:$it" } ?: "name:${badge.name.trim().lowercase()}" }
+            .take(4)
     }
 
     private fun normalizeForumPostDetail(raw: Any): ForumPostDetail {
@@ -2622,63 +4110,132 @@ class NovalPieApi(
     }
 
     private fun normalizeForumComments(raw: Any): List<ForumComment> {
-        return extractArray(raw, "comments", "items", "records", "list", "data").mapNotNull { value ->
-            val source = value as? JSONObject ?: return@mapNotNull null
-            val id = source.longOrNull("id")
-                ?: source.longOrNull("comment_id")
-                ?: source.longOrNull("commentId")
-                ?: return@mapNotNull null
-            ForumComment(
-                id = id,
-                postId = source.longOrNull("post_id") ?: source.longOrNull("postId"),
-                parentCommentId = source.longOrNull("parent_comment_id")
-                    ?: source.longOrNull("parentCommentId")
-                    ?: source.longOrNull("comment_id_parent"),
-                authorName = source.objectStringOrNull("author", "name", "username", "display_name", "nickname")
-                    ?: source.objectStringOrNull("user", "name", "username", "display_name", "nickname")
-                    ?: source.firstStringOrNull("author_name", "authorName", "username", "nickname"),
-                authorId = source.optJSONObject("author")?.longOrNull("id")
-                    ?: source.optJSONObject("user")?.longOrNull("id")
-                    ?: source.longOrNull("user_id")
-                    ?: source.longOrNull("userId")
-                    ?: source.longOrNull("author_id")
-                    ?: source.longOrNull("authorId"),
-                replyToName = source.firstStringOrNull("reply_to_name", "replyToName"),
-                content = source.firstStringOrNull(
-                    "content_html",
-                    "contentHtml",
-                    "body_html",
-                    "bodyHtml",
-                    "content",
-                    "body",
-                    "text"
-                ) ?: "",
-                likeCount = source.intOrNull("like_count")
-                    ?: source.intOrNull("likeCount")
-                    ?: source.intOrNull("helpful_count")
-                    ?: source.intOrNull("helpfulCount")
-                    ?: source.intOrNull("likes"),
-                dislikeCount = source.intOrNull("dislike_count")
-                    ?: source.intOrNull("dislikeCount")
-                    ?: source.intOrNull("not_helpful_count")
-                    ?: source.intOrNull("notHelpfulCount")
-                    ?: source.intOrNull("down_count")
-                    ?: source.intOrNull("downCount")
-                    ?: source.intOrNull("dislikes"),
-                reactionCount = source.intOrNull("reaction_count")
-                    ?: source.intOrNull("reactionCount")
-                    ?: source.intOrNull("funny_count")
-                    ?: source.intOrNull("funnyCount")
-                    ?: source.intOrNull("reactions"),
-                awardPoints = source.intOrNull("award_points")
-                    ?: source.intOrNull("awardPoints")
-                    ?: source.intOrNull("award_count")
-                    ?: source.intOrNull("awardCount")
-                    ?: source.intOrNull("reward_points")
-                    ?: source.intOrNull("rewardPoints"),
-                createdAt = source.firstStringOrNull("created_at", "createdAt", "updated_at", "updatedAt")
+        val comments = mutableListOf<ForumComment>()
+        extractArray(raw, "comments", "items", "records", "list", "data").forEach { value ->
+            val source = value as? JSONObject ?: return@forEach
+            appendForumCommentWithReplies(comments, source)
+        }
+        // The website occasionally repeats a child comment in both a top-level page and its
+        // parent's `replies` array. Keep its first position so the visual thread remains stable.
+        return comments.distinctBy(ForumComment::id)
+    }
+
+    private fun appendForumCommentWithReplies(
+        output: MutableList<ForumComment>,
+        source: JSONObject,
+        fallbackPostId: Long? = null,
+        fallbackParentCommentId: Long? = null,
+        fallbackReplyToName: String? = null
+    ) {
+        val comment = normalizeForumComment(
+            source = source,
+            fallbackPostId = fallbackPostId,
+            fallbackParentCommentId = fallbackParentCommentId,
+            fallbackReplyToName = fallbackReplyToName
+        ) ?: return
+        output += comment
+        extractArray(source, "replies", "children", "reply_list", "replyList").forEach { value ->
+            val reply = value as? JSONObject ?: return@forEach
+            appendForumCommentWithReplies(
+                output = output,
+                source = reply,
+                fallbackPostId = comment.postId,
+                fallbackParentCommentId = comment.id,
+                fallbackReplyToName = comment.authorName
             )
         }
+    }
+
+    private fun normalizeForumComment(
+        source: JSONObject,
+        fallbackPostId: Long? = null,
+        fallbackParentCommentId: Long? = null,
+        fallbackReplyToName: String? = null
+    ): ForumComment? {
+        val id = source.longOrNull("id")
+            ?: source.longOrNull("comment_id")
+            ?: source.longOrNull("commentId")
+            ?: return null
+        val replies = extractArray(source, "replies", "children", "reply_list", "replyList")
+        return ForumComment(
+            id = id,
+            postId = source.longOrNull("post_id")
+                ?: source.longOrNull("postId")
+                ?: fallbackPostId,
+            parentCommentId = source.longOrNull("parent_comment_id")
+                ?: source.longOrNull("parentCommentId")
+                ?: source.longOrNull("comment_id_parent")
+                ?: source.longOrNull("parent_id")
+                ?: source.longOrNull("parentId")
+                ?: fallbackParentCommentId,
+            authorName = source.objectStringOrNull("author", "name", "username", "display_name", "nickname")
+                ?: source.objectStringOrNull("user", "name", "username", "display_name", "nickname")
+                ?: source.firstStringOrNull("author_name", "authorName", "username", "nickname"),
+            authorAvatarUrl = normalizeAssetUrl(
+                source.firstStringOrNull("author_avatar", "authorAvatar", "avatar", "avatar_url", "avatarUrl")
+                    ?: source.objectStringOrNull("author", "avatar", "avatar_url", "avatarUrl")
+                    ?: source.objectStringOrNull("user", "avatar", "avatar_url", "avatarUrl")
+            ),
+            authorAvatarFrameUrl = normalizeAssetUrl(
+                source.firstStringOrNull(
+                    "author_avatar_frame",
+                    "authorAvatarFrame",
+                    "avatar_frame",
+                    "avatarFrame",
+                    "avatar_frame_url",
+                    "avatarFrameUrl"
+                )
+                    ?: source.objectStringOrNull("author", "avatar_frame", "avatarFrame", "avatar_frame_url", "avatarFrameUrl")
+                    ?: source.objectStringOrNull("user", "avatar_frame", "avatarFrame", "avatar_frame_url", "avatarFrameUrl")
+            ),
+            authorBadges = normalizeForumAuthorBadges(source),
+            authorBadgeVisuals = normalizeForumAuthorBadgeVisuals(source),
+            authorId = source.optJSONObject("author")?.longOrNull("id")
+                ?: source.optJSONObject("user")?.longOrNull("id")
+                ?: source.longOrNull("user_id")
+                ?: source.longOrNull("userId")
+                ?: source.longOrNull("author_id")
+                ?: source.longOrNull("authorId"),
+            replyToName = source.firstStringOrNull("reply_to_name", "replyToName") ?: fallbackReplyToName,
+            content = source.firstStringOrNull(
+                "content_html",
+                "contentHtml",
+                "body_html",
+                "bodyHtml",
+                "content",
+                "body",
+                "text"
+            ) ?: "",
+            likeCount = source.intOrNull("like_count")
+                ?: source.intOrNull("likeCount")
+                ?: source.intOrNull("helpful_count")
+                ?: source.intOrNull("helpfulCount")
+                ?: source.intOrNull("likes"),
+            dislikeCount = source.intOrNull("dislike_count")
+                ?: source.intOrNull("dislikeCount")
+                ?: source.intOrNull("not_helpful_count")
+                ?: source.intOrNull("notHelpfulCount")
+                ?: source.intOrNull("down_count")
+                ?: source.intOrNull("downCount")
+                ?: source.intOrNull("dislikes"),
+            reactionCount = source.intOrNull("reaction_count")
+                ?: source.intOrNull("reactionCount")
+                ?: source.intOrNull("funny_count")
+                ?: source.intOrNull("funnyCount")
+                ?: source.intOrNull("reactions"),
+            awardPoints = source.intOrNull("award_points")
+                ?: source.intOrNull("awardPoints")
+                ?: source.intOrNull("award_count")
+                ?: source.intOrNull("awardCount")
+                ?: source.intOrNull("reward_points")
+                ?: source.intOrNull("rewardPoints"),
+            replyCount = source.intOrNull("reply_count")
+                ?: source.intOrNull("replyCount")
+                ?: source.intOrNull("replies_count")
+                ?: source.intOrNull("repliesCount")
+                ?: replies.size.takeIf { it > 0 },
+            createdAt = source.firstStringOrNull("created_at", "createdAt", "updated_at", "updatedAt")
+        )
     }
 
     private fun normalizeChapterComments(raw: Any): List<ChapterComment> {
@@ -2687,7 +4244,9 @@ class NovalPieApi(
             val source = value as? JSONObject ?: return@forEach
             appendChapterCommentWithReplies(comments, source)
         }
-        return comments
+        // The source may return a reply both inside its parent and in the top-level page. Keep the
+        // first occurrence so native thread reconstruction does not render it twice.
+        return comments.distinctBy(ChapterComment::id)
     }
 
     private fun appendChapterCommentWithReplies(
@@ -2730,6 +4289,7 @@ class NovalPieApi(
             ?: source.longOrNull("comment_id")
             ?: source.longOrNull("commentId")
             ?: return null
+        val replies = extractArray(source, "replies", "children", "reply_list", "replyList")
         return ChapterComment(
                 id = id,
                 bookId = source.longOrNull("book_id") ?: source.longOrNull("bookId") ?: fallbackBookId,
@@ -2737,10 +4297,31 @@ class NovalPieApi(
                 parentCommentId = source.longOrNull("parent_comment_id")
                     ?: source.longOrNull("parentCommentId")
                     ?: source.longOrNull("comment_id_parent")
+                    ?: source.longOrNull("parent_id")
+                    ?: source.longOrNull("parentId")
                     ?: fallbackParentCommentId,
                 authorName = source.objectStringOrNull("author", "name", "username", "display_name", "nickname")
                     ?: source.objectStringOrNull("user", "name", "username", "display_name", "nickname")
                     ?: source.firstStringOrNull("author_name", "authorName", "username", "nickname"),
+                authorAvatarUrl = normalizeAssetUrl(
+                    source.firstStringOrNull("author_avatar", "authorAvatar", "avatar", "avatar_url", "avatarUrl")
+                        ?: source.objectStringOrNull("author", "avatar", "avatar_url", "avatarUrl")
+                        ?: source.objectStringOrNull("user", "avatar", "avatar_url", "avatarUrl")
+                ),
+                authorAvatarFrameUrl = normalizeAssetUrl(
+                    source.firstStringOrNull(
+                        "author_avatar_frame",
+                        "authorAvatarFrame",
+                        "avatar_frame",
+                        "avatarFrame",
+                        "avatar_frame_url",
+                        "avatarFrameUrl"
+                    )
+                        ?: source.objectStringOrNull("author", "avatar_frame", "avatarFrame", "avatar_frame_url", "avatarFrameUrl")
+                        ?: source.objectStringOrNull("user", "avatar_frame", "avatarFrame", "avatar_frame_url", "avatarFrameUrl")
+                ),
+                authorBadges = normalizeForumAuthorBadges(source),
+                authorBadgeVisuals = normalizeForumAuthorBadgeVisuals(source),
                 authorId = source.optJSONObject("author")?.longOrNull("id")
                     ?: source.optJSONObject("user")?.longOrNull("id")
                     ?: source.longOrNull("user_id")
@@ -2780,6 +4361,11 @@ class NovalPieApi(
                     ?: source.intOrNull("awardCount")
                     ?: source.intOrNull("reward_points")
                     ?: source.intOrNull("rewardPoints"),
+                replyCount = source.intOrNull("reply_count")
+                    ?: source.intOrNull("replyCount")
+                    ?: source.intOrNull("replies_count")
+                    ?: source.intOrNull("repliesCount")
+                    ?: replies.size.takeIf { it > 0 },
                 createdAt = source.firstStringOrNull("created_at", "createdAt", "updated_at", "updatedAt")
             )
     }
@@ -2816,12 +4402,45 @@ class NovalPieApi(
     }
 
     private fun normalizeChapterIllustrationItem(item: JSONObject, fallbackIndex: Int): ChapterIllustration? {
-        val src = normalizeAssetUrl(item.firstStringOrNull("src", "url", "photo_url", "photoUrl"))
+        val src = normalizeAssetUrl(
+            item.firstStringOrNull(
+                "src",
+                "url",
+                "image_url",
+                "imageUrl",
+                "photo_url",
+                "photoUrl",
+                "file_url",
+                "fileUrl",
+                "path",
+                "photo"
+            )
+        )
             ?: return null
+        val originalSrc = normalizeAssetUrl(
+            item.firstStringOrNull(
+                "photo_true_url",
+                "photoTrueUrl",
+                "original_url",
+                "originalUrl",
+                "full_url",
+                "fullUrl",
+                "source_url",
+                "sourceUrl"
+            )
+        )
         return ChapterIllustration(
             id = item.longOrNull("id") ?: item.longOrNull("image_id") ?: item.longOrNull("imageId") ?: (fallbackIndex + 1L),
-            index = item.intOrNull("index") ?: item.intOrNull("order") ?: fallbackIndex + 1,
-            src = src
+            index = item.intOrNull("index")
+                ?: item.intOrNull("order")
+                ?: item.intOrNull("position")
+                ?: item.intOrNull("display_order")
+                ?: item.intOrNull("displayOrder")
+                ?: item.intOrNull("sort_order")
+                ?: item.intOrNull("sortOrder")
+                ?: fallbackIndex + 1,
+            src = src,
+            originalSrc = originalSrc,
         )
     }
 
@@ -2883,11 +4502,13 @@ class NovalPieApi(
 
     private fun normalizeForumCategory(value: String?): String {
         return when (value?.trim()?.lowercase()) {
+            "announcement", "notice", "news", "activity" -> "公告"
+            "recommend", "recommendation", "recommendations" -> "推书"
+            "discussion", "post", "posts", "topic", "topics", "forum" -> "交流"
             "review", "reviews", "book_review", "book-reviews", "book_review_comment" -> "书评"
             "chapter", "chapters", "chapter_comment", "chapter-comments" -> "章节"
-            "post", "posts", "topic", "topics", "discussion", "forum" -> "讨论"
-            "notice", "announcement", "news", "activity" -> "动态"
-            null, "" -> "动态"
+            "feedback", "suggestion", "bug", "bugs" -> "反馈"
+            null, "" -> "交流"
             else -> value.trim()
         }
     }
@@ -2938,45 +4559,268 @@ class NovalPieApi(
     }
 
     private fun normalizeUserActivities(raw: Any): List<UserActivity> {
-        return extractArray(raw, "activities", "items", "data", "results").mapNotNull { item ->
+        val values = extractArray(
+            raw,
+            "activities",
+            "items",
+            "data",
+            "results",
+            "posts",
+            "comments",
+            "reviews",
+            "records",
+            "list",
+        ).ifEmpty {
+            (raw as? JSONObject)
+                ?.optJSONObject("data")
+                ?.let {
+                    nested -> extractArray(
+                        nested,
+                        "activities",
+                        "items",
+                        "results",
+                        "data",
+                        "posts",
+                        "comments",
+                        "reviews",
+                        "records",
+                        "list",
+                    )
+                }
+                .orEmpty()
+        }
+        return values.mapNotNull { item ->
             val source = item as? JSONObject ?: return@mapNotNull null
             val comment = source.optJSONObject("comment")
             val post = source.optJSONObject("post")
             val book = source.optJSONObject("book")
             val chapter = source.optJSONObject("chapter")
             val chapterBook = chapter?.optJSONObject("book")
-            val type = source.firstStringOrNull("type", "activity_type", "activityType") ?: "post"
+            val rawType = source.firstStringOrNull("type", "activity_type", "activityType") ?: "post"
+            val type = when (rawType.trim().lowercase()) {
+                "post_comment", "comment", "forum_comment" -> "post_comment"
+                "novel_comment", "book_review", "book-review", "review" -> "novel_comment"
+                "chapter_comment", "chapter-review", "chapter_review" -> "chapter_comment"
+                "post", "announcement", "discussion", "topic" -> "post"
+                else -> rawType.ifBlank { "post" }
+            }
             val title = when (type) {
                 "novel_comment" -> book?.firstStringOrNull("title", "name")
                 "chapter_comment" -> chapterBook?.firstStringOrNull("title", "name")
                 "post_comment", "post" -> post?.firstStringOrNull("title", "subject", "name")
                 else -> source.firstStringOrNull("title", "name")
-            } ?: "动态"
+            } ?: source.firstStringOrNull("title", "subject", "name") ?: "动态"
             val content = when (type) {
                 "novel_comment", "chapter_comment", "post_comment" ->
                     comment?.firstStringOrNull("content", "body", "text")
                 "post" -> post?.firstStringOrNull("content", "body", "text", "excerpt")
                 else -> source.firstStringOrNull("content", "body", "text", "excerpt")
-            }
+            } ?: source.firstStringOrNull("content", "body", "text", "excerpt")
             UserActivity(
                 id = source.longOrNull("id") ?: comment?.longOrNull("id") ?: post?.longOrNull("id") ?: 0L,
                 type = type,
                 title = title,
                 content = plainSnippet(content),
                 createdAt = source.firstStringOrNull("created_at", "createdAt", "updated_at", "updatedAt"),
-                postId = post?.longOrNull("id") ?: source.longOrNull("post_id"),
+                postId = post?.longOrNull("id")
+                    ?: source.firstLongOrNull("post_id", "postId")
+                    ?: source.longOrNull("id")?.takeIf { type == "post" },
                 bookId = book?.longOrNull("id")
                     ?: chapterBook?.longOrNull("id")
-                    ?: source.longOrNull("book_id")
-                    ?: source.longOrNull("novel_id"),
-                chapterId = chapter?.longOrNull("id") ?: source.longOrNull("chapter_id"),
-                commentId = comment?.longOrNull("id") ?: source.longOrNull("comment_id"),
+                    ?: source.firstLongOrNull("book_id", "bookId")
+                    ?: source.firstLongOrNull("novel_id", "novelId"),
+                chapterId = chapter?.longOrNull("id")
+                    ?: source.firstLongOrNull("chapter_id", "chapterId"),
+                commentId = comment?.longOrNull("id")
+                    ?: source.firstLongOrNull("comment_id", "commentId")
+                    ?: source.longOrNull("id")?.takeIf { type != "post" },
                 coverUrl = normalizeAssetUrl(
                     (book ?: chapterBook)?.firstStringOrNull("cover", "cover_url", "photo_url", "photo")
+                        ?: source.firstStringOrNull(
+                            "book_cover",
+                            "bookCover",
+                            "cover",
+                            "cover_url",
+                            "coverUrl",
+                        )
                 )
             )
         }
     }
+
+    /** Normalizes the source ActivityTab envelope while preserving optional aggregate counters. */
+    private fun normalizeCanonicalUserActivityFeed(raw: Any): UserContentActivityFeed {
+        val source = raw as? JSONObject
+        val nested = source?.optJSONObject("data")
+        val counts = source?.optJSONObject("counts") ?: nested?.optJSONObject("counts")
+        fun firstCount(vararg keys: String): Long? = keys.asSequence()
+            .mapNotNull { key ->
+                source?.longOrNull(key)
+                    ?: nested?.longOrNull(key)
+                    ?: counts?.longOrNull(key)
+            }
+            .firstOrNull()
+
+        return UserContentActivityFeed(
+            activities = normalizeUserActivities(raw),
+            postCount = firstCount("post_count", "posts_count", "postCount", "posts"),
+            forumCommentCount = firstCount(
+                "forum_comment_count",
+                "forumCommentCount",
+                "post_comment_count",
+                "postCommentCount",
+            ),
+            bookReviewCount = firstCount(
+                "book_review_count",
+                "bookReviewCount",
+                "novel_comment_count",
+                "novelCommentCount",
+            ),
+        )
+    }
+
+    private inline fun captureUserActivityFeed(
+        block: () -> UserContentActivityFeed
+    ): Result<UserContentActivityFeed> = try {
+        Result.success(block())
+    } catch (failure: Throwable) {
+        // Cancellation must retain normal coroutine semantics; network/endpoint failures are
+        // intentionally isolated so the other source feeds can still populate the timeline.
+        if (failure is CancellationException) throw failure
+        Result.failure(failure)
+    }
+
+    private fun normalizeUserPostActivityFeed(raw: Any): UserContentActivityFeed =
+        UserContentActivityFeed(
+            activities = extractArray(raw, "posts", "items", "records", "list", "data")
+            .mapNotNull { value ->
+                val post = value as? JSONObject ?: return@mapNotNull null
+                val normalized = normalizeForumPost(post)
+                normalized.id.takeIf { it > 0 }?.let { id ->
+                    UserActivity(
+                        id = id,
+                        type = "post",
+                        title = normalized.title,
+                        content = normalized.excerpt,
+                        createdAt = normalized.createdAt ?: normalized.lastActiveLabel,
+                        postId = id
+                    )
+                }
+            },
+            postCount = userFeedTotal(raw)
+        )
+
+    private fun normalizeUserPostCommentActivityFeed(raw: Any): UserContentActivityFeed =
+        UserContentActivityFeed(
+            activities = extractArray(raw, "comments", "items", "records", "list", "data")
+            .flatMap { value ->
+                val comment = value as? JSONObject ?: return@flatMap emptyList()
+                flattenUserPostCommentActivities(comment)
+            },
+            forumCommentCount = userFeedTotal(raw)
+        )
+
+    private fun flattenUserPostCommentActivities(
+        source: JSONObject,
+        fallbackPostId: Long? = null,
+        fallbackTitle: String? = null
+    ): List<UserActivity> {
+        val post = source.optJSONObject("post") ?: source.optJSONObject("topic")
+        val postId = source.longOrNull("post_id")
+            ?: source.longOrNull("postId")
+            ?: post?.longOrNull("id")
+            ?: fallbackPostId
+        val postTitle = post?.firstStringOrNull("title", "subject", "name")
+            ?: source.firstStringOrNull("post_title", "postTitle", "topic_title", "topicTitle")
+            ?: fallbackTitle
+            ?: "论坛回复"
+        val commentId = source.longOrNull("id")
+            ?: source.longOrNull("comment_id")
+            ?: source.longOrNull("commentId")
+        val current = commentId?.let { id ->
+            UserActivity(
+                id = id,
+                type = "post_comment",
+                title = postTitle,
+                content = plainSnippet(
+                    source.firstStringOrNull(
+                        "content_html",
+                        "contentHtml",
+                        "body_html",
+                        "bodyHtml",
+                        "content",
+                        "body",
+                        "text"
+                    )
+                ),
+                createdAt = source.firstStringOrNull("created_at", "createdAt", "updated_at", "updatedAt"),
+                postId = postId,
+                commentId = id
+            )
+        }
+        val replies = extractArray(source, "replies", "children", "reply_list", "replyList")
+            .flatMap { child ->
+                (child as? JSONObject)?.let {
+                    flattenUserPostCommentActivities(it, postId, postTitle)
+                }.orEmpty()
+            }
+        return listOfNotNull(current) + replies
+    }
+
+    private fun normalizeUserBookReviewActivityFeed(raw: Any): UserContentActivityFeed =
+        UserContentActivityFeed(
+            activities = extractArray(raw, "posts", "reviews", "comments", "items", "records", "list", "data")
+            .mapNotNull { value ->
+                val review = value as? JSONObject ?: return@mapNotNull null
+                val normalized = normalizeForumPost(review, forceBookReview = true)
+                val id = normalized.id.takeIf { it > 0 } ?: return@mapNotNull null
+                UserActivity(
+                    id = id,
+                    type = "novel_comment",
+                    title = normalized.bookTitle ?: normalized.title,
+                    content = normalized.excerpt,
+                    createdAt = normalized.createdAt ?: normalized.lastActiveLabel,
+                    bookId = normalized.bookId,
+                    commentId = id,
+                    coverUrl = normalized.bookCoverUrl
+                )
+            },
+            bookReviewCount = userFeedTotal(raw)
+        )
+
+    private fun userFeedTotal(raw: Any): Long? {
+        val source = raw as? JSONObject ?: return null
+        val nestedData = source.optJSONObject("data")
+        val pagination = source.optJSONObject("pagination")
+            ?: source.optJSONObject("page")
+            ?: source.optJSONObject("meta")
+            ?: nestedData?.optJSONObject("pagination")
+        return pagination?.longOrNull("total")
+            ?: pagination?.longOrNull("count")
+            ?: source.longOrNull("total")
+            ?: nestedData?.longOrNull("total")
+    }
+
+    private fun mergeUserContentActivities(
+        activities: List<UserActivity>,
+        limit: Int
+    ): List<UserActivity> = activities
+        .filter { activity -> activity.id > 0 }
+        .distinctBy { activity -> "${activity.type}:${activity.id}" }
+        .sortedWith(
+            compareByDescending<UserActivity> { activityTimestampSortKey(it.createdAt) }
+                .thenByDescending { it.id }
+        )
+        .take(limit)
+
+    /** ISO and source SQL timestamps preserve newest-first lexical order after this normalization. */
+    private fun activityTimestampSortKey(value: String?): String =
+        value.orEmpty()
+            .trim()
+            .replace('T', ' ')
+            .removeSuffix("Z")
+            .take(19)
+            .padEnd(19, '0')
 
     private fun normalizeUserCheckinRecords(raw: Any): List<UserCheckinRecord> {
         val source = unwrapObject(raw, "records", "checkins", "data", "result")
@@ -2998,19 +4842,191 @@ class NovalPieApi(
         return result.sortedBy { it.date }
     }
 
-    private fun normalizeUserBadges(raw: Any?): List<String> {
+    private fun normalizeUserInventory(raw: Any): UserInventory {
+        val source = unwrapObject(raw, "inventory", "data", "result")
+        val equippedIds = linkedSetOf<Long>()
+        inventoryItemIds(source.opt("equipped_items")).forEach(equippedIds::add)
+        inventoryItemIds(source.opt("equippedItems")).forEach(equippedIds::add)
+        inventoryItemIds(source.opt("equipment")).forEach(equippedIds::add)
+
+        val itemValues = extractArray(source, "items", "inventory", "records", "data", "result")
+            .ifEmpty { extractArray(raw, "items", "inventory", "records", "data", "result") }
+        val items = itemValues
+            .mapNotNull { value ->
+                val item = value as? JSONObject ?: return@mapNotNull null
+                val sourceItem = item.optJSONObject("item")
+                    ?: item.optJSONObject("shop_item")
+                    ?: item.optJSONObject("shopItem")
+                    ?: item.optJSONObject("asset")
+                    ?: item.optJSONObject("cosmetic")
+                fun firstString(vararg keys: String): String? =
+                    item.firstStringOrNull(*keys) ?: sourceItem?.firstStringOrNull(*keys)
+                val inventoryId = item.longOrNull("inventory_id")
+                    ?: item.longOrNull("inventoryId")
+                    ?: item.longOrNull("id")
+                val itemId = item.longOrNull("item_id")
+                    ?: item.longOrNull("itemId")
+                    ?: sourceItem?.longOrNull("id")
+                    ?: sourceItem?.longOrNull("item_id")
+                    ?: sourceItem?.longOrNull("itemId")
+                val id = itemId
+                    ?: inventoryId
+                    ?: return@mapNotNull null
+                val name = firstString("name", "item_name", "itemName", "title", "label")
+                    ?: return@mapNotNull null
+                UserInventoryItem(
+                    id = id,
+                    name = name,
+                    inventoryId = inventoryId ?: id,
+                    itemId = itemId ?: id,
+                    type = firstString("type", "item_type", "itemType", "category"),
+                    description = firstString("description", "desc", "content"),
+                    quantity = (item.intOrNull("quantity")
+                        ?: item.intOrNull("count")
+                        ?: item.intOrNull("amount")
+                        ?: 1).coerceAtLeast(0),
+                    imageUrl = normalizeAssetUrl(
+                        firstString(
+                            "image_url",
+                            "imageUrl",
+                            "icon_url",
+                            "iconUrl",
+                            "photo_url",
+                            "photoUrl",
+                            "cover_url",
+                            "coverUrl"
+                        )
+                    ),
+                    badgeHtml = firstString("badge_html", "badgeHtml"),
+                    badgeCss = firstString("badge_css", "badgeCss"),
+                    slot = firstString("slot", "equipment_slot", "equipmentSlot", "position"),
+                    equipped = item.firstBooleanOrNull("equipped", "is_equipped", "isEquipped") == true ||
+                        sourceItem?.firstBooleanOrNull("equipped", "is_equipped", "isEquipped") == true ||
+                        id in equippedIds ||
+                        (inventoryId != null && inventoryId in equippedIds),
+                    expiresAt = firstString("expires_at", "expiresAt", "expired_at", "expiredAt")
+                )
+            }
+            .distinctBy(UserInventoryItem::inventoryId)
+
+        return UserInventory(
+            items = items,
+            equippedItemIds = equippedIds + items.filter(UserInventoryItem::equipped).flatMap { item ->
+                listOf(item.inventoryId, item.itemId, item.id)
+            }
+        )
+    }
+
+    private fun normalizeShopItems(raw: Any): List<ShopItem> =
+        extractArray(raw, "items", "data", "list", "results")
+            .mapNotNull { value ->
+                val item = value as? JSONObject ?: return@mapNotNull null
+                val source = item.optJSONObject("item") ?: item
+                val id = source.longOrNull("id")
+                    ?: source.longOrNull("item_id")
+                    ?: item.longOrNull("item_id")
+                    ?: return@mapNotNull null
+                val name = source.firstStringOrNull("name", "item_name", "itemName", "title")
+                    ?: item.firstStringOrNull("name", "item_name", "itemName", "title")
+                    ?: return@mapNotNull null
+                ShopItem(
+                    id = id,
+                    name = name,
+                    description = source.firstStringOrNull("description", "desc", "content")
+                        ?: item.firstStringOrNull("description", "desc", "content"),
+                    price = source.longOrNull("price")
+                        ?: source.longOrNull("points")
+                        ?: item.longOrNull("price")
+                        ?: item.longOrNull("points")
+                        ?: 0L,
+                    type = source.firstStringOrNull("type", "item_type", "itemType", "category")
+                        ?: item.firstStringOrNull("type", "item_type", "itemType", "category")
+                        ?: "frame",
+                    imageUrl = normalizeAssetUrl(
+                        source.firstStringOrNull("image_url", "imageUrl", "icon_url", "iconUrl")
+                            ?: item.firstStringOrNull("image_url", "imageUrl", "icon_url", "iconUrl")
+                    ),
+                    badgeHtml = source.firstStringOrNull("badge_html", "badgeHtml")
+                        ?: item.firstStringOrNull("badge_html", "badgeHtml"),
+                    badgeCss = source.firstStringOrNull("badge_css", "badgeCss")
+                        ?: item.firstStringOrNull("badge_css", "badgeCss")
+                )
+            }
+            .distinctBy(ShopItem::id)
+
+    private fun normalizeShopPurchase(raw: Any): ShopPurchaseResult {
+        val source = unwrapObject(raw, "data", "result")
+        return ShopPurchaseResult(
+            success = booleanFromAny(raw)
+                ?: source.firstBooleanOrNull("success", "ok", "status")
+                ?: true,
+            message = source.firstStringOrNull("message", "msg", "detail")
+        )
+    }
+
+    private fun inventoryItemIds(value: Any?): Set<Long> = when (value) {
+        is JSONArray -> value.toList().flatMapTo(linkedSetOf()) { inventoryItemIds(it) }
+        is JSONObject -> buildSet {
+            value.longOrNull("id")?.let(::add)
+            value.longOrNull("item_id")?.let(::add)
+            value.longOrNull("itemId")?.let(::add)
+            val keys = value.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                if (key !in setOf("id", "item_id", "itemId")) inventoryItemIds(value.opt(key)).forEach(::add)
+            }
+        }
+        is Number -> setOf(value.toLong())
+        is String -> value.toLongOrNull()?.let(::setOf).orEmpty()
+        else -> emptySet()
+    }
+
+    private fun normalizeUserQuizRewardStatus(raw: Any): UserQuizRewardStatus {
+        val source = unwrapObject(raw, "quiz_reward", "quizReward", "status", "data", "result")
+        return UserQuizRewardStatus(
+            claimed = source.firstBooleanOrNull("claimed", "is_claimed", "isClaimed", "completed", "is_completed"),
+            eligible = source.firstBooleanOrNull("eligible", "is_eligible", "isEligible", "available", "can_claim"),
+            rewardName = source.firstStringOrNull("reward_name", "rewardName", "name", "title"),
+            message = source.firstStringOrNull("message", "msg", "detail", "description"),
+            questionCount = source.intOrNull("question_count")
+                ?: source.intOrNull("questionCount")
+                ?: source.intOrNull("questions_count")
+        )
+    }
+
+    private fun normalizeUserBadges(raw: Any?): List<UserBadge> {
         val values = when (raw) {
             is JSONArray -> raw.toList()
             is Collection<*> -> raw.toList()
+            is JSONObject -> extractArray(raw, "badges", "items", "data").ifEmpty { listOf(raw) }
             else -> emptyList()
         }
         return values.mapNotNull { value ->
             when (value) {
-                is JSONObject -> value.firstStringOrNull("name", "title", "label", "code")
+                is JSONObject -> {
+                    val source = value.optJSONObject("badge") ?: value
+                    val name = source.firstStringOrNull("name", "title", "label", "code")
+                        ?: value.firstStringOrNull("name", "title", "label", "code")
+                        ?: return@mapNotNull null
+                    UserBadge(
+                        id = source.longOrNull("id")
+                            ?: source.longOrNull("badge_id")
+                            ?: value.longOrNull("badge_id"),
+                        name = name,
+                        description = source.firstStringOrNull("description", "desc", "content"),
+                        imageUrl = normalizeAssetUrl(
+                            source.firstStringOrNull("image_url", "imageUrl", "icon_url", "iconUrl")
+                        ),
+                        badgeHtml = source.firstStringOrNull("badge_html", "badgeHtml"),
+                        badgeCss = source.firstStringOrNull("badge_css", "badgeCss"),
+                    )
+                }
                 null, JSONObject.NULL -> null
-                else -> value.toString().trim().takeIf { it.isNotBlank() && it != "null" }
+                else -> value.toString().trim()
+                    .takeIf { it.isNotBlank() && it != "null" }
+                    ?.let { name -> UserBadge(name = name) }
             }
-        }.distinct()
+        }.distinctBy { badge -> badge.id?.let { "id:$it" } ?: "name:${badge.name}" }
     }
 
     private fun normalizeUserStats(raw: Any?): Map<String, Long> {
@@ -3241,6 +5257,46 @@ class NovalPieApi(
         return if (completed) "已完结" else "连载中"
     }
 
+    private fun normalizeAuthSession(raw: Any): AuthSession {
+        val source = unwrapObject(raw, "data", "result", "session")
+        val topLevel = raw as? JSONObject
+        val success = source.firstBooleanOrNull("success", "ok")
+            ?: topLevel?.firstBooleanOrNull("success", "ok")
+        if (success == false) {
+            throw IOException(
+                source.firstStringOrNull("message", "error", "detail")
+                    ?: topLevel?.firstStringOrNull("message", "error", "detail")
+                    ?: "认证失败"
+            )
+        }
+        val token = source.firstStringOrNull("token", "auth_token", "authToken", "access_token", "accessToken")
+            ?: topLevel?.firstStringOrNull("token", "auth_token", "authToken", "access_token", "accessToken")
+            ?: throw IOException("认证响应未返回会话令牌")
+        val user = source.optJSONObject("user")
+            ?: source.optJSONObject("profile")
+            ?: topLevel?.optJSONObject("user")
+            ?: topLevel?.optJSONObject("profile")
+        return AuthSession(
+            token = token,
+            user = user?.let(::normalizeUser),
+            message = source.firstStringOrNull("message", "detail")
+                ?: topLevel?.firstStringOrNull("message", "detail")
+        )
+    }
+
+    private fun normalizeAuthAction(raw: Any): AuthActionResult {
+        val source = unwrapObject(raw, "data", "result")
+        val topLevel = raw as? JSONObject
+        val success = source.firstBooleanOrNull("success", "ok")
+            ?: topLevel?.firstBooleanOrNull("success", "ok")
+            ?: true
+        return AuthActionResult(
+            success = success,
+            message = source.firstStringOrNull("message", "detail", "error")
+                ?: topLevel?.firstStringOrNull("message", "detail", "error")
+        )
+    }
+
     private fun normalizeTags(values: List<Any?>): List<String> =
         values.mapNotNull { value ->
             when (value) {
@@ -3343,11 +5399,33 @@ class NovalPieApi(
         }
     }
 
+    private fun JSONObject.firstLongOrNull(vararg keys: String): Long? =
+        keys.firstNotNullOfOrNull { key -> longOrNull(key) }
+
+    private fun JSONObject.firstIntOrNull(vararg keys: String): Int? =
+        keys.firstNotNullOfOrNull { key -> intOrNull(key) }
+
+    private class ReaderContentUnavailableException(message: String) : IOException(message)
+
     private fun JSONObject.intOrNull(key: String): Int? = longOrNull(key)?.toInt()
 
     companion object {
         const val WEBSITE_UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024
         const val WEBSITE_CHAPTER_ILLUSTRATION_MAX_BYTES = 20 * 1024 * 1024
+        private const val READER_CONTENT_MAX_ATTEMPTS = 2
+        private const val READER_CONTENT_RETRY_DELAY_MS = 500L
+        private const val READER_CONTENT_CALL_TIMEOUT_SECONDS = 45L
+        private const val READER_CONTENT_READ_TIMEOUT_SECONDS = 45L
+        private const val EPUB_DOWNLOAD_CALL_TIMEOUT_SECONDS = 15 * 60L
+        private const val EPUB_DOWNLOAD_READ_TIMEOUT_SECONDS = 2 * 60L
+        private const val ASSET_CALL_TIMEOUT_SECONDS = 90L
+        private const val ASSET_READ_TIMEOUT_SECONDS = 90L
+        private const val READER_SESSION_FALLBACK_CACHE_MILLIS = 60_000L
+        private const val READER_SESSION_MAX_CACHE_MILLIS = 5 * 60_000L
+        private const val READER_SESSION_EXPIRY_SKEW_MILLIS = 5_000L
+        private const val READER_SESSION_MIN_REUSE_MILLIS = 5_000L
+        private val READER_CONTENT_RETRYABLE_STATUS_CODES =
+            setOf(401, 403, 408, 425, 429, 500, 502, 503, 504)
         private const val USER_AGENT = "NovalPieNative/2.0 Android"
         private const val READER_SIGNATURE_SECRET =
             "X9f2m8Q5zL1p4R7t0Y3u6W2s5V8x1B4n7M0k3J6h9G2d5F8c1A4b7E0r3T6y9U2i"

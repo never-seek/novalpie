@@ -66,6 +66,21 @@ class NetworkConfigStoreTest {
         assertTrue(routes.last() == Proxy.NO_PROXY)
     }
 
+    @Test
+    fun vboxEmulatorFallbackUsesOnlyTheReverseLoopbackProxy() {
+        val settings = NetworkConfigStore(context).loadProxySettings()
+
+        val routes = settings.toProxyRoutes(
+            emulatorRuntime = true,
+            emulatorProxyHosts = preferredEmulatorProxyHosts(hypervisorPlatform = "vbox"),
+        )
+        val addresses = routes.mapNotNull { it.address() as? InetSocketAddress }
+
+        assertEquals(listOf("127.0.0.1"), addresses.map(InetSocketAddress::getHostString))
+        assertEquals(listOf(7890), addresses.map(InetSocketAddress::getPort))
+        assertEquals(Proxy.NO_PROXY, routes.last())
+    }
+
     /** An explicitly configured proxy is honoured on a real device, and is tried first. */
     @Test
     fun explicitProxyIsUsedOnRealDevicesWithoutEmulatorFallbacks() {
@@ -110,6 +125,61 @@ class NetworkConfigStoreTest {
         // VirtualBox-derived emulators, including the MuMu builds used for QA
         assertTrue(isEmulatorRuntime(fingerprint = "x/y/z", hardware = "vbox86p"))
         assertTrue(isEmulatorRuntime(model = "MuMu"))
+        // MuMu Android 15 can spoof a Redmi profile, but exposes its VirtualBox hypervisor.
+        assertTrue(
+            isEmulatorRuntime(
+                fingerprint = "Redmi/vermeer/vermeer:15/V417IR/423:user/release-keys",
+                model = "23113RKC6C",
+                manufacturer = "Redmi",
+                brand = "Redmi",
+                device = "vermeer",
+                product = "vermeer",
+                hardware = "Redmi",
+                hypervisorPlatform = "vbox",
+            )
+        )
+        // The current MuMu image can spoof an OPPO profile. Its x86 runtime is still an emulator
+        // marker, unlike a real OPPO handset which reports ARM ABIs.
+        assertTrue(
+            isEmulatorRuntime(
+                fingerprint = "OPPO/CPH2531/OP4B00L1:15/AP3A/987:user/release-keys",
+                model = "OPPO CPH2531",
+                manufacturer = "OPPO",
+                brand = "OPPO",
+                device = "OP4B00L1",
+                product = "OP4B00L1",
+                hardware = "qcom",
+                supportedAbis = arrayOf("x86_64", "x86"),
+            )
+        )
+        assertTrue(
+            isEmulatorRuntime(
+                fingerprint = "OPPO/CPH2531/OP4B00L1:15/AP3A/987:user/release-keys",
+                model = "OPPO CPH2531",
+                manufacturer = "OPPO",
+                brand = "OPPO",
+                device = "OP4B00L1",
+                product = "OP4B00L1",
+                hardware = "qcom",
+                kernelQemu = "1",
+                supportedAbis = arrayOf("arm64-v8a"),
+            )
+        )
+        // MuMu Android 15 can also spoof a HUAWEI Nicole/NCO-AL00 profile. Its mixed x86 ABI
+        // list is not possible on that physical ARM handset, and hidden property reflection is
+        // blocked on this image, so it needs a narrow Build-based fallback for adb reverse.
+        assertTrue(
+            isEmulatorRuntime(
+                fingerprint = "HUAWEI/Nicole/Nicole:15/V417IR/828:user/release-keys",
+                model = "NCO-AL00",
+                manufacturer = "HUAWEI",
+                brand = "HUAWEI",
+                device = "Nicole",
+                product = "Nicole",
+                hardware = "HUAWEI",
+                supportedAbis = arrayOf("x86_64", "arm64-v8a", "x86"),
+            )
+        )
 
         // A real x86_64 device must NOT be treated as an emulator.
         assertFalse(
@@ -133,6 +203,18 @@ class NetworkConfigStoreTest {
                 device = "x1s",
                 product = "x1sxxx",
                 hardware = "exynos990",
+            )
+        )
+        assertFalse(
+            isEmulatorRuntime(
+                fingerprint = "OPPO/CPH2531/OP4B00L1:15/AP3A/987:user/release-keys",
+                model = "OPPO CPH2531",
+                manufacturer = "OPPO",
+                brand = "OPPO",
+                device = "OP4B00L1",
+                product = "OP4B00L1",
+                hardware = "qcom",
+                supportedAbis = arrayOf("arm64-v8a", "armeabi-v7a"),
             )
         )
     }

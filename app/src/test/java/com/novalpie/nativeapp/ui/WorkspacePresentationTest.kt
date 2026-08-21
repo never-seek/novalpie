@@ -27,4 +27,13 @@ class WorkspacePresentationTest {
         assertEquals("Cookie 内容不能为空", validateWorkspaceCookieDraft(WorkspaceCookieDraft(configKey = "main")))
         assertEquals("代理格式应为 IP:PORT 或 http(s)://...", validateWorkspaceCookieDraft(WorkspaceCookieDraft(configKey = "main", cookieRaw = "a=b", proxyIp = "bad")))
     }
+
+    @Test
+    fun sourceApiActivationStatusHasReadableLabelsAndAction() {
+        assertEquals("已激活", workspaceApiStatusLabel("active", fallbackActive = false))
+        assertEquals("已禁用", workspaceApiStatusLabel("disabled", fallbackActive = true))
+        assertEquals("已停用", workspaceApiStatusLabel(null, fallbackActive = false))
+        assertEquals("停用", workspaceApiToggleActionLabel(isActive = true))
+        assertEquals("启用", workspaceApiToggleActionLabel(isActive = false))
+    }
 }

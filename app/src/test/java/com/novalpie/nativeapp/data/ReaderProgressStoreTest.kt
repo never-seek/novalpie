@@ -63,4 +63,34 @@ class ReaderProgressStoreTest {
         assertEquals(1002L, recent.first().chapterId)
         assertEquals("A-2", recent.first().chapterTitle)
     }
+
+    @Test
+    fun persistsBookTitleAlongsideTheChapterProgress() {
+        store.save(
+            bookId = 101,
+            chapterId = 1001,
+            chapterTitle = "A-1",
+            bookTitle = "A Book",
+        )
+
+        val progress = store.load(bookId = 101)
+
+        assertEquals("A Book", progress?.bookTitle)
+        assertEquals("A Book", store.loadRecent(limit = 1).single().bookTitle)
+    }
+
+    @Test
+    fun persistsChapterNumberAlongsideChapterProgress() {
+        store.save(
+            bookId = 101,
+            chapterId = 1001,
+            chapterTitle = "A-1",
+            chapterNumber = 5,
+        )
+
+        val progress = store.load(bookId = 101)
+
+        assertEquals(5, progress?.chapterNumber)
+        assertEquals(5, store.loadRecent(limit = 1).single().chapterNumber)
+    }
 }

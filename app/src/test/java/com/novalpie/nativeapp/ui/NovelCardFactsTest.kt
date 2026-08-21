@@ -6,6 +6,11 @@ import org.junit.Test
 
 class NovelCardFactsTest {
     @Test
+    fun cardMetadataUsesWrappingInsteadOfTruncation() {
+        assertEquals(Int.MAX_VALUE, NOVEL_CARD_METADATA_MAX_LINES)
+    }
+
+    @Test
     fun novelCardFactsIncludeStatusWordCountAndShortUpdateDate() {
         val facts = novelCardFacts(
             NovelCard(
@@ -89,6 +94,31 @@ class NovelCardFactsTest {
     }
 
     @Test
+    fun novelThumbnailCoverUrlPrefersGridCoverAndFallsBackToOriginal() {
+        assertEquals(
+            "https://images.novelpia.com/thumb.file",
+            novelThumbnailCoverUrl(
+                NovelCard(
+                    id = 354491,
+                    title = "Native Book",
+                    coverUrl = " https://images.novelpia.com/thumb.file ",
+                    fullCoverUrl = "https://images.novelpia.com/original.file"
+                )
+            )
+        )
+        assertEquals(
+            "https://images.novelpia.com/original.file",
+            novelThumbnailCoverUrl(
+                NovelCard(
+                    id = 354491,
+                    title = "Native Book",
+                    fullCoverUrl = " https://images.novelpia.com/original.file "
+                )
+            )
+        )
+    }
+
+    @Test
     fun searchResultPreviewKeepsMobileCardCompact() {
         val preview = novelSearchPreview(
             NovelCard(
@@ -127,5 +157,79 @@ class NovelCardFactsTest {
 
         assertEquals(null, preview.originalTitleLabel)
         assertEquals("NovelPia", preview.platformLabel)
+    }
+
+    @Test
+    fun sourceStyleCardPresentationKeepsCoverBadgesAndCompactMetrics() {
+        val book = NovelCard(
+            id = 759,
+            title = "Source Book",
+            platform = "novelPia",
+            status = "15 PLUS 独家 完结",
+            favoriteCount = 143,
+            siteReadCount = 16_100,
+            wordCount = 161_000,
+            tags = listOf("奇幻", "轻小说", "后悔")
+        )
+
+        assertEquals(
+            NovelCardCoverBadges(category = "奇幻", status = "完结"),
+            novelCardCoverBadges(book)
+        )
+        assertEquals(
+            listOf(
+                NovelCardCompactMetric(NovelCardMetricKind.Favorite, "本站收藏 143", "143"),
+                NovelCardCompactMetric(NovelCardMetricKind.Read, "本站阅读 1.6w", "1.6w"),
+                NovelCardCompactMetric(NovelCardMetricKind.WordCount, "字数 16.1w", "16.1w")
+            ),
+            novelCardCompactMetrics(book)
+        )
+    }
+
+    @Test
+    fun compactMetricFormattingMatchesSourceThousandAndTenThousandNotation() {
+        assertEquals("999", formatNovelCardCompactCount(999))
+        assertEquals("1k", formatNovelCardCompactCount(1_000))
+        assertEquals("9.9k", formatNovelCardCompactCount(9_900))
+        assertEquals("1w", formatNovelCardCompactCount(10_000))
+        assertEquals("16.1w", formatNovelCardCompactCount(161_000))
+    }
+
+    @Test
+    fun cardAccessibilityLabelKeepsTheCardActionAndVisibleSourceFacts() {
+        val label = novelCardAccessibilityLabel(
+            NovelCard(
+                id = 759,
+                title = "Source Book",
+                author = "Source Author",
+                platform = "upload",
+                status = "连载中",
+                favoriteCount = 143,
+                siteReadCount = 16_100,
+                wordCount = 161_000,
+                tags = listOf("奇幻", "轻小说")
+            )
+        )
+
+        assertEquals(
+            "打开 Source Book，作者 Source Author，来源 上传，状态 连载中，标签 奇幻、轻小说，本站收藏 143，本站阅读 1.6w，字数 16.1w",
+            label
+        )
+    }
+
+    @Test
+    fun sourceStatusTagBecomesCoverBadgeInsteadOfReplacingTheGenre() {
+        val book = NovelCard(
+            id = 360209,
+            title = "Upload Book",
+            status = null,
+            tags = listOf("已完结", "奇幻", "冒险")
+        )
+
+        assertEquals(
+            NovelCardCoverBadges(category = "奇幻", status = "已完结"),
+            novelCardCoverBadges(book)
+        )
+        assertEquals(listOf("奇幻", "冒险"), novelCardContentTags(book))
     }
 }

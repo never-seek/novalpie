@@ -1,6 +1,8 @@
 package com.novalpie.nativeapp
 
+import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -12,7 +14,6 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.novalpie.nativeapp.data.NetworkConfigStore
 import com.novalpie.nativeapp.data.configureNovalPieImageLoader
 import com.novalpie.nativeapp.ui.NovalPieApp
-import com.novalpie.nativeapp.ui.NovalPieTheme
 
 class MainActivity : ComponentActivity() {
 
@@ -24,7 +25,13 @@ class MainActivity : ComponentActivity() {
      */
     private var startUri by mutableStateOf<String?>(null)
 
+    @SuppressLint("SourceLockedOrientationActivity")
     override fun onCreate(savedInstanceState: Bundle?) {
+        // MuMu and handset-sized windows should not unexpectedly follow a stale landscape
+        // rotation. Tablets (smallest width >= 600dp) remain free to use landscape layouts.
+        if (novalPieShouldLockPortrait(resources.configuration.smallestScreenWidthDp)) {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
         // Must precede super.onCreate so the splash theme is swapped for the app theme before the
         // first frame. The app previously had no splash at all.
         installSplashScreen()
@@ -44,12 +51,10 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            NovalPieTheme {
-                NovalPieApp(
-                    startUri = startUri,
-                    onStartUriHandled = { startUri = null },
-                )
-            }
+            NovalPieApp(
+                startUri = startUri,
+                onStartUriHandled = { startUri = null },
+            )
         }
     }
 
@@ -58,4 +63,5 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         intent.data?.toString()?.let { startUri = it }
     }
+
 }

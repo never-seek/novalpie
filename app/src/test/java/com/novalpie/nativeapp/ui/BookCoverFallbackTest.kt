@@ -25,4 +25,9 @@ class BookCoverFallbackTest {
         assertEquals("N", bookCoverFallbackText(""))
         assertEquals("N", bookCoverFallbackText("   "))
     }
+
+    @Test
+    fun bookDetailCoverUsesStationaryLongPressPreviewPolicy() {
+        assertEquals(CoverPreviewPolicy.LongPressOnly, bookDetailCoverPreviewPolicy())
+    }
 }

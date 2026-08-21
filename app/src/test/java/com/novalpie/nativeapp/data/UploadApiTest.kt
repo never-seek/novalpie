@@ -145,6 +145,27 @@ class UploadApiTest {
         Unit
     }
 
+    @Test
+    fun editorProcessorUsesTheWebsitePostContractWithoutSessionHeaders() = runBlocking {
+        server.enqueue(jsonResponse("""{"text":"processed text"}"""))
+        server.enqueue(jsonResponse("""{"data":"processed through data"}"""))
+        server.enqueue(jsonResponse(""""processed JSON string""""))
+
+        val endpoint = server.url("/editor-process").toString()
+        assertEquals("processed text", api.processEditorTextWithApi(endpoint, "input text", timeoutSeconds = 7))
+        val first = server.takeRequest()
+        assertEquals("POST", first.method)
+        assertEquals("/editor-process", first.requestUrl?.encodedPath)
+        assertTrue(first.getHeader("authorization").isNullOrBlank())
+        JSONObject(first.body.readUtf8()).also { body -> assertEquals("input text", body.getString("text")) }
+
+        assertEquals("processed through data", api.processEditorTextWithApi(endpoint, "second input"))
+        assertEquals("processed JSON string", api.processEditorTextWithApi(endpoint, "third input"))
+        server.takeRequest()
+        server.takeRequest()
+        Unit
+    }
+
     private fun uploadSource(name: String, contentType: String, bytes: ByteArray) = UploadFileSource(
         fileName = name,
         sizeBytes = bytes.size.toLong(),

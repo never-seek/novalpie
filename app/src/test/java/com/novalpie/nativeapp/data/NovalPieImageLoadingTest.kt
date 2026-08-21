@@ -1,5 +1,9 @@
 package com.novalpie.nativeapp.data
 
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import coil.decode.BitmapFactoryDecoder
+import coil.request.ImageRequest
 import okhttp3.Call
 import okhttp3.Connection
 import okhttp3.Interceptor
@@ -9,15 +13,118 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
 import java.net.InetSocketAddress
 import java.net.URI
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
 
+@RunWith(RobolectricTestRunner::class)
 class NovalPieImageLoadingTest {
+    @Test
+    fun imageLoaderRegistersAnAnimatedImageDecoderForGifAndAnimatedWebp() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val imageLoader = buildNovalPieImageLoader(
+            context = context,
+            proxySettings = ProxySettings(enabled = false),
+        )
+
+        try {
+            val componentRegistry = imageLoader.javaClass
+                .getMethod("getComponents")
+                .invoke(imageLoader)
+            val decoderFactories = componentRegistry.javaClass
+                .getMethod("getDecoderFactories")
+                .invoke(componentRegistry) as List<*>
+
+            assertTrue(
+                "Animated GIF/WebP support must be registered with the shared Coil loader.",
+                decoderFactories.any { factory ->
+                    factory?.javaClass?.name.orEmpty().contains("ImageDecoderDecoder") ||
+                        factory?.javaClass?.name.orEmpty().contains("GifDecoder")
+                }
+            )
+        } finally {
+            imageLoader.shutdown()
+        }
+    }
+
+    @Test
+    fun imageLoaderLimitsBitmapFactoryParallelDecodingForCoverBursts() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val imageLoader = buildNovalPieImageLoader(
+            context = context,
+            proxySettings = ProxySettings(enabled = false),
+        )
+
+        try {
+            val options = imageLoader.javaClass.getMethod("getOptions").invoke(imageLoader)
+            val parallelism = options.javaClass
+                .getMethod("getBitmapFactoryMaxParallelism")
+                .invoke(options) as Int
+            assertEquals(
+                2,
+                parallelism,
+            )
+        } finally {
+            imageLoader.shutdown()
+        }
+    }
+
+    @Test
+    fun visibleCoverWorkDoesNotUseTheSpeculativeFetchDispatcher() {
+        assertTrue(!NovelCoverLoadPriority.Visible.usesBackgroundDispatcher())
+        assertTrue(NovelCoverLoadPriority.Speculative.usesBackgroundDispatcher())
+    }
+
+    @Test
+    fun smallForumCoverUsesAUsefulDisplayBoundInsteadOfTheFullGridDecode() {
+        assertEquals(
+            NovelCoverRequestSize(widthPx = 96, heightPx = 144),
+            novalPieBookCoverTargetSize(widthPx = 30, heightPx = 45),
+        )
+    }
+
+    @Test
+    fun staticThumbnailRequestFreezesAnimatedAssetsAndUsesAnIsolatedCacheKey() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val method = Class.forName("com.novalpie.nativeapp.data.NovalPieImageLoadingKt")
+            .declaredMethods
+            .firstOrNull { it.name == "novalPieStaticImageRequest" }
+        assertNotNull(
+            "Forum thumbnails need a dedicated static-image request builder.",
+            method,
+        )
+
+        val request = method!!.apply { isAccessible = true }.invoke(
+            null,
+            context,
+            "https://novalpie.cc/uploads/shop_assets/frames/animated.webp",
+            96,
+            144,
+        ) as ImageRequest
+
+        assertTrue(request.decoderFactory is BitmapFactoryDecoder.Factory)
+        assertTrue(request.memoryCacheKey?.key?.startsWith("novalpie-static-image:") == true)
+        assertTrue(request.diskCacheKey?.startsWith("novalpie-static-image:") == true)
+    }
+
+    @Test
+    fun unspecifiedCoverSizeKeepsTheSharedHighResolutionDefault() {
+        assertEquals(
+            NovelCoverRequestSize(
+                widthPx = NOVALPIE_BOOK_COVER_WIDTH_PX,
+                heightPx = NOVALPIE_BOOK_COVER_HEIGHT_PX,
+            ),
+            novalPieBookCoverTargetSize(widthPx = null, heightPx = null),
+        )
+    }
+
     @Test
     fun imageHttpClientUsesProxySettingsAsFirstSelectorRoute() {
         val client = novalPieImageOkHttpClient(

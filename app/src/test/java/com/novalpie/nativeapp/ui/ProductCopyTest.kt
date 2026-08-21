@@ -45,7 +45,7 @@ class ProductCopyTest {
 
     @Test
     fun discoverFilterLabelsFollowWebsiteGroups() {
-        assertEquals(listOf("排序", "顺序", "范围", "内容", "字数", "来源", "模式"), discoverFilterLabels())
+        assertEquals(listOf("排序方式", "排序方向", "搜索范围", "内容筛选", "字数", "来源", "搜索模式"), discoverFilterLabels())
     }
 
     @Test
@@ -61,7 +61,7 @@ class ProductCopyTest {
         )
 
         assertEquals(
-            listOf("排序: 收藏数", "顺序: 降序", "范围: 仅标签", "内容: 仅成人", "字数: 10-50万", "来源: NovelPia", "模式: AI搜索"),
+            listOf("排序方式: 收藏数", "排序方向: 降序", "搜索范围: 仅标签", "内容筛选: 仅成人", "字数: 10-50万", "来源: NovelPia", "搜索模式: AI搜索"),
             discoverSelectedFilterSummaries(options)
         )
     }
@@ -69,7 +69,7 @@ class ProductCopyTest {
     @Test
     fun bookDetailSectionsReadLikeNovelProductPage() {
         assertEquals(
-            listOf("作品", "阅读", "章节目录", "评论区"),
+            listOf("作品", "阅读", "章节目录", "书评"),
             bookDetailSectionTitles()
         )
     }
@@ -92,8 +92,12 @@ class ProductCopyTest {
     }
 
     @Test
-    fun forumHomeUsesForumClientFeedStructure() {
-        assertEquals(listOf("全部", "书评", "章节", "动态"), forumFeedTabs())
+    fun forumHomeUsesLiveWebsiteFiveSectionStructure() {
+        assertEquals(listOf("公告", "推书", "交流", "书评", "反馈"), forumFeedTabs())
+        assertEquals(
+            listOf("announcement", "recommend", "discussion", "review", "feedback"),
+            forumFeedCategories().map { it.type }
+        )
     }
 
     // Two tests were removed here, and it is worth recording why rather than leaving a gap.

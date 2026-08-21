@@ -29,6 +29,22 @@ data class WorkspaceCookieDraft(
     val isActive: Boolean = true
 )
 
+internal fun workspaceApiStatusLabel(status: String?, fallbackActive: Boolean): String = when (status?.trim()?.lowercase()) {
+    "active" -> "已激活"
+    "enabled" -> "已启用"
+    "inactive" -> "已停用"
+    "disabled" -> "已禁用"
+    "pending" -> "待审核"
+    "approved" -> "已通过"
+    "online" -> "在线"
+    "offline" -> "离线"
+    "unavailable" -> "不可用"
+    null, "" -> if (fallbackActive) "已激活" else "已停用"
+    else -> status.trim()
+}
+
+internal fun workspaceApiToggleActionLabel(isActive: Boolean): String = if (isActive) "停用" else "启用"
+
 internal fun maskWorkspaceApiKey(apiKey: String?): String {
     val value = apiKey?.trim().orEmpty()
     if (value.isEmpty()) return "未配置"

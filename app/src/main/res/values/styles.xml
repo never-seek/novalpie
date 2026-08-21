@@ -22,7 +22,6 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <!-- Seed values only; NovalPieTheme sets these per theme at runtime via WindowCompat. -->
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
     </style>
 
     <!--

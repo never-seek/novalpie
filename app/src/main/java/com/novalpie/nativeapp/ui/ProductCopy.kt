@@ -1,5 +1,7 @@
 package com.novalpie.nativeapp.ui
 
+import com.novalpie.nativeapp.model.UserBadge
+
 internal enum class ProductSurface {
     Library,
     Discover,
@@ -22,6 +24,9 @@ internal data class ForumFeedItem(
     val category: String,
     val title: String,
     val bookTitle: String,
+    val bookId: Long? = null,
+    val bookCoverUrl: String? = null,
+    val isBookReview: Boolean = false,
     val authorName: String,
     val replyCount: Int,
     val likeCount: Int = 0,
@@ -32,8 +37,43 @@ internal data class ForumFeedItem(
     val tags: List<String>,
     val pinned: Boolean = false,
     val featured: Boolean = false,
-    val authorId: Long? = null
+    val authorId: Long? = null,
+    val excerpt: String? = null,
+    val authorAvatarUrl: String? = null,
+    val authorAvatarFrameUrl: String? = null,
+    val authorBadges: List<String> = emptyList(),
+    val authorBadgeVisuals: List<UserBadge> = emptyList(),
+    val helpfulCount: Int = 0,
+    val notHelpfulCount: Int = 0,
+    val funnyCount: Int = 0,
+    val createdAt: String? = null
 )
+
+internal data class ForumFeedCategory(
+    val type: String,
+    val label: String
+)
+
+/** The source only uses two review columns once there is tablet-sized reading width. */
+internal const val SOURCE_FORUM_REVIEW_GRID_COLUMNS = 2
+internal const val SOURCE_FORUM_REVIEW_TWO_COLUMN_MIN_WIDTH_DP = 720
+
+internal fun forumGridColumnCount(type: String): Int =
+    forumGridColumnCount(type, availableWidthDp = 412)
+
+internal fun forumGridColumnCount(type: String, availableWidthDp: Int): Int =
+    if (
+        type.trim().equals("review", ignoreCase = true) &&
+        availableWidthDp >= SOURCE_FORUM_REVIEW_TWO_COLUMN_MIN_WIDTH_DP
+    ) {
+        SOURCE_FORUM_REVIEW_GRID_COLUMNS
+    } else {
+        1
+    }
+
+/** Phone-width feeds do not need grid subcomposition; a list keeps scrolling work bounded. */
+internal fun forumUsesListLayout(type: String, availableWidthDp: Int): Boolean =
+    forumGridColumnCount(type, availableWidthDp) == 1
 
 internal fun productHeader(surface: ProductSurface): ProductHeader = when (surface) {
     ProductSurface.Library -> ProductHeader("书架", "收藏、分组和阅读进度")
@@ -51,7 +91,7 @@ internal fun discoverPrimaryActions(): List<String> =
     listOf("搜索", "网页发现")
 
 internal fun discoverFilterLabels(): List<String> =
-    listOf("排序", "顺序", "范围", "内容", "字数", "来源", "模式")
+    listOf("排序方式", "排序方向", "搜索范围", "内容筛选", "字数", "来源", "搜索模式")
 
 internal fun discoverSelectedFilterSummaries(options: SearchOptions): List<String> {
     val sortBy = mapOf(
@@ -77,13 +117,13 @@ internal fun discoverSelectedFilterSummaries(options: SearchOptions): List<Strin
     val wordCount = searchWordCountRangeChoices().toMap()
     val source = mapOf("" to "全部", "novelPia" to "NovelPia", "upload" to "上传")
     return listOf(
-        "排序: ${sortBy[options.sortBy] ?: options.sortBy}",
-        "顺序: ${sortOrder[options.sortOrder] ?: options.sortOrder}",
-        "范围: ${scope[options.scope] ?: options.scope}",
-        "内容: ${adultFilter[options.adultFilter] ?: options.adultFilter}",
+        "排序方式: ${sortBy[options.sortBy] ?: options.sortBy}",
+        "排序方向: ${sortOrder[options.sortOrder] ?: options.sortOrder}",
+        "搜索范围: ${scope[options.scope] ?: options.scope}",
+        "内容筛选: ${adultFilter[options.adultFilter] ?: options.adultFilter}",
         "字数: ${wordCount[options.wordCountRange] ?: options.wordCountRange}",
         "来源: ${source[options.source] ?: options.source}",
-        "模式: ${matchType[options.matchType] ?: options.matchType}"
+        "搜索模式: ${matchType[options.matchType] ?: options.matchType}"
     )
 }
 
@@ -103,7 +143,7 @@ internal fun searchMaxWordCount(range: String): Long? =
     range.substringAfter("..", "").takeIf { it.isNotBlank() }?.toLongOrNull()
 
 internal fun bookDetailSectionTitles(): List<String> =
-    listOf("作品", "阅读", "章节目录", "评论区")
+    listOf("作品", "阅读", "章节目录", "书评")
 
 internal fun readerScreenTitle(): String = "阅读"
 
@@ -134,5 +174,12 @@ internal fun forumCardCopies(): List<ForumCardCopy> = listOf(
 )
 
 internal fun forumFeedTabs(): List<String> =
-    listOf("全部", "书评", "章节", "动态")
+    forumFeedCategories().map(ForumFeedCategory::label)
 
+internal fun forumFeedCategories(): List<ForumFeedCategory> = listOf(
+    ForumFeedCategory(type = "announcement", label = "公告"),
+    ForumFeedCategory(type = "recommend", label = "推书"),
+    ForumFeedCategory(type = "discussion", label = "交流"),
+    ForumFeedCategory(type = "review", label = "书评"),
+    ForumFeedCategory(type = "feedback", label = "反馈")
+)

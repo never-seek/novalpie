@@ -17,11 +17,11 @@ class WebFallbackPolicyTest {
     }
 
     @Test
-    fun emulatorUsesTheSameHostProxyFallbackAsNativeApi() {
+    fun emulatorWebViewUsesTheReverseLoopbackProxyBeforeLoadingCaptcha() {
         val settings = ProxySettings(enabled = false)
 
         assertEquals(
-            "http://10.0.2.2:7890",
+            "http://127.0.0.1:7890",
             webViewProxyUrl(settings, useEmulatorFallback = true)
         )
     }
@@ -30,6 +30,39 @@ class WebFallbackPolicyTest {
     fun realDevicesKeepFollowingTheSystemNetwork() {
         assertNull(
             webViewProxyUrl(ProxySettings(enabled = false), useEmulatorFallback = false)
+        )
+    }
+
+    @Test
+    fun stateMarkerPreventsAnOlderProxyCallbackFromReloadingTheDownloadPage() {
+        val marker = WebViewStateMarker(
+            stateKey = "auto: 127.0.0.1/10.0.2.2:7890 + direct:token",
+            requestedUrl = "https://novalpie.cc/book/354491"
+        )
+
+        assertEquals(
+            true,
+            webViewMatchesRequest(
+                marker,
+                "auto: 127.0.0.1/10.0.2.2:7890 + direct:token",
+                "https://novalpie.cc/book/354491"
+            )
+        )
+        assertEquals(
+            false,
+            webViewMatchesRequest(
+                marker,
+                "auto: 127.0.0.1/10.0.2.2:7890 + direct:token",
+                "https://novalpie.cc/book/354491?download=epub"
+            )
+        )
+        assertEquals(
+            false,
+            webViewMatchesRequest(
+                WebViewStateMarker("new-route", "https://novalpie.cc/search"),
+                marker.stateKey,
+                marker.requestedUrl,
+            )
         )
     }
 }

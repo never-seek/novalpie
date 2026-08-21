@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import com.novalpie.nativeapp.ui.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -90,6 +90,7 @@ private fun chipColors(tone: NpChipTone): NpChipColors {
  * that is only a label should not pretend otherwise. Use a real button when an action is intended.
  */
 @Composable
+@Suppress("ModifierParameter") // Keep the stable label/tone call shape used throughout the app.
 fun NpChip(
     label: String,
     tone: NpChipTone = NpChipTone.Neutral,

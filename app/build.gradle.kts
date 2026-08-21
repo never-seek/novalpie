@@ -23,8 +23,8 @@ android {
         applicationId = "com.novalpie.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2026072601
-        versionName = "2.0.0-native-beta1"
+        versionCode = 2026082001
+        versionName = "2.0.0-native-beta2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -87,7 +87,8 @@ android {
         // issues, so a baseline would only abort the first build and then silently
         // absorb whatever regressions came later.
         // This app is zh-CN only by design, so translation completeness is not a defect.
-        disable += setOf("MissingTranslation", "ExtraTranslation")
+        // The stable date-based version code is deliberately monotonic but close to Int.MAX_VALUE.
+        disable += setOf("MissingTranslation", "ExtraTranslation", "HighAppVersionCode")
     }
 
     packaging {
@@ -116,6 +117,7 @@ dependencies {
     implementation(libs.androidx.webkit)
 
     implementation(libs.coil.compose)
+    implementation(libs.coil.gif)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.android)
 

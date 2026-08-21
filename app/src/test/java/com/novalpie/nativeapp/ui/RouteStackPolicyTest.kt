@@ -1,10 +1,25 @@
 package com.novalpie.nativeapp.ui
 
+import com.novalpie.nativeapp.model.ReaderSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
 
 class RouteStackPolicyTest {
+    @Test
+    fun readerSessionBuildsABackStackThatReturnsToBookDetail() {
+        assertEquals(
+            listOf(AppRoute.Home, AppRoute.BookDetail(354491), AppRoute.Reader(354491, 6992449)),
+            readerSessionRouteStack(ReaderSession(bookId = 354491, chapterId = 6992449)),
+        )
+    }
+
+    @Test
+    fun invalidOrMissingReaderSessionFallsBackToCollection() {
+        assertEquals(listOf(AppRoute.Home), readerSessionRouteStack(null))
+        assertEquals(listOf(AppRoute.Home), readerSessionRouteStack(ReaderSession(bookId = 0, chapterId = 1)))
+    }
+
     @Test
     fun pushDistinctRouteDoesNotDuplicateCurrentTopRoute() {
         val stack = listOf(AppRoute.Home, AppRoute.BookDetail(354491))

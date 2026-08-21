@@ -1,6 +1,7 @@
 package com.novalpie.nativeapp.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,7 +23,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -130,12 +130,7 @@ private fun PoliticalExamLanding(
             PoliticalExamOverviewCard(overview)
         }
         item {
-            ElevatedCard(shape = RoundedCornerShape(18.dp)) {
-                Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("考试规则", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    overview.rules.forEach { rule -> Text("• $rule") }
-                }
-            }
+            PoliticalExamRulesCard(overview)
         }
         state.actionMessage?.let { message -> item { ExamMessage(message) } }
         when (val session = state.session) {
@@ -196,6 +191,32 @@ private fun PoliticalExamOverviewCard(overview: PoliticalExamOverview) {
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Mirrors the current website's pale-blue rule callout rather than treating rules as generic copy. */
+@Composable
+private fun PoliticalExamRulesCard(overview: PoliticalExamOverview) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.58f),
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.38f))
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text("考试规则：", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            overview.rules.forEachIndexed { index, rule ->
+                Text(
+                    text = "• $rule",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (index == overview.rules.lastIndex) FontWeight.Bold else FontWeight.Normal
+                )
             }
         }
     }

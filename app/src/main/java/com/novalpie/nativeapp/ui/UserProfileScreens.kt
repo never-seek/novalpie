@@ -19,7 +19,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +36,7 @@ internal fun UserProfileDetailScreen(
     hasAuthToken: Boolean,
     onRetry: () -> Unit,
     onTabSelected: (UserProfileTab) -> Unit,
+    onActivityFilterSelected: (ProfileActivityFilter) -> Unit,
     onOpenActivity: (UserActivity) -> Unit,
     onOpenBook: (Long) -> Unit,
     onMessageUser: (Long, String?) -> Unit,
@@ -119,11 +119,40 @@ internal fun UserProfileDetailScreen(
                 }
 
                 UserProfileTab.Activities -> when (val value = state.activities) {
-                    LoadResult.Idle, LoadResult.Loading -> item { PublicProfileStatusCard("正在加载用户动态") }
-                    is LoadResult.Error -> item { PublicProfileStatusCard(value.message) }
+                    LoadResult.Idle, LoadResult.Loading -> {
+                        item {
+                            UserProfileActivityFilterRail(
+                                selected = state.activityFilter,
+                                onSelected = onActivityFilterSelected,
+                            )
+                        }
+                        item { PublicProfileStatusCard("正在加载用户动态") }
+                    }
+                    is LoadResult.Error -> {
+                        item {
+                            UserProfileActivityFilterRail(
+                                selected = state.activityFilter,
+                                onSelected = onActivityFilterSelected,
+                            )
+                        }
+                        item { PublicProfileStatusCard(value.message) }
+                    }
                     is LoadResult.Success -> {
-                        if (value.value.isEmpty()) item { PublicProfileStatusCard("暂无公开动态") }
-                        items(value.value, key = { "${it.type}-${it.id}" }) { activity ->
+                        item {
+                            UserProfileActivityFilterRail(
+                                selected = state.activityFilter,
+                                onSelected = onActivityFilterSelected,
+                            )
+                        }
+                        val visibleActivities = filterProfileActivities(value.value, state.activityFilter)
+                        if (visibleActivities.isEmpty()) {
+                            item {
+                                PublicProfileStatusCard(
+                                    if (value.value.isEmpty()) "暂无公开动态" else "该分类暂无动态"
+                                )
+                            }
+                        }
+                        items(visibleActivities, key = { "${it.type}-${it.id}" }) { activity ->
                             UserActivityCard(activity, onOpenActivity)
                         }
                     }
@@ -142,7 +171,11 @@ internal fun UserProfileDetailScreen(
                             ) {
                                 rowBooks.forEach { book ->
                                     androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
-                                        NovelCardItem(book) { onOpenBook(book.id) }
+                                        NovelCardItem(
+                                            book = book,
+                                            previewPolicy = CoverPreviewPolicy.Disabled,
+                                            onClick = { onOpenBook(book.id) },
+                                        )
                                     }
                                 }
                                 repeat(2 - rowBooks.size) {
@@ -160,11 +193,7 @@ internal fun UserProfileDetailScreen(
 @Composable
 private fun UserActivityCard(activity: UserActivity, onOpenActivity: (UserActivity) -> Unit) {
     ElevatedCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(enabled = activity.postId != null || activity.bookId != null) {
-                onOpenActivity(activity)
-            }
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
@@ -188,20 +217,46 @@ private fun UserActivityCard(activity: UserActivity, onOpenActivity: (UserActivi
             }
             Text(
                 activity.title,
+                modifier = Modifier.forumCardTap(
+                    enabled = activity.postId != null || activity.bookId != null,
+                    onTap = { onOpenActivity(activity) },
+                ),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
             activity.content?.let {
-                Text(
-                    it,
+                ForumRichExcerpt(
+                    content = userActivityPreviewText(it),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 4,
-                    overflow = TextOverflow.Ellipsis
+                    onOpenContent = { onOpenActivity(activity) },
+                    semanticDescription = "动态摘要",
                 )
             }
+        }
+    }
+}
+
+/** Activity cards are previews; keep long review bodies out of the scrolling text layout. */
+internal fun userActivityPreviewText(content: String): String = forumFeedExcerptText(content)
+
+@Composable
+private fun UserProfileActivityFilterRail(
+    selected: ProfileActivityFilter,
+    onSelected: (ProfileActivityFilter) -> Unit,
+) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 2.dp),
+    ) {
+        items(ProfileActivityFilter.values().toList()) { filter ->
+            FilterChip(
+                selected = selected == filter,
+                onClick = { onSelected(filter) },
+                label = { Text(profileActivityFilterLabel(filter)) },
+            )
         }
     }
 }

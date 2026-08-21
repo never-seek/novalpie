@@ -47,6 +47,10 @@ class UiNavigationTest {
         assertEquals("收藏", routeContextLabel(AppRoute.Home, BottomTab.Collection))
         assertEquals("帖子详情", routeContextLabel(AppRoute.ForumPostDetail(7), BottomTab.Forum))
         assertEquals("书籍详情", routeContextLabel(AppRoute.BookDetail(354491), BottomTab.Discover))
+        assertEquals("术语表", routeContextLabel(AppRoute.Terminology(354491), BottomTab.Discover))
         assertEquals("阅读", routeContextLabel(AppRoute.Reader(354491, 8001), BottomTab.Collection))
+        assertEquals("考试", routeContextLabel(AppRoute.PoliticalExam, BottomTab.Tools))
+        assertEquals("登录", routeContextLabel(AppRoute.Auth(AuthPage.Login), BottomTab.Profile))
+        assertEquals("安全验证", routeContextLabel(AppRoute.AuthCaptcha, BottomTab.Profile))
     }
 }

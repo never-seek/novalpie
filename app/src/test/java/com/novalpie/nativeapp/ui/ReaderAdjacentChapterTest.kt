@@ -35,4 +35,69 @@ class ReaderAdjacentChapterTest {
         assertNull(adjacent.previous)
         assertNull(adjacent.next)
     }
+
+    @Test
+    fun infiniteScrollSelectsTheFirstUnloadedContiguousChapter() {
+        val next = nextReaderChapterForInfiniteScroll(
+            currentChapterId = 10,
+            chapters = chapters,
+            loadedChapterIds = setOf(10L, 20L),
+        )
+
+        assertEquals(30L, next?.id)
+    }
+
+    @Test
+    fun infiniteScrollDoesNotReloadAnAlreadyLoadedChapter() {
+        val next = nextReaderChapterForInfiniteScroll(
+            currentChapterId = 20,
+            chapters = chapters,
+            loadedChapterIds = setOf(10L, 20L, 30L),
+        )
+
+        assertNull(next)
+    }
+
+    @Test
+    fun infiniteScrollMarksTheEndOnlyAfterTheWholeContiguousWindowIsLoaded() {
+        val nextBeforeLast = nextReaderChapterForInfiniteScroll(
+            currentChapterId = 10,
+            chapters = chapters,
+            loadedChapterIds = setOf(10L, 20L),
+        )
+        val nextAtLast = nextReaderChapterForInfiniteScroll(
+            currentChapterId = 10,
+            chapters = chapters,
+            loadedChapterIds = setOf(10L, 20L, 30L),
+        )
+
+        assertEquals(30L, nextBeforeLast?.id)
+        assertNull(nextAtLast)
+    }
+
+    @Test
+    fun incompleteCatalogDoesNotLookLikeTheEndOfTheBook() {
+        assertEquals(true, readerCatalogIsIncomplete(currentChapterId = 10L, chapters = emptyList()))
+        assertEquals(true, readerCatalogIsIncomplete(currentChapterId = 10L, chapters = chapters.drop(1)))
+        assertEquals(false, readerCatalogIsIncomplete(currentChapterId = 10L, chapters = chapters))
+    }
+
+    @Test
+    fun pageTurnReturnsToTheEndOfThePreviousChapterButStartsOtherChapterOpensAtTop() {
+        assertEquals(
+            ReaderChapterEntryPosition.End,
+            readerChapterEntryPositionForPageBoundary(ReaderPageBoundaryTarget.PreviousChapter),
+        )
+        assertEquals(
+            ReaderChapterEntryPosition.Start,
+            readerChapterEntryPositionForPageBoundary(ReaderPageBoundaryTarget.NextChapter),
+        )
+        assertEquals(
+            ReaderChapterEntryPosition.Start,
+            readerChapterEntryPositionForPageBoundary(ReaderPageBoundaryTarget.None),
+        )
+        assertEquals(0, readerChapterEntryScrollIndex(ReaderChapterEntryPosition.Start, itemCount = 7))
+        assertEquals(6, readerChapterEntryScrollIndex(ReaderChapterEntryPosition.End, itemCount = 7))
+        assertEquals(0, readerChapterEntryScrollIndex(ReaderChapterEntryPosition.End, itemCount = 0))
+    }
 }

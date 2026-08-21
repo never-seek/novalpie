@@ -79,6 +79,13 @@ internal object NovalPieSize {
     val coverWidthGrid: Dp = 132.dp
     val coverWidthRow: Dp = 72.dp
     val coverWidthHero: Dp = 108.dp
+
+    /**
+     * Ceiling for the reader's catalog list. A *maximum*, not a fixed height: the panel used
+     * `Modifier.height(300.dp)`, so a three-chapter book reserved 300dp of empty space and a
+     * long catalog was pinned to the same 300dp no matter how tall the screen was.
+     */
+    val catalogPanelMaxHeight: Dp = 360.dp
 }
 
 /**

@@ -1,5 +1,6 @@
 package com.novalpie.nativeapp.ui
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -160,6 +161,7 @@ internal class EditorScriptEngine(private val context: Context) {
             }
         }
 
+    @SuppressLint("SetJavaScriptEnabled") // Local script sandbox disables network, files, content, and popups.
     private suspend fun evaluate(program: String): String = withTimeout(SCRIPT_TIMEOUT_MS) {
         suspendCancellableCoroutine { continuation ->
             val webView = WebView(context)

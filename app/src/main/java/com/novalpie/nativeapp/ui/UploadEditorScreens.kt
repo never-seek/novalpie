@@ -48,7 +48,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -61,6 +60,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,8 +75,11 @@ fun UploadEditorScreen(
     state: UploadEditorState,
     onTabSelected: (EditorTab) -> Unit,
     onOpenDocument: (String) -> Unit,
+    onQueueDocuments: (List<String>) -> Unit,
+    onRemoveQueuedDocument: (String) -> Unit,
+    onImportQueuedDocuments: () -> Unit,
     onEncodingChange: (String) -> Unit,
-    onTextChange: (String) -> Unit,
+    onDocumentChange: (String, Int) -> Unit,
     onMetadataChange: (EditorBookMetadata) -> Unit,
     onSplitModeChange: (EditorSplitMode) -> Unit,
     onSplitPatternChange: (String) -> Unit,
@@ -83,6 +87,11 @@ fun UploadEditorScreen(
     onCustomScriptChange: (String) -> Unit,
     onScriptChunkedChange: (Boolean) -> Unit,
     onScriptChunkSizeChange: (String) -> Unit,
+    onApiEndpointChange: (String) -> Unit,
+    onApiTimeoutChange: (String) -> Unit,
+    onApiMarkerModeChange: (EditorMarkerMode) -> Unit,
+    onBatchModeChange: (EditorBatchMode) -> Unit,
+    onBatchTargetChange: (String) -> Unit,
     onCustomScriptResult: (Long, String?, String?) -> Unit,
     onAiConfigSelected: (Long) -> Unit,
     onGenerateAiRegex: () -> Unit,
@@ -91,6 +100,15 @@ fun UploadEditorScreen(
     onReplaceChange: (String) -> Unit,
     onFindRegexChange: (Boolean) -> Unit,
     onReplaceAll: () -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onInsertTitleMarkerAtCursor: () -> Unit,
+    onInsertContentMarkerAtCursor: () -> Unit,
+    onInsertChapterAtCursor: () -> Unit,
+    onDeleteChapterAtCursor: () -> Unit,
+    onRenumberMarkers: () -> Unit,
+    onValidateMarkers: () -> Unit,
+    onClearMarkers: () -> Unit,
     onUpdateChapter: (Int, String, String) -> Unit,
     onAddChapter: () -> Unit,
     onDeleteChapter: (Int) -> Unit,
@@ -105,6 +123,9 @@ fun UploadEditorScreen(
 ) {
     val openDocument = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.toString()?.let(onOpenDocument)
+    }
+    val openMultipleDocuments = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) onQueueDocuments(uris.map { it.toString() })
     }
     val exportDocument = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/epub+zip")) { uri ->
         uri?.toString()?.let(onExportEpub)
@@ -159,7 +180,34 @@ fun UploadEditorScreen(
         if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp))
 
         when (state.selectedTab) {
-            EditorTab.Text -> EditorTextTab(state, onEncodingChange, onTextChange, onFindChange, onReplaceChange, onFindRegexChange, onReplaceAll)
+            EditorTab.Files -> EditorFilesTab(
+                files = state.files,
+                busy = state.busy,
+                onAddFiles = {
+                    openMultipleDocuments.launch(
+                        arrayOf("text/*", "application/epub+zip", "application/zip", "application/octet-stream", "*/*")
+                    )
+                },
+                onOpenFile = onOpenDocument,
+                onRemoveFile = onRemoveQueuedDocument,
+                onImport = onImportQueuedDocuments
+            )
+            EditorTab.Text -> EditorTextTab(
+                state = state,
+                onEncodingChange = onEncodingChange,
+                onDocumentChange = onDocumentChange,
+                onFindChange = onFindChange,
+                onReplaceChange = onReplaceChange,
+                onFindRegexChange = onFindRegexChange,
+                onReplaceAll = onReplaceAll,
+                onUndo = onUndo,
+                onRedo = onRedo,
+                onInsertTitleMarker = onInsertTitleMarkerAtCursor,
+                onInsertContentMarker = onInsertContentMarkerAtCursor,
+                onInsertChapter = onInsertChapterAtCursor,
+                onClearMarkers = onClearMarkers,
+                onRenumberMarkers = onRenumberMarkers
+            )
             EditorTab.Split -> EditorSplitTab(
                 state,
                 onSplitModeChange,
@@ -168,9 +216,19 @@ fun UploadEditorScreen(
                 onCustomScriptChange,
                 onScriptChunkedChange,
                 onScriptChunkSizeChange,
+                onApiEndpointChange,
+                onApiTimeoutChange,
+                onApiMarkerModeChange,
+                onBatchModeChange,
+                onBatchTargetChange,
                 onAiConfigSelected,
                 onGenerateAiRegex,
-                onProcessSplit
+                onProcessSplit,
+                onInsertChapterAtCursor,
+                onDeleteChapterAtCursor,
+                onRenumberMarkers,
+                onValidateMarkers,
+                onClearMarkers
             )
             EditorTab.Chapters -> EditorChaptersTab(state.chapters, { editingChapter = it }, onAddChapter)
             EditorTab.Metadata -> EditorMetadataTab(state.metadata, onMetadataChange)
@@ -205,6 +263,144 @@ fun UploadEditorScreen(
             onConfirm = { onClearArchives(); confirmClearArchives = false }
         )
     }
+}
+
+@Composable
+private fun EditorFilesTab(
+    files: List<UploadDocument>,
+    busy: Boolean,
+    onAddFiles: () -> Unit,
+    onOpenFile: (String) -> Unit,
+    onRemoveFile: (String) -> Unit,
+    onImport: () -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val normalizedQuery = query.trim()
+    val visibleFiles = files.filter { file ->
+        normalizedQuery.isBlank() || file.displayName.contains(normalizedQuery, ignoreCase = true)
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            ElevatedCard(shape = RoundedCornerShape(18.dp)) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.FolderOpen, null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("文件浏览器", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text("已选 ${files.size} 个本地文件", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Text(
+                        "支持 .txt、.md、.epub、.zip。ZIP 仅在本地读取文本条目，不会上传到网站。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = onAddFiles,
+                            enabled = !busy,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.UploadFile, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("添加文件")
+                        }
+                        OutlinedButton(
+                            onClick = onImport,
+                            enabled = !busy && files.isNotEmpty(),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Filled.AutoFixHigh, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("批量导入")
+                        }
+                    }
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("搜索文件") }
+                    )
+                }
+            }
+        }
+        if (files.isEmpty()) {
+            item {
+                EditorEmpty("暂无本地文件\n添加文件后可单独打开，或一次批量导入为章节")
+            }
+        } else if (visibleFiles.isEmpty()) {
+            item { EditorEmpty("没有匹配的文件") }
+        } else {
+            items(visibleFiles, key = UploadDocument::uri) { document ->
+                EditorFileRow(
+                    document = document,
+                    busy = busy,
+                    onOpen = { onOpenFile(document.uri) },
+                    onRemove = { onRemoveFile(document.uri) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditorFileRow(
+    document: UploadDocument,
+    busy: Boolean,
+    onOpen: () -> Unit,
+    onRemove: () -> Unit
+) {
+    ElevatedCard(shape = RoundedCornerShape(16.dp)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(document.displayName, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                "${editorFileTypeLabel(document.displayName)} · ${editorFileSizeLabel(document.sizeBytes)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onOpen, enabled = !busy, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Filled.FolderOpen, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("打开")
+                }
+                OutlinedButton(onClick = onRemove, enabled = !busy) {
+                    Icon(Icons.Filled.Delete, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("移除")
+                }
+            }
+        }
+    }
+}
+
+private fun editorFileTypeLabel(name: String): String = when {
+    name.endsWith(".epub", ignoreCase = true) -> "EPUB"
+    name.endsWith(".zip", ignoreCase = true) -> "ZIP"
+    name.endsWith(".markdown", ignoreCase = true) -> "Markdown"
+    name.endsWith(".md", ignoreCase = true) -> "Markdown"
+    name.endsWith(".txt", ignoreCase = true) -> "文本"
+    else -> "文件"
+}
+
+private fun editorFileSizeLabel(sizeBytes: Long): String = when {
+    sizeBytes < 0L -> "大小未知"
+    sizeBytes < 1024L -> "$sizeBytes B"
+    sizeBytes < 1024L * 1024L -> "${sizeBytes / 1024L} KiB"
+    else -> "${sizeBytes / (1024L * 1024L)} MiB"
 }
 
 @Composable
@@ -257,11 +453,18 @@ private fun EditorHeroButton(label: String, icon: androidx.compose.ui.graphics.v
 private fun EditorTextTab(
     state: UploadEditorState,
     onEncodingChange: (String) -> Unit,
-    onTextChange: (String) -> Unit,
+    onDocumentChange: (String, Int) -> Unit,
     onFindChange: (String) -> Unit,
     onReplaceChange: (String) -> Unit,
     onFindRegexChange: (Boolean) -> Unit,
-    onReplaceAll: () -> Unit
+    onReplaceAll: () -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
+    onInsertTitleMarker: () -> Unit,
+    onInsertContentMarker: () -> Unit,
+    onInsertChapter: () -> Unit,
+    onClearMarkers: () -> Unit,
+    onRenumberMarkers: () -> Unit
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
@@ -269,6 +472,33 @@ private fun EditorTextTab(
             LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp), contentPadding = PaddingValues(vertical = 8.dp)) {
                 items(listOf("UTF-8", "UTF-16LE", "UTF-16BE", "GB18030", "GBK", "Big5", "Shift_JIS", "EUC-JP", "EUC-KR", "windows-1252")) { encoding ->
                     FilterChip(selected = state.encoding.equals(encoding, true), onClick = { onEncodingChange(encoding) }, label = { Text(encoding) })
+                }
+            }
+        }
+        item {
+            ElevatedCard(shape = RoundedCornerShape(18.dp)) {
+                Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("源站标记工具", fontWeight = FontWeight.SemiBold)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        item { AssistChip(onClick = onInsertChapter, enabled = !state.busy, label = { Text("切") }) }
+                        item { AssistChip(onClick = onInsertTitleMarker, enabled = !state.busy, label = { Text("T") }) }
+                        item { AssistChip(onClick = onInsertContentMarker, enabled = !state.busy, label = { Text("C") }) }
+                        item { AssistChip(onClick = onClearMarkers, enabled = !state.busy, label = { Text("清除标识符") }) }
+                        item { AssistChip(onClick = onRenumberMarkers, enabled = !state.busy, label = { Text("重新编号") }) }
+                    }
+                }
+            }
+        }
+        item {
+            ElevatedCard(shape = RoundedCornerShape(18.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("编辑历史", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    AssistChip(onClick = onUndo, enabled = state.canUndo && !state.busy, label = { Text("撤销") })
+                    AssistChip(onClick = onRedo, enabled = state.canRedo && !state.busy, label = { Text("重做") })
                 }
             }
         }
@@ -290,8 +520,13 @@ private fun EditorTextTab(
         }
         item {
             OutlinedTextField(
-                value = state.text,
-                onValueChange = onTextChange,
+                value = TextFieldValue(
+                    text = state.text,
+                    selection = TextRange(state.cursorPosition.coerceIn(0, state.text.length))
+                ),
+                onValueChange = { value ->
+                    onDocumentChange(value.text, value.selection.start)
+                },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("正文文本") },
                 textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
@@ -311,9 +546,19 @@ private fun EditorSplitTab(
     onCustomScriptChange: (String) -> Unit,
     onScriptChunkedChange: (Boolean) -> Unit,
     onScriptChunkSizeChange: (String) -> Unit,
+    onApiEndpointChange: (String) -> Unit,
+    onApiTimeoutChange: (String) -> Unit,
+    onApiMarkerModeChange: (EditorMarkerMode) -> Unit,
+    onBatchModeChange: (EditorBatchMode) -> Unit,
+    onBatchTargetChange: (String) -> Unit,
     onAiConfigSelected: (Long) -> Unit,
     onGenerateAiRegex: () -> Unit,
-    onProcess: () -> Unit
+    onProcess: () -> Unit,
+    onInsertChapterAtCursor: () -> Unit,
+    onDeleteChapterAtCursor: () -> Unit,
+    onRenumberMarkers: () -> Unit,
+    onValidateMarkers: () -> Unit,
+    onClearMarkers: () -> Unit
 ) {
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
@@ -388,6 +633,27 @@ private fun EditorSplitTab(
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true
                         )
+                        EditorSplitMode.ApiProcess -> EditorApiProcessControls(
+                            state = state,
+                            onEndpointChange = onApiEndpointChange,
+                            onTimeoutChange = onApiTimeoutChange,
+                            onMarkerModeChange = onApiMarkerModeChange,
+                            onProcess = onProcess
+                        )
+                        EditorSplitMode.BatchGenerate -> EditorBatchGenerateControls(
+                            state = state,
+                            onModeChange = onBatchModeChange,
+                            onTargetChange = onBatchTargetChange,
+                            onProcess = onProcess
+                        )
+                        EditorSplitMode.Manual -> EditorManualMarkerControls(
+                            state = state,
+                            onInsert = onInsertChapterAtCursor,
+                            onDelete = onDeleteChapterAtCursor,
+                            onRenumber = onRenumberMarkers,
+                            onValidate = onValidateMarkers,
+                            onClear = onClearMarkers
+                        )
                         else -> Text("将识别对应 Markdown 标题并按出现顺序生成目录。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (state.splitMode == EditorSplitMode.Regex) {
@@ -423,8 +689,14 @@ private fun EditorSplitTab(
                             )
                         }
                     }
-                    Button(onClick = onProcess, enabled = state.text.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth().height(50.dp)) {
-                        Text("生成章节目录")
+                    if (
+                        state.splitMode != EditorSplitMode.ApiProcess &&
+                        state.splitMode != EditorSplitMode.BatchGenerate &&
+                        state.splitMode != EditorSplitMode.Manual
+                    ) {
+                        Button(onClick = onProcess, enabled = state.text.isNotBlank() && !state.busy, modifier = Modifier.fillMaxWidth().height(50.dp)) {
+                            Text("生成章节目录")
+                        }
                     }
                 }
             }
@@ -435,6 +707,148 @@ private fun EditorSplitTab(
                     Text("源站章节标识符", fontWeight = FontWeight.Bold)
                     Text("支持 `##__T[00001]__##` 标题标识与 `##__C[00001]__##` 内容标识；生成 EPUB 前目录会使用连续编号。", style = MaterialTheme.typography.bodySmall)
                     Text("当前文本 ${formatEditorCount(state.text.length)} 字符，已生成 ${state.chapters.size} 章。", color = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EditorApiProcessControls(
+    state: UploadEditorState,
+    onEndpointChange: (String) -> Unit,
+    onTimeoutChange: (String) -> Unit,
+    onMarkerModeChange: (EditorMarkerMode) -> Unit,
+    onProcess: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            "按源站协议 POST JSON {text} 到处理服务；返回可为 {text}、{data} 或 JSON 字符串。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        OutlinedTextField(
+            value = state.apiEndpoint,
+            onValueChange = onEndpointChange,
+            label = { Text("接口地址") },
+            placeholder = { Text("http://localhost:8000") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        OutlinedTextField(
+            value = state.apiTimeoutSeconds,
+            onValueChange = onTimeoutChange,
+            label = { Text("请求超时（秒，1-120）") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Text("处理模式", fontWeight = FontWeight.SemiBold)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(EditorMarkerMode.values().toList()) { mode ->
+                FilterChip(
+                    selected = state.apiMarkerMode == mode,
+                    onClick = { onMarkerModeChange(mode) },
+                    label = { Text(mode.label) }
+                )
+            }
+        }
+        Text(
+            "全新模式会在发送前移除已有标识符。模拟器访问电脑本机服务时请使用 10.0.2.2 或局域网地址。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Button(
+            onClick = onProcess,
+            enabled = state.text.isNotBlank() && !state.busy,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("发送到接口处理")
+        }
+    }
+}
+
+@Composable
+private fun EditorBatchGenerateControls(
+    state: UploadEditorState,
+    onModeChange: (EditorBatchMode) -> Unit,
+    onTargetChange: (String) -> Unit,
+    onProcess: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            "按源站规则把文本切为完整段落、指定字符区间，或均匀的目标章节数。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(EditorBatchMode.values().toList()) { mode ->
+                FilterChip(
+                    selected = state.batchMode == mode,
+                    onClick = { onModeChange(mode) },
+                    label = { Text(mode.label) }
+                )
+            }
+        }
+        val label = when (state.batchMode) {
+            EditorBatchMode.Paragraphs -> "每章段落数"
+            EditorBatchMode.Characters -> "每章字数"
+            EditorBatchMode.Chapters -> "目标章节数"
+        }
+        OutlinedTextField(
+            value = state.batchTarget,
+            onValueChange = onTargetChange,
+            label = { Text(label) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Button(
+            onClick = onProcess,
+            enabled = state.text.isNotBlank() && !state.busy,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("生成分章")
+        }
+    }
+}
+
+@Composable
+private fun EditorManualMarkerControls(
+    state: UploadEditorState,
+    onInsert: () -> Unit,
+    onDelete: () -> Unit,
+    onRenumber: () -> Unit,
+    onValidate: () -> Unit,
+    onClear: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            "先在“文本”页放置光标，再使用下列工具。刀片会插入完整章节标识符；删除会删除光标所在章节。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text("当前光标：${state.cursorPosition}", style = MaterialTheme.typography.labelSmall)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            item { Button(onClick = onInsert, enabled = state.text.isNotBlank() && !state.busy) { Text("刀片工具") } }
+            item { OutlinedButton(onClick = onDelete, enabled = state.text.isNotBlank() && !state.busy) { Text("波纹删除") } }
+            item { OutlinedButton(onClick = onRenumber, enabled = state.text.isNotBlank() && !state.busy) { Text("重新编号") } }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = onValidate, enabled = !state.busy) { Text("验证标识符") }
+            TextButton(onClick = onClear, enabled = state.text.isNotBlank() && !state.busy) { Text("清除标识符") }
+        }
+        if (state.markerValidationErrors.isNotEmpty()) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text("发现 ${state.markerValidationErrors.size} 个标识符问题", fontWeight = FontWeight.SemiBold)
+                    state.markerValidationErrors.take(3).forEach { error ->
+                        Text("• $error", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
         }

@@ -1,5 +1,6 @@
 package com.novalpie.nativeapp.data
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
 import java.io.IOException
@@ -42,7 +43,10 @@ data class ProxySettings(
      *
      * Emulator QA still needs the fallbacks, so they are kept -- just not for real users.
      */
-    fun toProxyRoutes(emulatorRuntime: Boolean = false): List<Proxy> {
+    fun toProxyRoutes(
+        emulatorRuntime: Boolean = false,
+        emulatorProxyHosts: List<String> = preferredEmulatorProxyHosts(),
+    ): List<Proxy> {
         val routes = mutableListOf<Proxy>()
         val seen = mutableSetOf<String>()
         toJavaProxy()?.let { proxy ->
@@ -53,7 +57,8 @@ data class ProxySettings(
         if (emulatorRuntime) {
             // 127.0.0.1 first: the documented QA path uses `adb reverse tcp:7890 tcp:7890`.
             // 10.0.2.2 second, for a plain AVD without adb reverse.
-            for (fallbackHost in DEFAULT_EMULATOR_PROXY_HOSTS) {
+            for (fallbackHost in emulatorProxyHosts) {
+                if (fallbackHost.isBlank()) continue
                 val key = proxyKey(fallbackHost, DEFAULT_PROXY_PORT)
                 if (seen.add(key)) {
                     routes.add(Proxy(Proxy.Type.HTTP, InetSocketAddress(fallbackHost, DEFAULT_PROXY_PORT)))
@@ -64,8 +69,11 @@ data class ProxySettings(
         return routes
     }
 
-    fun toProxySelector(emulatorRuntime: Boolean = false): ProxySelector {
-        return FixedProxySelector(toProxyRoutes(emulatorRuntime))
+    fun toProxySelector(
+        emulatorRuntime: Boolean = false,
+        emulatorProxyHosts: List<String> = preferredEmulatorProxyHosts(),
+    ): ProxySelector {
+        return FixedProxySelector(toProxyRoutes(emulatorRuntime, emulatorProxyHosts))
     }
 
     companion object {
@@ -81,6 +89,19 @@ data class ProxySettings(
             return proxyKey(address.hostString, address.port)
         }
     }
+}
+
+/**
+ * MuMu's VirtualBox runtime reaches the host through adb reverse, not the AVD-only 10.0.2.2
+ * gateway. Keeping that dead gateway out of the route list avoids a full connect-timeout penalty
+ * whenever the optional host proxy is not running, while ordinary AVDs retain both fallbacks.
+ */
+internal fun preferredEmulatorProxyHosts(
+    hypervisorPlatform: String? = readAndroidSystemProperty("ro.build.hv.platform"),
+): List<String> = if (hypervisorPlatform.orEmpty().contains("vbox", ignoreCase = true)) {
+    listOf("127.0.0.1")
+} else {
+    ProxySettings.DEFAULT_EMULATOR_PROXY_HOSTS
 }
 
 /**
@@ -105,6 +126,12 @@ internal fun isEmulatorRuntime(
     device: String? = runCatching { Build.DEVICE }.getOrNull(),
     product: String? = runCatching { Build.PRODUCT }.getOrNull(),
     hardware: String? = runCatching { Build.HARDWARE }.getOrNull(),
+    hypervisorPlatform: String? = readAndroidSystemProperty("ro.build.hv.platform"),
+    kernelQemu: String? = readAndroidSystemProperty("ro.kernel.qemu"),
+    bootQemu: String? = readAndroidSystemProperty("ro.boot.qemu"),
+    qemuAvdName: String? = readAndroidSystemProperty("ro.boot.qemu.avd_name"),
+    qemudService: String? = readAndroidSystemProperty("init.svc.qemud"),
+    supportedAbis: Array<String>? = runCatching { Build.SUPPORTED_ABIS }.getOrNull(),
 ): Boolean {
     val fp = fingerprint.orEmpty().lowercase()
     val md = model.orEmpty().lowercase()
@@ -113,6 +140,11 @@ internal fun isEmulatorRuntime(
     val dv = device.orEmpty().lowercase()
     val pr = product.orEmpty().lowercase()
     val hw = hardware.orEmpty().lowercase()
+    val hv = hypervisorPlatform.orEmpty().lowercase()
+    val qemuKernel = kernelQemu.orEmpty().lowercase()
+    val qemuBoot = bootQemu.orEmpty().lowercase()
+    val avdName = qemuAvdName.orEmpty().lowercase()
+    val qemud = qemudService.orEmpty().lowercase()
 
     if (fp.startsWith("generic") || fp.startsWith("unknown") || fp.contains("emulator")) return true
     if (md.contains("emulator") || md.contains("android sdk built for") || md.contains("mumu")) return true
@@ -124,8 +156,78 @@ internal fun isEmulatorRuntime(
         return true
     }
     if (hw == "goldfish" || hw == "ranchu" || hw.contains("vbox") || hw.contains("ttvm")) return true
+    // MuMu can spoof a complete Redmi/Oppo Build profile, including the model, fingerprint and
+    // hardware strings. Its hypervisor property remains vbox, which is a reliable emulator-only
+    // signal and lets the documented adb-reverse proxy route work in that configuration.
+    if (hv.contains("vbox") || hv.contains("qemu") || hv.contains("ranchu") ||
+        hv.contains("goldfish") || hv.contains("ttvm")
+    ) {
+        return true
+    }
+
+    // Android 15 blocks some hidden Build fields on vendor-spoofed emulators. MuMu still exposes
+    // one or more of these lower-level QEMU properties, which lets the app select its host proxy
+    // before the first source request is sent.
+    if (
+        qemuKernel.isEnabledEmulatorFlag() ||
+        qemuBoot.isEnabledEmulatorFlag() ||
+        avdName.isNotBlank() ||
+        qemud in setOf("running", "stopped")
+    ) {
+        return true
+    }
+
+    // The MuMu profile used for this project can present itself as an OPPO phone. An actual OPPO
+    // handset is ARM, whereas this particular spoof remains x86/x86_64. Keep this deliberately
+    // narrow so Chromebooks and real x86 Android devices do not inherit emulator proxy routing.
+    val isOppoProfile = md.contains("oppo") || mf.contains("oppo") || br.contains("oppo")
+    val hasX86Abi = supportedAbis.orEmpty().any { abi -> abi.contains("x86", ignoreCase = true) }
+    if (isOppoProfile && hasX86Abi) return true
+
+    // MuMu Android 15 can also use the complete HUAWEI Nicole/NCO-AL00 identity seen in QA.
+    // The physical handset is ARM-only; the precise profile plus an x86 ABI is therefore a
+    // narrow emulator marker when Android blocks access to its otherwise reliable vbox property.
+    val isHuaweiNicoleProfile =
+        md == "nco-al00" &&
+            mf == "huawei" &&
+            br == "huawei" &&
+            dv == "nicole" &&
+            pr == "nicole"
+    if (isHuaweiNicoleProfile && hasX86Abi) return true
+
     return false
 }
+
+/**
+ * Android does not expose the relevant virtualization properties through [Build].
+ * `SystemProperties` is hidden from the public SDK, so access it reflectively and degrade to null
+ * on devices where the hidden API policy blocks it. The ordinary [Build] markers above remain the
+ * primary production path.
+ */
+@SuppressLint("PrivateApi") // Narrow, guarded emulator detection; ordinary Build markers remain primary.
+private fun readAndroidSystemProperty(key: String): String? {
+    val javaProperty = runCatching { System.getProperty(key) }
+        .getOrNull()
+        ?.trim()
+        ?.takeIf(String::isNotBlank)
+    if (javaProperty != null) return javaProperty
+
+    return runCatching {
+        val systemProperties = Class.forName("android.os.SystemProperties")
+        val get = systemProperties.getMethod("get", String::class.java, String::class.java)
+        (get.invoke(null, key, "") as? String)
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
+    }.getOrNull()
+}
+
+private fun String.isEnabledEmulatorFlag(): Boolean =
+    this in setOf("1", "true", "yes", "on") ||
+        contains("qemu") ||
+        contains("vbox") ||
+        contains("ranchu") ||
+        contains("goldfish") ||
+        contains("ttvm")
 
 /**
  * A [ProxySelector] returning a fixed route list.

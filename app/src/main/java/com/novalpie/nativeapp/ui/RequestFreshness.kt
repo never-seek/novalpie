@@ -8,10 +8,23 @@ internal fun isFreshBookDetailResult(
     if (state.bookId != requestedBookId) return false
     return when (route) {
         is AppRoute.BookDetail -> route.bookId == requestedBookId
+        is AppRoute.Terminology -> route.bookId == requestedBookId
         is AppRoute.Reader -> route.bookId == requestedBookId
+        is AppRoute.BookEditInfo -> route.bookId == requestedBookId
+        is AppRoute.BookChapters -> route.bookId == requestedBookId
+        is AppRoute.BookAppend -> route.bookId == requestedBookId
         else -> false
     }
 }
+
+internal fun isFreshTerminologyResult(
+    route: AppRoute,
+    state: TerminologyState,
+    requestedBookId: Long,
+): Boolean =
+    route is AppRoute.Terminology &&
+        route.bookId == requestedBookId &&
+        state.bookId == requestedBookId
 
 internal fun isFreshReaderResult(
     route: AppRoute,
@@ -47,5 +60,10 @@ internal fun isFreshSearchResult(
         request.options == currentOptions &&
         request.page == expectedPage
 
-internal fun searchKeywordForSubmission(currentKeyword: String, submittedKeyword: String?): String =
-    (submittedKeyword ?: currentKeyword).trim()
+internal fun searchKeywordForSubmission(currentKeyword: String, submittedKeyword: String?): String {
+    val current = currentKeyword.trim()
+    val submitted = submittedKeyword?.trim()
+    // An IME event can carry the text from the prior Compose frame. A blank submitted value cannot
+    // be distinguished from a deliberate clear by itself, but the current ViewModel state can.
+    return submitted?.takeIf { it.isNotEmpty() } ?: current
+}

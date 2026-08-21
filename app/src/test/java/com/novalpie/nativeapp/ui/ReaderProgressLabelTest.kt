@@ -13,7 +13,8 @@ class ReaderProgressLabelTest {
             Chapter(id = 30, title = "第三章")
         )
 
-        assertEquals("第 2 / 3 章 · 第二章", readerChapterProgressLabel(20, chapters))
+        assertEquals("2章-\"第二章\"", readerChapterProgressLabel(20, chapters))
+        assertEquals(1f / 3f, readerBookProgressFraction(20, chapters))
     }
 
     @Test

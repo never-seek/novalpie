@@ -2,6 +2,7 @@ package com.novalpie.nativeapp.ui
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.IntSize
+import coil.size.Precision
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -15,5 +16,19 @@ class ImagePreviewTransformTest {
             Offset(450f, -800f),
             clampImagePreviewOffset(Offset(9999f, -9999f), 2f, IntSize(900, 1600))
         )
+    }
+
+    @Test
+    fun previewPolicyDoesNotUpscaleAnimatedFramesPastThePhoneViewport() {
+        val policy = imagePreviewLoadPolicy()
+
+        assertEquals(1440, policy.maxWidthPx)
+        assertEquals(2160, policy.maxHeightPx)
+        assertEquals(Precision.INEXACT, policy.precision)
+    }
+
+    @Test
+    fun previewBottomControlsReserveSpaceAboveTheScreenEdge() {
+        assertEquals(16f, imagePreviewBottomSafePadding().value, 0.001f)
     }
 }

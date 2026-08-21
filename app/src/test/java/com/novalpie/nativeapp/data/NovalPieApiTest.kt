@@ -10,6 +10,9 @@ import com.novalpie.nativeapp.model.UserProfile
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.SocketPolicy
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -20,10 +23,12 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import okio.Buffer
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.ServerSocket
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 
 @RunWith(RobolectricTestRunner::class)
 class NovalPieApiTest {
@@ -57,6 +62,7 @@ class NovalPieApiTest {
                             "chapter_name": "Prologue",
                             "display_order": 7,
                             "words": 3210,
+                            "image_count": 2,
                             "created_at": "2026-07-01T12:00:00Z"
                           }
                         ]
@@ -73,8 +79,9 @@ class NovalPieApiTest {
         assertEquals("Prologue", chapters.single().title)
         assertEquals(7, chapters.single().number)
         assertEquals(3210L, chapters.single().wordCount)
+        assertEquals(2, chapters.single().imageCount)
         assertEquals("2026-07-01T12:00:00Z", chapters.single().updatedAt)
-        assertEquals("/api/novels/354491/chapters", server.takeRequest().path)
+        assertEquals("/api/v2/novels/354491/chapters", server.takeRequest().path)
     }
 
     @Test
@@ -121,13 +128,24 @@ class NovalPieApiTest {
                             "cover_path": "/covers/native-book.jpg",
                             "photo_true_url": "/covers/native-book-original.jpg",
                           "synopsis": "A native detail payload",
-                          "words": 88000,
+                          "fontNumber": 88000,
                           "favorite_count": 2345,
                           "site_read_count": 120000,
-                          "source_read_count": 980000,
+                          "novel_read": 980000,
                           "source_favorite_count": 45000,
+                          "recommend": 19,
                           "status": "连载中",
                           "created_at": "2026-07-02T08:30:00Z",
+                          "chapter_num": 378,
+                          "maxChapterNumber": 378,
+                          "guarantorInfo": {
+                            "userId": 100607,
+                            "username": "Guarantor",
+                            "guaranteedAt": "2026-07-01T08:30:00Z"
+                          },
+                          "uploader": { "username": "Uploader" },
+                          "is_adult": 0,
+                          "allowDownload": true,
                           "tags": [
                             { "name": "Fantasy" },
                             { "title": "Translated" },
@@ -153,10 +171,20 @@ class NovalPieApiTest {
         assertEquals(88000L, book.wordCount)
         assertEquals(2345L, book.favoriteCount)
         assertEquals(120000L, book.siteReadCount)
+        assertEquals(19L, book.recommendCount)
         assertEquals(980000L, book.sourceReadCount)
         assertEquals(45000L, book.sourceFavoriteCount)
         assertEquals("连载中", book.status)
         assertEquals("2026-07-02T08:30:00Z", book.updatedAt)
+        assertEquals("2026-07-02T08:30:00Z", book.createdAt)
+        assertEquals(378, book.chapterCount)
+        assertEquals(378, book.maxChapterNumber)
+        assertEquals(100607L, book.guarantorId)
+        assertEquals("Guarantor", book.guarantorName)
+        assertEquals("2026-07-01T08:30:00Z", book.guaranteedAt)
+        assertEquals("Uploader", book.uploaderName)
+        assertEquals(false, book.isAdult)
+        assertEquals(true, book.allowDownload)
         assertEquals(listOf("Fantasy", "Translated", "Featured"), book.tags)
         assertEquals("/api/novels/354491/detail", server.takeRequest().path)
     }
@@ -187,6 +215,30 @@ class NovalPieApiTest {
         val request = server.takeRequest()
         assertEquals("/api/novels/354491/photo", request.requestUrl?.encodedPath)
         assertEquals("novel", request.requestUrl?.queryParameter("favorite_type"))
+    }
+
+    @Test
+    fun bookCoverPhotoInfoKeepsTheOuterCardImageSeparateFromThePreviewOriginal() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "data": {
+                        "photo_url": "/covers/outer-card.file",
+                        "photo_true_url": "/covers/inner-preview.file"
+                      }
+                    }
+                    """.trimIndent()
+                )
+        )
+
+        val photo = api.bookCoverPhotoInfo(350259)
+
+        val baseUrl = server.url("/").toString().trimEnd('/')
+        assertEquals("$baseUrl/covers/outer-card.file", photo.previewUrl)
+        assertEquals("$baseUrl/covers/inner-preview.file", photo.originalUrl)
     }
 
     @Test
@@ -364,7 +416,7 @@ class NovalPieApiTest {
         assertEquals("Native profile", user.bio)
         assertEquals("profile@example.test", user.email)
         assertTrue(user.isAdult == true)
-        assertEquals(listOf("founder", "translator"), user.badges)
+        assertEquals(listOf("founder", "translator"), user.badges.map { it.name })
         assertEquals(29L, user.stats["comments"])
     }
 
@@ -466,6 +518,150 @@ class NovalPieApiTest {
     }
 
     @Test
+    fun currentUserActivitiesUseOwnProfileEndpoint() = runBlocking {
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"data":{"activities":[{"id":11,"type":"post","post":{"id":1422,"title":"Own post"}}]}}"""
+            )
+        )
+
+        val activities = api.userActivities()
+
+        assertEquals(1, activities.size)
+        assertEquals(1422L, activities.single().postId)
+        assertEquals("/api/users/me/activities?page=1&limit=100", server.takeRequest().path)
+    }
+
+    @Test
+    fun userContentActivitiesMergeWebsitePostCommentAndReviewFeeds() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl?.encodedPath) {
+                "/api/posts" -> MockResponse().setHeader("content-type", "application/json").setBody(
+                    """{"posts":[{"id":10,"title":"Fresh forum post","content":"<p>Post text</p>","created_at":"2026-08-12T12:00:00Z"}]}"""
+                )
+                "/api/posts/comments" -> MockResponse().setHeader("content-type", "application/json").setBody(
+                    """
+                    {"comments":[{
+                      "id":20,"post_id":1422,"post":{"title":"Forum thread"},
+                      "content":"<p>Forum reply</p>","created_at":"2026-08-12T13:00:00Z",
+                      "replies":[{"id":21,"content":"Nested reply","created_at":"2026-08-12T14:00:00Z"}]
+                    }]}
+                    """.trimIndent()
+                )
+                "/api/comments/book-reviews" -> MockResponse().setHeader("content-type", "application/json").setBody(
+                    """
+                    {"posts":[{
+                      "id":30,"bookId":354491,"bookTitle":"Review book","bookCover":"/covers/review.jpg",
+                      "content":"<p>Book review</p>","createdAt":"2026-08-12 15:00:00"
+                    }]}
+                    """.trimIndent()
+                )
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+
+        val feed = api.userContentActivityFeed(userId = 100000, limit = 20)
+        val activities = feed.activities
+
+        assertEquals(listOf(30L, 21L, 20L, 10L), activities.map { it.id })
+        assertEquals(listOf("novel_comment", "post_comment", "post_comment", "post"), activities.map { it.type })
+        assertEquals("Review book", activities.first().title)
+        assertEquals(354491L, activities.first().bookId)
+        assertEquals("Forum thread", activities[1].title)
+        assertEquals(1422L, activities[1].postId)
+        assertEquals("Nested reply", activities[1].content)
+        assertEquals("http://${server.hostName}:${server.port}/covers/review.jpg", activities.first().coverUrl)
+        assertEquals(null, feed.postCount)
+        assertEquals(null, feed.forumCommentCount)
+        assertEquals(null, feed.bookReviewCount)
+    }
+
+    @Test
+    fun userContentActivityFeedPreservesWebsitePaginationTotals() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl?.encodedPath) {
+                "/api/posts" -> MockResponse().setHeader("content-type", "application/json").setBody(
+                    """{"posts":[{"id":10,"title":"Post","created_at":"2026-08-12T12:00:00Z"}],"pagination":{"total":4}}"""
+                )
+                "/api/posts/comments" -> MockResponse().setHeader("content-type", "application/json").setBody(
+                    """{"comments":[{"id":20,"post_id":42,"content":"Reply","created_at":"2026-08-12T13:00:00Z"}],"pagination":{"total":127}}"""
+                )
+                "/api/comments/book-reviews" -> MockResponse().setHeader("content-type", "application/json").setBody(
+                    """{"posts":[{"id":30,"bookId":7,"bookTitle":"Review","created_at":"2026-08-12T14:00:00Z"}],"pagination":{"total":21}}"""
+                )
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+
+        val feed = api.userContentActivityFeed(userId = 100000)
+
+        assertEquals(4L, feed.postCount)
+        assertEquals(127L, feed.forumCommentCount)
+        assertEquals(21L, feed.bookReviewCount)
+        assertEquals(148L, feed.commentCount)
+        assertEquals(listOf(30L, 20L, 10L), feed.activities.map { it.id })
+    }
+
+    @Test
+    fun canonicalSourceActivityFeedUsesTheWebsiteTwoHundredItemWindow() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl?.encodedPath) {
+                "/api/users/42/activities" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody(
+                        """
+                        {"activities":[
+                          {"id":77,"type":"announcement","title":"Canonical activity",
+                           "content":"<p>Source timeline</p>","created_at":"2026-08-17 10:00:00"}
+                        ]}
+                        """.trimIndent()
+                    )
+                "/api/posts" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody("""{"posts":[]}""")
+                "/api/posts/comments" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody("""{"comments":[]}""")
+                "/api/comments/book-reviews" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody("""{"posts":[]}""")
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+
+        val feed = api.userContentActivityFeed(userId = 42, limit = 200)
+
+        assertEquals(listOf(77L), feed.activities.map { it.id })
+        assertEquals("post", feed.activities.single().type)
+        assertEquals(77L, feed.activities.single().postId)
+        assertEquals("Canonical activity", feed.activities.single().title)
+        assertEquals("Source timeline", feed.activities.single().content)
+        val canonicalRequest = (1..4)
+            .map { server.takeRequest() }
+            .first { it.requestUrl?.encodedPath == "/api/users/42/activities" }
+        assertEquals("/api/users/42/activities?page=1&limit=200", canonicalRequest.path)
+    }
+
+    @Test
+    fun userContentActivitiesKeepAvailableFeedsWhenOneSourceIsUnavailable() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl?.encodedPath) {
+                "/api/posts" -> MockResponse().setHeader("content-type", "application/json").setBody(
+                    """{"posts":[{"id":10,"title":"Available post","created_at":"2026-08-12T12:00:00Z"}]}"""
+                )
+                "/api/posts/comments" -> MockResponse().setResponseCode(501).setBody("not implemented")
+                "/api/comments/book-reviews" -> MockResponse().setHeader("content-type", "application/json").setBody("""{"posts":[]}""")
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+
+        val activities = api.userContentActivities(userId = 100000)
+
+        assertEquals(listOf(10L), activities.map { it.id })
+        assertEquals("post", activities.single().type)
+    }
+
+    @Test
     fun publicUserNovelsAndCheckinDataUseWebsiteEndpoints() = runBlocking {
         server.enqueue(
             MockResponse().setHeader("content-type", "application/json").setBody(
@@ -511,6 +707,205 @@ class NovalPieApiTest {
         assertEquals("/api/users/me/verifies/adult", request.path)
         assertEquals(1995, JSONObject(request.body.readUtf8()).getInt("birth_year"))
         assertTrue(action.success)
+    }
+
+    @Test
+    fun currentAccountInventoryAndQuizStatusUseWebsiteReadEndpoints() = runBlocking {
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """
+                {
+                  "data": {
+                    "inventory": {
+                      "items": [
+                        {
+                          "item_id": 17,
+                          "item_name": "Indigo Avatar Frame",
+                          "item_type": "avatar_frame",
+                          "quantity": 2,
+                          "image_url": "/assets/frame.png"
+                        }
+                      ],
+                      "equipped_items": [{"item_id": 17}]
+                    }
+                  }
+                }
+                """.trimIndent()
+            )
+        )
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"data":{"claimed":false,"eligible":true,"reward_name":"新人问答","question_count":3}}"""
+            )
+        )
+
+        val inventory = api.currentUserInventory()
+        val quiz = api.currentUserQuizRewardStatus()
+
+        assertEquals(1, inventory.items.size)
+        assertEquals(17L, inventory.items.single().id)
+        assertEquals("Indigo Avatar Frame", inventory.items.single().name)
+        assertEquals(2, inventory.items.single().quantity)
+        assertTrue(inventory.items.single().equipped)
+        assertEquals(server.url("/assets/frame.png").toString(), inventory.items.single().imageUrl)
+        assertEquals(setOf(17L), inventory.equippedItemIds)
+        assertFalse(quiz.claimed ?: true)
+        assertTrue(quiz.eligible ?: false)
+        assertEquals("新人问答", quiz.rewardName)
+        assertEquals(3, quiz.questionCount)
+        assertEquals("/api/users/me/inventory", server.takeRequest().path)
+        assertEquals("/api/users/me/quiz-reward", server.takeRequest().path)
+    }
+
+    @Test
+    fun currentAccountInventoryKeepsNestedBadgePreviewMetadata() = runBlocking {
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """
+                {
+                  "data": {
+                    "inventory": {
+                      "items": [
+                        {
+                          "id": 9001,
+                          "inventory_id": 9001,
+                          "item_id": 88,
+                          "quantity": 1,
+                          "equipped": true,
+                          "item": {
+                            "id": 88,
+                            "name": "Aurora Badge",
+                            "type": "badge",
+                            "badge_html": "<span>Aurora</span>",
+                            "badge_css": "background: linear-gradient(rgba(34,211,238,.22), rgba(168,85,247,.24));"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+                """.trimIndent()
+            )
+        )
+
+        val item = api.currentUserInventory().items.single()
+
+        assertEquals("Aurora Badge", item.name)
+        assertEquals("badge", item.type)
+        assertEquals(9001L, item.inventoryId)
+        assertEquals(88L, item.itemId)
+        assertEquals("<span>Aurora</span>", item.badgeHtml)
+        assertTrue(item.badgeCss?.contains("linear-gradient") == true)
+        assertTrue(item.equipped)
+        assertEquals("/api/users/me/inventory", server.takeRequest().path)
+    }
+
+    @Test
+    fun normalShopAndEquipmentUseWebsiteUserFacingEndpoints() = runBlocking {
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """
+                {
+                  "data": {
+                    "items": [
+                      {
+                        "id": 51,
+                        "name": "Moon Frame",
+                        "description": "A silver frame",
+                        "price": 88,
+                        "type": "frame",
+                        "image_url": "/assets/moon.webp"
+                      },
+                      {
+                        "id": 52,
+                        "name": "Aurora",
+                        "price": 12,
+                        "type": "badge",
+                        "badge_html": "<span>Aurora</span>",
+                        "badge_css": "background: linear-gradient(#22d3ee, #a855f7);"
+                      }
+                    ]
+                  }
+                }
+                """.trimIndent()
+            )
+        )
+        server.enqueue(MockResponse().setHeader("content-type", "application/json").setBody("""{"success":true,"message":"equipped"}"""))
+        server.enqueue(MockResponse().setHeader("content-type", "application/json").setBody("""{"success":true,"message":"purchased"}"""))
+
+        val shop = api.shopItems()
+        val equipment = api.setCurrentUserEquipment(51, "equip")
+        val purchase = api.purchaseShopItem(52)
+
+        assertEquals(2, shop.size)
+        assertEquals("Moon Frame", shop.first().name)
+        assertEquals(server.url("/assets/moon.webp").toString(), shop.first().imageUrl)
+        assertEquals("badge", shop.last().type)
+        assertTrue(shop.last().badgeCss?.contains("linear-gradient") == true)
+        assertTrue(equipment.success)
+        assertEquals("equipped", equipment.message)
+        assertTrue(purchase.success)
+        assertEquals("purchased", purchase.message)
+
+        assertEquals("/api/shop/items", server.takeRequest().path)
+        val equipmentRequest = server.takeRequest()
+        assertEquals("POST", equipmentRequest.method)
+        assertEquals("/api/users/me/equipment", equipmentRequest.path)
+        val equipmentBody = JSONObject(equipmentRequest.body.readUtf8())
+        assertEquals(51L, equipmentBody.getLong("item_id"))
+        assertEquals("equip", equipmentBody.optString("action"))
+        val purchaseRequest = server.takeRequest()
+        assertEquals("POST", purchaseRequest.method)
+        assertEquals("/api/shop/purchases", purchaseRequest.path)
+        assertEquals(52L, JSONObject(purchaseRequest.body.readUtf8()).getLong("item_id"))
+    }
+
+    @Test
+    fun currentAccountBooksUseTheWebsiteOwnProfileEndpointAndNestedEnvelope() = runBlocking {
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """
+                {
+                  "data": {
+                    "books": [
+                      {
+                        "id": 354491,
+                        "title": "Uploaded Native Novel",
+                        "author": "Uploader",
+                        "cover_url": "/covers/uploaded.jpg",
+                        "tags": ["奇幻", "已完结"]
+                      }
+                    ]
+                  }
+                }
+                """.trimIndent()
+            )
+        )
+
+        val uploads = api.currentUserUploadedBooks()
+
+        assertEquals(1, uploads.size)
+        assertEquals(354491L, uploads.single().id)
+        assertEquals("Uploaded Native Novel", uploads.single().title)
+        assertEquals(listOf("奇幻", "已完结"), uploads.single().tags)
+        assertEquals("/api/users/me/books", server.takeRequest().path)
+    }
+
+    @Test
+    fun checkinStatsNormalizeSourceCamelCaseAliases() = runBlocking {
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"data":{"stats":{"totalDays":2,"points":10,"maxStreak":2,"streak":2}}}"""
+            )
+        )
+
+        val stats = api.currentUserCheckinStats()
+
+        assertEquals(2, stats.totalDays)
+        assertEquals(10L, stats.totalPoints)
+        assertEquals(2, stats.maxStreak)
+        assertEquals(2, stats.currentStreak)
+        assertEquals("/api/users/me/checkins/stats", server.takeRequest().path)
     }
 
     @Test
@@ -747,7 +1142,15 @@ class NovalPieApiTest {
             adultFilter = "adult_only",
             source = "novelPia",
             minWordCount = 100000,
-            maxWordCount = 500000
+            maxWordCount = 500000,
+            requiredTags = listOf("奇幻", "同人"),
+            blockedTags = listOf("后宫"),
+            tagsAny = listOf("恋爱", "校园"),
+            tagsExpression = "(异世界 OR 学园)",
+            blockedTerms = listOf("续作", "重制"),
+            platform = "novelPia",
+            novelType = "玄幻",
+            status = "连载"
         )
 
         assertEquals(1, books.size)
@@ -774,10 +1177,196 @@ class NovalPieApiTest {
         assertEquals("tags", request.requestUrl?.queryParameter("scope"))
         assertEquals("ai", request.requestUrl?.queryParameter("match_type"))
         assertEquals("adult_only", request.requestUrl?.queryParameter("adult_filter"))
-        assertEquals("novelPia", request.requestUrl?.queryParameter("source"))
+        assertNull(request.requestUrl?.queryParameter("source"))
         assertEquals("100000", request.requestUrl?.queryParameter("min_word_count"))
         assertEquals("500000", request.requestUrl?.queryParameter("max_word_count"))
+        assertEquals("奇幻,同人", request.requestUrl?.queryParameter("tags"))
+        assertEquals("后宫", request.requestUrl?.queryParameter("blocked_tags"))
+        assertEquals("恋爱,校园", request.requestUrl?.queryParameter("tags_any"))
+        assertEquals("(异世界 OR 学园)", request.requestUrl?.queryParameter("tags_expr"))
+        assertEquals("续作,重制", request.requestUrl?.queryParameter("blocked_terms"))
+        assertEquals("novelPia", request.requestUrl?.queryParameter("platform"))
+        assertEquals("玄幻", request.requestUrl?.queryParameter("type"))
+        assertEquals("连载", request.requestUrl?.queryParameter("status"))
         assertTrue(request.getHeader("user-agent").orEmpty().contains("NovalPieNative"))
+    }
+
+    @Test
+    fun searchSourceFilterUsesWebsitePlatformParameterInsteadOfIgnoredSourceParameter() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody("""{"results":[]}""")
+        )
+
+        api.search(keyword = "", source = "upload")
+
+        val request = server.takeRequest()
+        assertEquals("upload", request.requestUrl?.queryParameter("platform"))
+        assertNull(request.requestUrl?.queryParameter("source"))
+    }
+
+    @Test
+    fun searchAllSourceDoesNotSendAPlatformRestriction() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody("""{"results":[]}""")
+        )
+
+        // Older locally-cached selections used `all`; it must mean the same as the UI's blank
+        // “全部” choice rather than filtering the source to a nonexistent `platform=all`.
+        api.search(keyword = "", source = "all")
+
+        val request = server.takeRequest()
+        assertNull(request.requestUrl?.queryParameter("platform"))
+        assertNull(request.requestUrl?.queryParameter("source"))
+    }
+
+    @Test
+    fun searchSourceFilterDefensivelyRemovesMixedPlatformCards() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "results": [
+                        { "id": 1, "title": "NovelPia card", "platform": "novelPia" },
+                        { "id": 2, "title": "Upload card", "platform": "upload" },
+                        { "id": 3, "title": "Unknown card", "platform": "other" }
+                      ],
+                      "total": 3,
+                      "page": 1,
+                      "limit": 60
+                    }
+                    """.trimIndent()
+                )
+        )
+
+        val page = api.searchPage(keyword = "", source = "upload")
+
+        assertEquals(listOf(2L), page.items.map { it.id })
+        assertEquals(3, page.total)
+    }
+
+    @Test
+    fun requestEpubDownloadUsesTheSourceAuthorizationEndpoint() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """{"success":true,"data":{"file_name":"book-354491.txt","user_points_after":98,"has_download_purchase":true}}"""
+                )
+        )
+
+        val ticket = api.requestEpubDownload(354491)
+
+        assertEquals("book-354491.txt", ticket.fileName)
+        assertEquals(98L, ticket.userPointsAfter)
+        assertEquals(true, ticket.hasDownloadPurchase)
+        val request = server.takeRequest()
+        assertEquals("/api/downloads", request.requestUrl?.encodedPath)
+        assertEquals("POST", request.method)
+        val body = JSONObject(request.body.readUtf8())
+        assertEquals(354491L, body.getLong("novel_id"))
+        assertEquals("epub", body.getString("download_type"))
+    }
+
+    @Test
+    fun requestTxtDownloadUsesTheSourceAuthorizationEndpoint() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """{"success":true,"data":{"file_name":"book-354491.txt"}}"""
+                )
+        )
+
+        val ticket = api.requestTxtDownload(354491)
+
+        assertEquals("book-354491.txt", ticket.fileName)
+        val request = server.takeRequest()
+        assertEquals("/api/downloads", request.requestUrl?.encodedPath)
+        assertEquals("POST", request.method)
+        val body = JSONObject(request.body.readUtf8())
+        assertEquals(354491L, body.getLong("novel_id"))
+        assertEquals("txt", body.getString("download_type"))
+    }
+
+    @Test
+    fun downloadAndAssetStreamsKeepBinaryBytesAndSessionHeaders() = runBlocking {
+        val textBytes = "第1章 开始\n正文\n".toByteArray(Charsets.UTF_8)
+        val imageBytes = byteArrayOf(0, 1, 2, 127, -1, 42)
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "text/plain; charset=utf-8")
+                .setBody(String(textBytes, Charsets.UTF_8))
+        )
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "image/webp")
+                .setBody(Buffer().write(imageBytes))
+        )
+        val authenticatedApi = NovalPieApi(
+            baseUrl = server.url("/").toString().trimEnd('/'),
+            cookieProvider = { "novalpie_session=test" },
+            authTokenProvider = { "token-test" },
+        )
+        val downloadedText = ByteArrayOutputStream()
+        authenticatedApi.streamDownloadFile("book-354491.txt") { input -> input.copyTo(downloadedText) }
+        val downloadedImage = ByteArrayOutputStream()
+        var mediaType: String? = null
+        authenticatedApi.streamAsset(server.url("images/original.webp").toString()) { input, contentType ->
+            mediaType = contentType
+            input.copyTo(downloadedImage)
+        }
+
+        assertEquals(textBytes.toList(), downloadedText.toByteArray().toList())
+        assertEquals(imageBytes.toList(), downloadedImage.toByteArray().toList())
+        assertEquals("image/webp", mediaType)
+        val textRequest = server.takeRequest()
+        assertEquals("/api/downloads/book-354491.txt", textRequest.requestUrl?.encodedPath)
+        assertEquals("novalpie_session=test", textRequest.getHeader("cookie"))
+        assertEquals("Bearer token-test", textRequest.getHeader("authorization"))
+        val imageRequest = server.takeRequest()
+        assertEquals("/images/original.webp", imageRequest.requestUrl?.encodedPath)
+        assertEquals("novalpie_session=test", imageRequest.getHeader("cookie"))
+        assertEquals("Bearer token-test", imageRequest.getHeader("authorization"))
+    }
+
+    @Test
+    fun searchPagePreservesLivePaginationMetadata() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "success": true,
+                      "results": [
+                        { "id": 456, "title": "Paged Search Book", "tags": ["Fantasy"] }
+                      ],
+                      "total": 47331,
+                      "page": 5,
+                      "limit": 60,
+                      "total_pages": 789
+                    }
+                    """.trimIndent()
+                )
+        )
+
+        val page = api.searchPage(keyword = "", page = 5, limit = 60)
+
+        assertEquals(5, page.page)
+        assertEquals(60, page.pageSize)
+        assertEquals(47331, page.total)
+        assertEquals(789, page.totalPages)
+        assertEquals(listOf(456L), page.items.map { it.id })
+        val request = server.takeRequest()
+        assertEquals("5", request.requestUrl?.queryParameter("page"))
+        assertEquals("60", request.requestUrl?.queryParameter("limit"))
+        assertEquals("unrestricted", request.requestUrl?.queryParameter("adult_filter"))
     }
 
     @Test
@@ -1517,6 +2106,102 @@ class NovalPieApiTest {
     }
 
     @Test
+    fun adjacentChapterReadsReuseTheValidReaderSession() = runBlocking {
+        val expiresAtSeconds = (System.currentTimeMillis() / 1000L) + 60L
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"success":true,"session_id":"shared-session","session_key":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=","expires":$expiresAtSeconds}"""
+            )
+        )
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json")
+                .setBody("""{"success":true,"title":"First","content":"first body"}""")
+        )
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json")
+                .setBody("""{"success":true,"title":"Second","content":"second body"}""")
+        )
+
+        assertEquals("first body", api.chapterContent(9101).content)
+        assertEquals("second body", api.chapterContent(9102).content)
+
+        val sessionRequest = server.takeRequest()
+        assertEquals("/api/reader/session-key", sessionRequest.requestUrl?.encodedPath)
+        val firstContentRequest = server.takeRequest()
+        val secondContentRequest = server.takeRequest()
+        assertEquals("/api/chapters/9101/content", firstContentRequest.requestUrl?.encodedPath)
+        assertEquals("/api/chapters/9102/content", secondContentRequest.requestUrl?.encodedPath)
+        assertEquals(
+            firstContentRequest.requestUrl?.queryParameter("session"),
+            secondContentRequest.requestUrl?.queryParameter("session"),
+        )
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test
+    fun chapterContentRetriesOnceAfterATransportDisconnectWithAFreshSession() = runBlocking {
+        val expiresAtSeconds = (System.currentTimeMillis() / 1000L) + 60L
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"success":true,"session_id":"stale-session","session_key":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=","expires":$expiresAtSeconds}"""
+            )
+        )
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START))
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"success":true,"session_id":"fresh-session","session_key":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=","expires":$expiresAtSeconds}"""
+            )
+        )
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json")
+                .setBody("""{"success":true,"title":"Recovered","content":"recovered body"}""")
+        )
+
+        assertEquals("recovered body", api.chapterContent(9201).content)
+
+        val requests = List(4) { server.takeRequest() }
+        assertEquals("/api/reader/session-key", requests[0].requestUrl?.encodedPath)
+        assertEquals("/api/chapters/9201/content", requests[1].requestUrl?.encodedPath)
+        assertEquals("/api/reader/session-key", requests[2].requestUrl?.encodedPath)
+        assertEquals("/api/chapters/9201/content", requests[3].requestUrl?.encodedPath)
+        assertEquals("stale-session", requests[1].requestUrl?.queryParameter("session"))
+        assertEquals("fresh-session", requests[3].requestUrl?.queryParameter("session"))
+    }
+
+    @Test
+    fun chapterContentRetriesAStaleReaderSessionResponseWithAFreshSession() = runBlocking {
+        val expiresAtSeconds = (System.currentTimeMillis() / 1000L) + 60L
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"success":true,"session_id":"stale-session","session_key":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=","expires":$expiresAtSeconds}"""
+            )
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(403).setHeader("content-type", "application/json")
+                .setBody("""{"message":"reader session expired"}""")
+        )
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"success":true,"session_id":"fresh-session","session_key":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=","expires":$expiresAtSeconds}"""
+            )
+        )
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json")
+                .setBody("""{"success":true,"title":"Recovered","content":"recovered body"}""")
+        )
+
+        assertEquals("recovered body", api.chapterContent(9202).content)
+
+        val requests = List(4) { server.takeRequest() }
+        assertEquals("/api/reader/session-key", requests[0].requestUrl?.encodedPath)
+        assertEquals("/api/chapters/9202/content", requests[1].requestUrl?.encodedPath)
+        assertEquals("/api/reader/session-key", requests[2].requestUrl?.encodedPath)
+        assertEquals("/api/chapters/9202/content", requests[3].requestUrl?.encodedPath)
+        assertEquals("stale-session", requests[1].requestUrl?.queryParameter("session"))
+        assertEquals("fresh-session", requests[3].requestUrl?.queryParameter("session"))
+    }
+
+    @Test
     fun chapterContentDecryptsWebsiteEncryptedPayloadWithReaderSessionKey() = runBlocking {
         server.enqueue(
             MockResponse()
@@ -1661,6 +2346,170 @@ class NovalPieApiTest {
     }
 
     @Test
+    fun favoritePageUsesWebsiteGroupRouteAndKeepsManagementMetadata() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "favorites": [
+                        {
+                          "id": 382566,
+                          "object_id": 1673,
+                          "object_name": "Saved Book",
+                          "favorite_type": "novelPia",
+                          "group_id": 12,
+                          "group_name": "Reading Now",
+                          "is_pinned": 1,
+                          "created_at": "2026-02-11 00:01:30",
+                          "last_read_time": "2026-03-22 18:48:13",
+                          "last_chapter_id": 381498,
+                          "last_chapter": 510,
+                          "chapter_count": 1497,
+                          "photo_url": "/covers/saved-book.file",
+                          "tags": ["Fantasy"]
+                        }
+                      ],
+                      "pagination": { "page": 2, "limit": 10, "total": 23, "pages": 3 }
+                    }
+                    """.trimIndent()
+                )
+        )
+
+        val page = api.favoritePage(
+            page = 2,
+            limit = 10,
+            groupId = 12,
+            search = "saved",
+            sortField = "last_read_time",
+            sortOrder = "asc",
+            excludeAdult = true
+        )
+
+        assertEquals(2, page.page)
+        assertEquals(10, page.pageSize)
+        assertEquals(23, page.total)
+        assertEquals(3, page.totalPages)
+        val entry = page.items.single()
+        assertEquals(382566L, entry.favoriteId)
+        assertEquals(1673L, entry.book.id)
+        assertEquals(12L, entry.groupId)
+        assertEquals("Reading Now", entry.groupName)
+        assertTrue(entry.isPinned)
+        assertEquals("2026-03-22 18:48:13", entry.lastReadAt)
+        assertEquals(381498L, entry.lastChapterId)
+        assertEquals(510, entry.lastChapter)
+        assertEquals(1497, entry.chapterCount)
+
+        val request = server.takeRequest()
+        assertEquals("/api/favorites/groups/12/items", request.requestUrl?.encodedPath)
+        assertEquals("novel", request.requestUrl?.queryParameter("type"))
+        assertEquals("2", request.requestUrl?.queryParameter("page"))
+        assertEquals("10", request.requestUrl?.queryParameter("limit"))
+        assertEquals("saved", request.requestUrl?.queryParameter("search"))
+        assertEquals("last_read_time", request.requestUrl?.queryParameter("sort_field"))
+        assertEquals("asc", request.requestUrl?.queryParameter("sort_order"))
+        assertEquals("1", request.requestUrl?.queryParameter("exclude_adult"))
+    }
+
+    @Test
+    fun favoritePageDoesNotTreatChapterTotalAsReadProgress() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "favorites": [
+                        {
+                          "id": 1,
+                          "object_id": 100,
+                          "object_name": "Unread Book",
+                          "favorite_type": "novelPia",
+                          "chapter_num": 100
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+        )
+
+        val entry = api.favoritePage(page = 1, limit = 1).items.single()
+
+        assertEquals(100, entry.book.chapterCount)
+        assertNull(entry.lastChapter)
+    }
+
+    @Test
+    fun favoriteManagementAndHistoryUseCurrentWebsiteRoutesAndBodies() = runBlocking {
+        repeat(8) {
+            server.enqueue(MockResponse().setHeader("content-type", "application/json").setBody("{\"success\":true,\"data\":{\"id\":12,\"name\":\"Reading Now\"}}"))
+        }
+
+        api.readingHistoryPage(page = 3, limit = 12)
+        api.createFavoriteGroup("Reading Now")
+        api.renameFavoriteGroup(12, "Later")
+        api.deleteFavoriteGroup(12)
+        api.moveFavoriteToGroup(382566, 12)
+        api.removeFavorite(382566)
+        api.setFavoritePinned(382566, true)
+        api.deleteReadingHistory(listOf(1673, 351977))
+
+        val history = server.takeRequest()
+        assertEquals("/api/favorites/history", history.requestUrl?.encodedPath)
+        assertEquals("novel", history.requestUrl?.queryParameter("type"))
+        assertEquals("3", history.requestUrl?.queryParameter("page"))
+        assertEquals("12", history.requestUrl?.queryParameter("limit"))
+
+        val create = server.takeRequest()
+        assertEquals("POST", create.method)
+        assertEquals("/api/favorites/groups", create.requestUrl?.encodedPath)
+        assertEquals("Reading Now", JSONObject(create.body.readUtf8()).getString("name"))
+
+        val rename = server.takeRequest()
+        assertEquals("PUT", rename.method)
+        assertEquals("/api/favorites/groups/12", rename.requestUrl?.encodedPath)
+        assertEquals("Later", JSONObject(rename.body.readUtf8()).getString("name"))
+
+        val delete = server.takeRequest()
+        assertEquals("DELETE", delete.method)
+        assertEquals("/api/favorites/groups/12", delete.requestUrl?.encodedPath)
+
+        val move = server.takeRequest()
+        assertEquals("POST", move.method)
+        assertEquals("/api/favorites/management", move.requestUrl?.encodedPath)
+        JSONObject(move.body.readUtf8()).also { body ->
+            assertEquals("move_group", body.getString("action"))
+            assertEquals(382566L, body.getLong("favorite_id"))
+            assertEquals(12L, body.getLong("group_id"))
+        }
+
+        val remove = server.takeRequest()
+        JSONObject(remove.body.readUtf8()).also { body ->
+            assertEquals("remove", body.getString("action"))
+            assertEquals(382566L, body.getLong("favorite_id"))
+        }
+
+        val pin = server.takeRequest()
+        JSONObject(pin.body.readUtf8()).also { body ->
+            assertEquals("set_pin", body.getString("action"))
+            assertEquals(382566L, body.getLong("favorite_id"))
+            assertTrue(body.getBoolean("is_pinned"))
+        }
+
+        val deleteHistory = server.takeRequest()
+        assertEquals("DELETE", deleteHistory.method)
+        assertEquals("/api/favorites/history", deleteHistory.requestUrl?.encodedPath)
+        assertEquals(
+            listOf(1673L, 351977L),
+            JSONObject(deleteHistory.body.readUtf8()).getJSONArray("novel_ids").let { values ->
+                (0 until values.length()).map(values::getLong)
+            }
+        )
+    }
+
+    @Test
     fun forumPostsNormalizeWebsiteAliasesAndSendReadonlyParameters() = runBlocking {
         server.enqueue(
             MockResponse()
@@ -1710,7 +2559,7 @@ class NovalPieApiTest {
         assertEquals(7305, post.viewCount)
         assertEquals("2026-07-07T10:00:00Z", post.lastActiveLabel)
         assertEquals("Readable excerpt", post.excerpt)
-        assertEquals(listOf("书评", "hot", "review"), post.tags)
+        assertEquals(listOf("hot", "review"), post.tags)
         assertTrue(post.pinned)
         assertTrue(post.featured)
 
@@ -1718,6 +2567,283 @@ class NovalPieApiTest {
         assertEquals("/api/posts", request.requestUrl?.encodedPath)
         assertEquals("2", request.requestUrl?.queryParameter("page"))
         assertEquals("6", request.requestUrl?.queryParameter("limit"))
+    }
+
+    @Test
+    fun forumBookReviewsUseDedicatedCommentFeedAndKeepBookNavigationFields() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "success": true,
+                      "posts": [
+                        {
+                          "id": 57028,
+                          "title": "Review title",
+                          "content": "<p>Review preview</p>",
+                          "fullContent": "<p>Full review body</p>",
+                          "type": "review",
+                          "authorId": 100042,
+                          "authorName": "Review User",
+                          "authorAvatar": "/uploads/user_100042/avatar.jpg",
+                          "authorAvatarFrame": "/uploads/frames/review.png",
+                          "authorBadges": ["Reviewer"],
+                          "likeCount": 8,
+                          "commentCount": 3,
+                          "viewCount": 45,
+                          "bookId": 354491,
+                          "bookTitle": "Linked Book",
+                          "bookCover": "/covers/linked-book.jpg",
+                          "createdAt": "2026-08-12 11:55:49",
+                          "tags": ["review", "long"]
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+        )
+
+        val post = api.forumPosts(page = 2, limit = 6, type = "review", search = "linked").single()
+
+        assertTrue(post.isBookReview)
+        assertEquals(354491L, post.bookId)
+        assertEquals("Linked Book", post.bookTitle)
+        assertEquals("Review preview", post.excerpt)
+        assertEquals(3, post.replyCount)
+        assertEquals(8, post.likeCount)
+        assertEquals(45, post.viewCount)
+        assertEquals(listOf("Reviewer"), post.authorBadges)
+        val base = server.url("/").toString().trimEnd('/')
+        assertEquals("$base/covers/linked-book.jpg", post.bookCoverUrl)
+        assertEquals("$base/uploads/user_100042/avatar.jpg", post.authorAvatarUrl)
+        assertEquals("$base/uploads/frames/review.png", post.authorAvatarFrameUrl)
+
+        val request = server.takeRequest()
+        assertEquals("/api/comments/book-reviews", request.requestUrl?.encodedPath)
+        assertEquals("2", request.requestUrl?.queryParameter("page"))
+        assertEquals("6", request.requestUrl?.queryParameter("limit"))
+        assertEquals("linked", request.requestUrl?.queryParameter("search"))
+        assertEquals("1", request.requestUrl?.queryParameter("hide_spoilers"))
+        assertEquals(null, request.requestUrl?.queryParameter("type"))
+    }
+
+    @Test
+    fun forumBookReviewsKeepCurrentStructuredBadgeAndWebpFrameFields() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "success": true,
+                      "posts": [
+                        {
+                          "id": 58419,
+                          "title": "《Current source review》书评",
+                          "content": "Live review body",
+                          "type": "review",
+                          "authorId": 108187,
+                          "authorName": "Current Reviewer",
+                          "authorAvatarFrame": "https://novalpie.cc/uploads/shop_assets/frames/current-frame.webp",
+                          "authorBadges": [
+                            {
+                              "id": 114,
+                              "name": "Source Artwork",
+                              "description": "Artwork badge",
+                              "badge_html": "<span class=\"badge\">Source Artwork</span>",
+                              "badge_css": ".badge { width: 125px; height: 34px; background-image: url('https://images.novelpia.com/badges/source.webp'); }"
+                            }
+                          ],
+                          "likeCount": 6,
+                          "commentCount": 3,
+                          "viewCount": 41,
+                          "bookId": 360990,
+                          "bookTitle": "Current source book",
+                          "bookCover": "https://images.novelpia.com/imagebox/cover/current.file",
+                          "createdAt": "2026-08-17 12:36:37"
+                        }
+                      ],
+                      "pagination": { "page": 1, "limit": 20, "total": 22852, "pages": 1143 }
+                    }
+                    """.trimIndent()
+                )
+        )
+
+        val page = api.forumPostsPage(type = "review")
+        val review = page.posts.single()
+
+        assertTrue(review.isBookReview)
+        assertEquals(360990L, review.bookId)
+        assertEquals("Current source book", review.bookTitle)
+        assertEquals("https://novalpie.cc/uploads/shop_assets/frames/current-frame.webp", review.authorAvatarFrameUrl)
+        assertEquals(listOf("Source Artwork"), review.authorBadges)
+        assertEquals(114L, review.authorBadgeVisuals.single().id)
+        assertTrue(review.authorBadgeVisuals.single().badgeCss?.contains("width: 125px") == true)
+        assertEquals(22852, page.total)
+        assertEquals(1143, page.totalPages)
+    }
+
+    @Test
+    fun forumBookReviewPageUsesLiveTotalAndOmitsSpoilerParameterWhenVisible() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "posts": [{"id": 57651, "type": "review", "title": "Visible review"}],
+                      "pagination": {"page": 1, "limit": 20, "total": 22538, "pages": 1127}
+                    }
+                    """.trimIndent()
+                )
+        )
+
+        val page = api.forumPostsPage(type = "review", hideSpoilers = false)
+
+        assertEquals(1, page.posts.size)
+        assertEquals(22538, page.total)
+        assertEquals(1, page.page)
+        assertEquals(1127, page.totalPages)
+        val request = server.takeRequest()
+        assertEquals("/api/comments/book-reviews", request.requestUrl?.encodedPath)
+        assertEquals(null, request.requestUrl?.queryParameter("hide_spoilers"))
+    }
+
+    @Test
+    fun forumPostsKeepLiveAvatarBadgesAndReactionBreakdown() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "posts": [
+                        {
+                          "id": 1785,
+                          "type": "discussion",
+                          "title": "Live source post",
+                          "author_name": "seeking",
+                          "avatar": "/uploads/user_100164/avatar.jpg",
+                          "authorBadges": [{ "name": "纯爱战士" }, { "name": "2026 新年快乐" }],
+                          "helpful_count": "4",
+                          "not_helpful_count": "2",
+                          "funny_count": 3,
+                          "award_count": 1,
+                          "comment_count": "7",
+                          "view_count": "82",
+                          "content_preview": "Source preview",
+                          "created_at": "2026-08-08 12:00:00",
+                          "tags": ["求书"]
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+        )
+
+        val post = api.forumPosts(type = "discussion", search = "dsv4f").single()
+
+        assertEquals("交流", post.category)
+        assertTrue(post.authorAvatarUrl?.endsWith("/uploads/user_100164/avatar.jpg") == true)
+        assertEquals(listOf("纯爱战士", "2026 新年快乐"), post.authorBadges)
+        assertEquals(4, post.helpfulCount)
+        assertEquals(2, post.notHelpfulCount)
+        assertEquals(3, post.funnyCount)
+        assertEquals(1, post.awardPoints)
+        assertEquals("2026-08-08 12:00:00", post.createdAt)
+        assertEquals(listOf("求书"), post.tags)
+
+        val request = server.takeRequest()
+        assertEquals("discussion", request.requestUrl?.queryParameter("type"))
+        assertEquals("dsv4f", request.requestUrl?.queryParameter("search"))
+    }
+
+    @Test
+    fun forumPostsAndCommentsPreserveBadgeVisualMetadata() = runBlocking {
+        val badgeHtml = "<span class='badge'><span class='badge__dot'></span>Aurora</span>"
+        val badgeCss = "background: linear-gradient(135deg, #22d3ee, #a855f7); border-radius: 9999px;"
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """
+                {
+                  "posts": [{
+                    "id": 91,
+                    "type": "discussion",
+                    "title": "Badge post",
+                    "authorBadges": [{
+                      "id": 12,
+                      "name": "Aurora",
+                      "badge_html": "$badgeHtml",
+                      "badge_css": "$badgeCss"
+                    }]
+                  }]
+                }
+                """.trimIndent()
+            )
+        )
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """
+                {
+                  "comments": [{
+                    "id": 501,
+                    "post_id": 91,
+                    "content": "Badge comment",
+                    "authorBadges": [{
+                      "id": 12,
+                      "name": "Aurora",
+                      "badge_html": "$badgeHtml",
+                      "badge_css": "$badgeCss"
+                    }]
+                  }]
+                }
+                """.trimIndent()
+            )
+        )
+
+        val post = api.forumPosts(type = "discussion").single()
+        val comment = api.forumPostComments(postId = 91).single()
+
+        assertEquals("Aurora", post.authorBadgeVisuals.single().name)
+        assertEquals(12L, post.authorBadgeVisuals.single().id)
+        assertEquals(badgeHtml, post.authorBadgeVisuals.single().badgeHtml)
+        assertEquals(badgeCss, post.authorBadgeVisuals.single().badgeCss)
+        assertEquals("Aurora", comment.authorBadgeVisuals.single().name)
+        assertEquals(12L, comment.authorBadgeVisuals.single().id)
+        assertEquals(badgeHtml, comment.authorBadgeVisuals.single().badgeHtml)
+        assertEquals(badgeCss, comment.authorBadgeVisuals.single().badgeCss)
+    }
+
+    @Test
+    fun bookCommentsPreserveBadgeVisualMetadata() = runBlocking {
+        val badgeCss = "background: linear-gradient(135deg, #22d3ee, #a855f7);"
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """
+                {
+                  "comments": [{
+                    "id": 45570,
+                    "book_id": 354491,
+                    "content": "Book badge comment",
+                    "authorBadges": [{
+                      "id": 12,
+                      "name": "Aurora",
+                      "badge_html": "<span class='badge'>Aurora</span>",
+                      "badge_css": "$badgeCss"
+                    }]
+                  }]
+                }
+                """.trimIndent()
+            )
+        )
+
+        val comment = api.bookComments(bookId = 354491).single()
+
+        assertEquals("Aurora", comment.authorBadgeVisuals.single().name)
+        assertEquals(12L, comment.authorBadgeVisuals.single().id)
+        assertEquals(badgeCss, comment.authorBadgeVisuals.single().badgeCss)
     }
 
     @Test
@@ -1803,7 +2929,7 @@ class NovalPieApiTest {
         val detail = api.forumPostDetail(91)
 
         assertEquals(91L, detail.post.id)
-        assertEquals("讨论", detail.post.category)
+        assertEquals("交流", detail.post.category)
         assertEquals("Native forum topic", detail.post.title)
         assertEquals("Forum User", detail.post.authorName)
         assertEquals("Linked Novel", detail.post.bookTitle)
@@ -1869,6 +2995,85 @@ class NovalPieApiTest {
         assertEquals("/api/posts/91/comments", request.requestUrl?.encodedPath)
         assertEquals("3", request.requestUrl?.queryParameter("page"))
         assertEquals("8", request.requestUrl?.queryParameter("limit"))
+    }
+
+    @Test
+    fun forumPostCommentsFlattenNestedRepliesAndKeepSourceAuthorPresentation() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "comments": [
+                        {
+                          "id": 501,
+                          "post_id": 91,
+                          "content": "Root comment",
+                          "author": {
+                            "id": 100000,
+                            "name": "Root User",
+                            "avatar": "uploads/user_100000/avatar.jpg",
+                            "avatar_frame": "/frames/root.png",
+                            "badges": [{"name": "管理员"}]
+                          },
+                          "reply_count": 2,
+                          "replies": [
+                            {
+                              "id": 502,
+                              "content_html": "<p><strong>Nested</strong> reply</p>",
+                              "author": {
+                                "id": 100001,
+                                "nickname": "Reply User",
+                                "avatar_url": "/uploads/user_100001/avatar.jpg"
+                              },
+                              "authorBadges": ["读者"],
+                              "replies": [
+                                {
+                                  "id": 503,
+                                  "content": "Deep reply",
+                                  "user": {"id": 100002, "display_name": "Deep User"}
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+        )
+
+        val comments = api.forumPostComments(postId = 91)
+
+        assertEquals(listOf(501L, 502L, 503L), comments.map { it.id })
+        val root = comments[0]
+        assertEquals(91L, root.postId)
+        assertEquals("Root User", root.authorName)
+        assertEquals(100000L, root.authorId)
+        assertTrue(root.authorAvatarUrl?.endsWith("/uploads/user_100000/avatar.jpg") == true)
+        assertTrue(root.authorAvatarFrameUrl?.endsWith("/frames/root.png") == true)
+        assertEquals(listOf("管理员"), root.authorBadges)
+        assertEquals(2, root.replyCount)
+
+        val reply = comments[1]
+        assertEquals(501L, reply.parentCommentId)
+        assertEquals("Root User", reply.replyToName)
+        assertEquals("Reply User", reply.authorName)
+        assertTrue(reply.authorAvatarUrl?.endsWith("/uploads/user_100001/avatar.jpg") == true)
+        assertEquals(listOf("读者"), reply.authorBadges)
+        assertEquals(1, reply.replyCount)
+
+        val deepReply = comments[2]
+        assertEquals(502L, deepReply.parentCommentId)
+        assertEquals("Reply User", deepReply.replyToName)
+        assertEquals("Deep User", deepReply.authorName)
+        assertEquals("Deep reply", deepReply.content)
+
+        val request = server.takeRequest()
+        assertEquals("/api/posts/91/comments", request.requestUrl?.encodedPath)
+        assertEquals("1", request.requestUrl?.queryParameter("page"))
+        assertEquals("100", request.requestUrl?.queryParameter("limit"))
     }
 
     @Test
@@ -1945,6 +3150,9 @@ class NovalPieApiTest {
                           "content": "book comment body",
                           "authorId": 102208,
                           "authorName": "Book Reader",
+                          "authorAvatar": "/uploads/user_102208/avatar.jpg",
+                          "authorAvatarFrame": "/uploads/frames/book-reader.webp",
+                          "authorBadges": [{ "name": "透明龙" }, { "name": "书评作者" }],
                           "likeCount": 4,
                           "helpfulCount": 2,
                           "notHelpfulCount": 1,
@@ -1956,6 +3164,8 @@ class NovalPieApiTest {
                               "id": 45571,
                               "content": "reply body",
                               "authorName": "Responder",
+                              "authorAvatar": "/uploads/user_102209/avatar.jpg",
+                              "authorBadges": ["读者"],
                               "replyToName": "Book Reader",
                               "likeCount": 2,
                               "createdAt": "2026-06-28 01:00:00"
@@ -1970,7 +3180,7 @@ class NovalPieApiTest {
                 )
         )
 
-        val comments = api.bookComments(bookId = 354491, page = 1, limit = 5)
+        val comments = api.bookComments(bookId = 354491)
 
         assertEquals(2, comments.size)
         val comment = comments.first()
@@ -1978,17 +3188,23 @@ class NovalPieApiTest {
         assertEquals(354491L, comment.bookId)
         assertEquals(null, comment.chapterId)
         assertEquals("Book Reader", comment.authorName)
+        assertTrue(comment.authorAvatarUrl?.endsWith("/uploads/user_102208/avatar.jpg") == true)
+        assertTrue(comment.authorAvatarFrameUrl?.endsWith("/uploads/frames/book-reader.webp") == true)
+        assertEquals(listOf("透明龙", "书评作者"), comment.authorBadges)
         assertEquals("book comment body", comment.content)
         assertEquals(4, comment.likeCount)
         assertEquals(1, comment.dislikeCount)
         assertEquals(3, comment.reactionCount)
         assertEquals(5, comment.awardPoints)
+        assertEquals(6, comment.replyCount)
         assertEquals("2026-06-28 00:58:13", comment.createdAt)
         val reply = comments.last()
         assertEquals(45571L, reply.id)
         assertEquals(354491L, reply.bookId)
         assertEquals(45570L, reply.parentCommentId)
         assertEquals("Responder", reply.authorName)
+        assertTrue(reply.authorAvatarUrl?.endsWith("/uploads/user_102209/avatar.jpg") == true)
+        assertEquals(listOf("读者"), reply.authorBadges)
         assertEquals("Book Reader", reply.replyToName)
         assertEquals("reply body", reply.content)
         assertEquals(2, reply.likeCount)
@@ -1998,7 +3214,7 @@ class NovalPieApiTest {
         assertEquals("book", request.requestUrl?.queryParameter("type"))
         assertEquals("354491", request.requestUrl?.queryParameter("book_id"))
         assertEquals("1", request.requestUrl?.queryParameter("page"))
-        assertEquals("5", request.requestUrl?.queryParameter("limit"))
+        assertEquals("30", request.requestUrl?.queryParameter("limit"))
     }
 
     @Test
@@ -2144,6 +3360,46 @@ class NovalPieApiTest {
     }
 
     @Test
+    fun currentUserKeepsStructuredBadgePresentationMetadata() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "data": {
+                        "profile": {
+                          "id": 42,
+                          "username": "Native Admin",
+                          "badges": [
+                            {
+                              "id": 51,
+                              "name": "Aurora",
+                              "description": "Source style",
+                              "image_url": "/uploads/shop_assets/badges/aurora.webp",
+                              "badge_html": "<span class=\"badge\"><span class=\"badge__dot\"></span>{{name}}</span>",
+                              "badge_css": "--bg: linear-gradient(135deg, #22d3ee, #a855f7); background: var(--bg);"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                    """.trimIndent(),
+                ),
+        )
+
+        val user = api.currentUser()
+
+        assertEquals(1, user.badges.size)
+        assertEquals(51L, user.badges.single().id)
+        assertEquals("Aurora", user.badges.single().name)
+        assertEquals("Source style", user.badges.single().description)
+        assertTrue(user.badges.single().imageUrl?.endsWith("/uploads/shop_assets/badges/aurora.webp") == true)
+        assertTrue(user.badges.single().badgeCss?.contains("var(--bg)") == true)
+        assertEquals("/api/users/me", server.takeRequest().path)
+    }
+
+    @Test
     fun currentUserNormalizesWebsiteProfileAliases() = runBlocking {
         server.enqueue(
             MockResponse()
@@ -2204,6 +3460,56 @@ class NovalPieApiTest {
     }
 
     @Test
+    fun terminologyPageUsesZeroBasedSourceContractAndNormalizesMetadata() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "content": [
+                        {
+                          "id": 11,
+                          "novelId": 95654,
+                          "sourceName": "魔力",
+                          "targetName": "Mana",
+                          "info": { "description": "作品内的能量单位" },
+                          "lockStatus": "locked",
+                          "isActive": true,
+                          "createdAt": "2026-06-01T00:00:00Z",
+                          "updatedAt": "2026-06-02T00:00:00Z"
+                        }
+                      ],
+                      "page": 0,
+                      "size": 20,
+                      "total": 16507,
+                      "totalPages": 826
+                    }
+                    """.trimIndent(),
+                ),
+        )
+
+        val page = api.terminologyPage(novelId = 95654, keyword = "魔力", page = 0)
+
+        assertEquals(0, page.page)
+        assertEquals(20, page.pageSize)
+        assertEquals(16507, page.total)
+        assertEquals(826, page.totalPages)
+        assertEquals(1, page.items.size)
+        assertEquals("魔力", page.items.single().sourceName)
+        assertEquals("Mana", page.items.single().targetName)
+        assertEquals("作品内的能量单位", page.items.single().description)
+        assertEquals("locked", page.items.single().lockStatus)
+        assertTrue(page.items.single().isActive == true)
+
+        val request = server.takeRequest()
+        assertEquals("/api/terminologies", request.requestUrl?.encodedPath)
+        assertEquals("95654", request.requestUrl?.queryParameter("novel_id"))
+        assertEquals("魔力", request.requestUrl?.queryParameter("keyword"))
+        assertEquals("0", request.requestUrl?.queryParameter("page"))
+    }
+
+    @Test
     fun favoriteGroupsNormalizesWebsiteGroupAliasesAndSendsPreviewParameters() = runBlocking {
         server.enqueue(
             MockResponse()
@@ -2236,5 +3542,84 @@ class NovalPieApiTest {
         assertEquals("/api/favorites/groups", request.requestUrl?.encodedPath)
         assertEquals("6", request.requestUrl?.queryParameter("preview_limit"))
         assertEquals("true", request.requestUrl?.queryParameter("with_preview"))
+    }
+
+    @Test
+    fun authenticationEndpointsMirrorCurrentWebsitePayloadsWithoutLeakingOldSessionHeaders() = runBlocking {
+        api = NovalPieApi(
+            baseUrl = server.url("/").toString().trimEnd('/'),
+            authTokenProvider = { "stale-session-token" },
+            cookieProvider = { "old-cookie=must-not-leak" }
+        )
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"data":{"token":"new-token","user":{"id":8,"username":"Native Reader"}}}"""
+            )
+        )
+        server.enqueue(MockResponse().setHeader("content-type", "application/json").setBody("""{"success":true,"message":"验证码已发送"}"""))
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"token":"code-token","user":{"id":9,"username":"Code Reader"}}"""
+            )
+        )
+
+        val passwordSession = api.loginPassword("reader@example.com", "PassWord1", "captcha-token")
+        assertEquals("new-token", passwordSession.token)
+        assertEquals("Native Reader", passwordSession.user?.name)
+        val passwordRequest = server.takeRequest()
+        assertEquals("/api/sessions", passwordRequest.requestUrl?.encodedPath)
+        assertNull(passwordRequest.getHeader("authorization"))
+        assertNull(passwordRequest.getHeader("cookie"))
+        val passwordBody = JSONObject(passwordRequest.body.readUtf8())
+        assertEquals("reader@example.com", passwordBody.getString("username"))
+        assertEquals("PassWord1", passwordBody.getString("password"))
+        assertEquals("captcha-token", passwordBody.getString("turnstile_token"))
+
+        assertTrue(api.sendLoginVerificationCode("reader@example.com", "captcha-token").success)
+        val sendCodeRequest = server.takeRequest()
+        assertEquals("/api/verification-codes/login", sendCodeRequest.requestUrl?.encodedPath)
+        val sendCodeBody = JSONObject(sendCodeRequest.body.readUtf8())
+        assertEquals("reader@example.com", sendCodeBody.getString("email"))
+        assertEquals("captcha-token", sendCodeBody.getString("turnstile_token"))
+
+        assertEquals("code-token", api.loginWithVerificationCode("reader@example.com", "123456", "captcha-token").token)
+        val codeRequest = server.takeRequest()
+        assertEquals("/api/verification-codes/login/verify", codeRequest.requestUrl?.encodedPath)
+        val codeBody = JSONObject(codeRequest.body.readUtf8())
+        assertEquals("123456", codeBody.getString("code"))
+        assertEquals("captcha-token", codeBody.getString("turnstile_token"))
+    }
+
+    @Test
+    fun registrationAndPasswordResetEndpointsMirrorCurrentWebsiteContracts() = runBlocking {
+        server.enqueue(MockResponse().setHeader("content-type", "application/json").setBody("""{"success":true,"message":"邮件已发送"}"""))
+        server.enqueue(MockResponse().setHeader("content-type", "application/json").setBody("""{"success":true,"message":"验证成功"}"""))
+        server.enqueue(MockResponse().setHeader("content-type", "application/json").setBody("""{"data":{"token":"registered-token"}}"""))
+        server.enqueue(MockResponse().setHeader("content-type", "application/json").setBody("""{"success":true,"message":"重置邮件已发送"}"""))
+        server.enqueue(MockResponse().setHeader("content-type", "application/json").setBody("""{"success":true,"message":"密码已重置"}"""))
+
+        assertTrue(api.sendRegistrationVerificationCode("new@example.com", "captcha-token").success)
+        assertEquals("/api/verification-codes/email", server.takeRequest().requestUrl?.encodedPath)
+
+        assertTrue(api.verifyRegistrationEmail("new@example.com", "654321").success)
+        val verifyRequest = server.takeRequest()
+        assertEquals("/api/verification-codes/email/verify", verifyRequest.requestUrl?.encodedPath)
+        assertEquals("654321", JSONObject(verifyRequest.body.readUtf8()).getString("code"))
+
+        assertEquals("registered-token", api.registerAccount("new-reader", "new@example.com", "PassWord1").token)
+        val registerRequest = server.takeRequest()
+        assertEquals("/api/users", registerRequest.requestUrl?.encodedPath)
+        assertEquals("new-reader", JSONObject(registerRequest.body.readUtf8()).getString("username"))
+
+        assertTrue(api.requestPasswordReset("new@example.com").success)
+        assertEquals("/api/password-resets", server.takeRequest().requestUrl?.encodedPath)
+
+        assertTrue(api.resetPassword("reset-token", "NewPass1").success)
+        val resetRequest = server.takeRequest()
+        assertEquals("/api/password-resets", resetRequest.requestUrl?.encodedPath)
+        assertEquals("PUT", resetRequest.method)
+        val resetBody = JSONObject(resetRequest.body.readUtf8())
+        assertEquals("reset-token", resetBody.getString("token"))
+        assertEquals("NewPass1", resetBody.getString("password"))
     }
 }

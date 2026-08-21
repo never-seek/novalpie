@@ -37,7 +37,12 @@ class WorkspaceApiTest {
               "id":9,"name":"Shared DeepSeek","model":"deepseek-chat",
               "endpoint":"https://api.deepseek.com","key":"sk-secret-value",
               "concurrency":10,"is_active":1,"is_healthy":1,
-              "approval_status":"approved","totalRequests":42
+              "approval_status":"approved","totalRequests":42,
+              "status":"active","actualStatus":"enabled"
+            },{
+              "id":10,"name":"Disabled provider","model":"gpt-4o-mini",
+              "endpoint":"https://api.example.com","status":"inactive",
+              "actual_status":"offline","callCount":3
             }]}
         """))
         server.enqueue(jsonResponse("""{"success":true,"data":{"hasCookie":true}}"""))
@@ -75,16 +80,25 @@ class WorkspaceApiTest {
         val cookies = api.workspaceCookieConfigs()
         val health = api.workspaceHealth()
 
-        assertEquals(1, configs.size)
-        assertEquals(9L, configs.single().id)
-        assertEquals("Shared DeepSeek", configs.single().name)
-        assertEquals("deepseek-chat", configs.single().model)
-        assertEquals("sk-secret-value", configs.single().apiKey)
-        assertEquals(10, configs.single().concurrency)
-        assertTrue(configs.single().isActive)
-        assertTrue(configs.single().isHealthy == true)
-        assertEquals("approved", configs.single().approvalStatus)
-        assertEquals(42L, configs.single().totalRequests)
+        assertEquals(2, configs.size)
+        val activeConfig = configs.first()
+        assertEquals(9L, activeConfig.id)
+        assertEquals("Shared DeepSeek", activeConfig.name)
+        assertEquals("deepseek-chat", activeConfig.model)
+        assertEquals("sk-secret-value", activeConfig.apiKey)
+        assertEquals(10, activeConfig.concurrency)
+        assertTrue(activeConfig.isActive)
+        assertTrue(activeConfig.isHealthy == true)
+        assertEquals("approved", activeConfig.approvalStatus)
+        assertEquals(42L, activeConfig.totalRequests)
+        assertEquals("active", activeConfig.activationStatus)
+        assertEquals("enabled", activeConfig.actualStatus)
+
+        val inactiveConfig = configs.last()
+        assertFalse(inactiveConfig.isActive)
+        assertEquals("inactive", inactiveConfig.activationStatus)
+        assertEquals("offline", inactiveConfig.actualStatus)
+        assertEquals(3L, inactiveConfig.totalRequests)
 
         assertTrue(cookieStatus.hasCookie)
         assertEquals(1, cookies.myConfigs.size)
@@ -111,11 +125,12 @@ class WorkspaceApiTest {
 
     @Test
     fun workspaceApiMutationsUseCurrentWebsiteMethodsAndBodies() = runBlocking {
-        repeat(3) { server.enqueue(jsonResponse("""{"success":true,"message":"ok","data":{"id":9}}""")) }
+        repeat(4) { server.enqueue(jsonResponse("""{"success":true,"message":"ok","data":{"id":9}}""")) }
 
         assertTrue(api.createWorkspaceApi("DeepSeek", "deepseek-chat", "https://api.deepseek.com", "sk-test", 8).success)
         assertTrue(api.updateWorkspaceApi(9, "DeepSeek V2", "deepseek-chat", "https://api.deepseek.com/v1", "sk-next", 12).success)
         assertTrue(api.deleteWorkspaceApi(9).success)
+        assertTrue(api.toggleWorkspaceApi(9).success)
 
         val create = server.takeRequest()
         assertEquals("POST", create.method)
@@ -137,6 +152,11 @@ class WorkspaceApiTest {
         assertEquals("DELETE", delete.method)
         assertEquals("/workspace/apis/9", delete.requestUrl?.encodedPath)
         assertEquals(0L, delete.bodySize)
+
+        val toggle = server.takeRequest()
+        assertEquals("POST", toggle.method)
+        assertEquals("/workspace/apis/9/toggle", toggle.requestUrl?.encodedPath)
+        assertEquals(0L, toggle.bodySize)
         Unit
     }
 

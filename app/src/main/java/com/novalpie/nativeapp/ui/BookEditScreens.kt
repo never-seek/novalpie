@@ -4,7 +4,6 @@ package com.novalpie.nativeapp.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -27,7 +26,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -222,10 +220,6 @@ private fun BookEditCoverSection(
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.toString()?.let(onSelected)
     }
-    var preview by remember(url) { mutableStateOf(false) }
-    if (preview && url.isNotBlank()) {
-        ImagePreviewDialog(url, "$title · 封面", onDismiss = { preview = false })
-    }
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.padding(14.dp).fillMaxWidth(),
@@ -235,14 +229,16 @@ private fun BookEditCoverSection(
             SubcomposeAsyncImage(
                 model = ImageRequest.Builder(context).data(url).crossfade(true).precision(Precision.EXACT).build(),
                 contentDescription = "书籍封面",
-                modifier = Modifier.width(100.dp).height(150.dp).clickable(enabled = url.isNotBlank()) { preview = true },
+                // Upload management is an editing surface, not a cover-preview entry point.
+                // Keep full-size preview limited to book detail, search, and reader content.
+                modifier = Modifier.width(100.dp).height(150.dp),
                 contentScale = ContentScale.Crop,
                 loading = { LoadingBlock("加载封面") },
                 error = { Text("暂无封面") }
             )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("封面", fontWeight = FontWeight.Bold)
-                Text("上传原始图片，不在 App 内压缩。点击封面可查看大图。", style = MaterialTheme.typography.bodySmall)
+                Text("上传原始图片，不在 App 内压缩。大图预览请前往书籍详情页。", style = MaterialTheme.typography.bodySmall)
                 OutlinedButton(onClick = { picker.launch(arrayOf("image/*")) }, enabled = enabled) {
                     Text(if (uploading) "上传中..." else if (enabled) "选择图片" else "无编辑权限")
                 }

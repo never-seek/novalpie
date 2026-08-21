@@ -19,16 +19,18 @@ internal data class PoliticalExamOverview(
 )
 
 internal fun politicalExamOverview(hasAuthToken: Boolean): PoliticalExamOverview = PoliticalExamOverview(
-    title = "政治考试",
-    subtitle = "通过后按源站规则解锁阅读权限，题目和顺序由服务器实时生成。",
+    title = "考试",
+    subtitle = "通过考试后即可使用无替换模式阅读。",
     statusLabel = if (hasAuthToken) "已登录" else "需要登录",
-    stats = listOf("100 题", "30 分钟", "80 分通过", "每日次数受限"),
+    stats = listOf("100 分", "30 分钟", "80 分通过", "每日 3 次"),
     rules = listOf(
-        "40 道单选题，每题 1 分",
-        "10 道多选题，每题 2 分，必须全部选对",
-        "25 道判断题，每题 1 分",
-        "25 道填空题，每题 1 分",
-        "开始与提交都会同步源站账号状态"
+        "考试包含 40 道单选题（每题 1 分）、10 道多选题（每题 2 分）、25 道判断题（每题 1 分）、25 道填空题（每题 1 分），共 100 分",
+        "考试时间限制为 30 分钟",
+        "通过标准：80 分及以上",
+        "题目和选项顺序随机，请认真作答",
+        "多选题必须全部选对才得分，少选、多选、错选均不得分",
+        "考试过程中请勿切换页面或刷新，否则可能丢失进度",
+        "每天最多可参加 3 次考试"
     ),
     primaryAction = if (hasAuthToken) "开始考试" else "登录后参加考试"
 )
