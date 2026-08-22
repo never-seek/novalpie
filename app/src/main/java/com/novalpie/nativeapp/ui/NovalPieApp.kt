@@ -8,7 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.text.BasicTextField
@@ -99,6 +99,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.animation.core.Animatable
@@ -146,6 +147,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -184,6 +186,7 @@ import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
+import com.novalpie.nativeapp.MainActivity
 import com.novalpie.nativeapp.data.NovelCoverLoadPriority
 import com.novalpie.nativeapp.data.NovelCoverRequestSize
 import com.novalpie.nativeapp.data.novalPieBookCoverRequest
@@ -342,7 +345,32 @@ fun NovalPieApp(
         LocalChineseVariant provides viewModel.chineseVariant,
         LocalForumHideSpoilers provides forumContentHideSpoilers(),
     ) {
+    val activeReaderPalette = if (route is AppRoute.Reader) {
+        readerPalette(viewModel.readerUiOptions)
+    } else {
+        null
+    }
+    val routeBackground = activeReaderPalette?.background ?: MaterialTheme.colorScheme.background
+    val systemBarView = LocalView.current
+    SideEffect {
+        val activity = systemBarView.context as? Activity ?: return@SideEffect
+        val controller = WindowCompat.getInsetsController(activity.window, systemBarView)
+        if (activeReaderPalette != null) {
+            val readerBarColor = activeReaderPalette.background.toArgb()
+            activity.window.statusBarColor = readerBarColor
+            activity.window.navigationBarColor = readerBarColor
+            val darkIcons = readerSystemBarUsesDarkIcons(activeReaderPalette.background)
+            controller.isAppearanceLightStatusBars = darkIcons
+            controller.isAppearanceLightNavigationBars = darkIcons
+        } else {
+            activity.window.statusBarColor = android.graphics.Color.TRANSPARENT
+            activity.window.navigationBarColor = android.graphics.Color.TRANSPARENT
+            controller.isAppearanceLightStatusBars = !resolvedDarkTheme
+            controller.isAppearanceLightNavigationBars = !resolvedDarkTheme
+        }
+    }
     Scaffold(
+        containerColor = routeBackground,
         // Edge-to-edge uses a dynamic IME inset on Android 15. Folding it into the same content
         // contract as status/navigation bars makes every route remeasure back to its real height
         // after the keyboard closes instead of retaining an old resize budget.
@@ -405,11 +433,12 @@ fun NovalPieApp(
         Surface(
             modifier = Modifier
                 .fillMaxSize()
+                .background(routeBackground)
                 .padding(padding)
                 // Child screens own their scrolling/content padding. Mark the scaffold budget as
                 // consumed so a future route-level IME/system-bar modifier cannot add it twice.
                 .consumeWindowInsets(padding),
-            color = MaterialTheme.colorScheme.background
+            color = routeBackground
         ) {
             when (route) {
                 AppRoute.Forum -> ForumScreen(
@@ -5560,7 +5589,11 @@ private fun ReaderScreen(
                     pageOffset.snapTo(-direction * viewport * 0.06f)
                 }
             }
-            listState.animateScrollBy(distance, tween(duration))
+            // Move the viewport in one operation. The old animated LazyColumn movement looked
+            // like a full-text vertical scroll and made volume-key turns feel delayed.
+            when (readerPageScrollMotion()) {
+                ReaderPageScrollMotion.Immediate -> listState.scrollBy(distance)
+            }
             pageAlpha.animateTo(1f, tween(duration / 2))
             pageOffset.animateTo(0f, tween(duration / 2))
             val reachedBoundary = if (direction < 0) !listState.canScrollBackward else !listState.canScrollForward
@@ -5572,6 +5605,20 @@ private fun ReaderScreen(
                     hasNext = adjacent.next != null,
                 )
             )
+        }
+    }
+
+    val readerVolumeKeyHost = context as? MainActivity
+    DisposableEffect(readerVolumeKeyHost, pageTurnEnabled, state.bookId, state.chapterId, chapters) {
+        readerVolumeKeyHost?.setReaderVolumeKeyHandler(
+            if (pageTurnEnabled) {
+                { direction -> turnReaderPage(direction) }
+            } else {
+                null
+            },
+        )
+        onDispose {
+            readerVolumeKeyHost?.setReaderVolumeKeyHandler(null)
         }
     }
 
@@ -6070,6 +6117,7 @@ private fun ReaderCatalogPanel(
     modifier: Modifier = Modifier
 ) {
     val palette = readerPalette(options).sidebarPalette()
+    val catalogListState = rememberLazyListState()
     ReaderSidePanel(
         title = readerCatalogPanelTitle(),
         palette = palette,
@@ -6087,6 +6135,13 @@ private fun ReaderCatalogPanel(
             )
             is LoadResult.Success -> {
                 val visible = filterChapters(chapters.value, catalogQuery)
+                LaunchedEffect(chapters.value, state.chapterId, catalogQuery) {
+                    if (catalogQuery.isBlank()) {
+                        readerCatalogCurrentChapterIndex(chapters.value, state.chapterId)?.let { index ->
+                            catalogListState.scrollToItem(index)
+                        }
+                    }
+                }
                 if (visible.isEmpty()) {
                     Box(
                         modifier = Modifier
@@ -6100,6 +6155,7 @@ private fun ReaderCatalogPanel(
                     // The source drawer is a full-height rail. Let its chapter list own remaining
                     // space so a long catalog does not turn into an unscrollable bottom card.
                     LazyColumn(
+                        state = catalogListState,
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
@@ -6342,7 +6398,7 @@ private fun ReaderTopBar(
         tonalElevation = NovalPieElevation.none
     ) {
         Text(
-            text = readerChapterProgressLabel(state.chapterId, chapters),
+            text = readerTopBarTitle(state.bookTitle),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(chromeLayout.headerHeightDp.dp)

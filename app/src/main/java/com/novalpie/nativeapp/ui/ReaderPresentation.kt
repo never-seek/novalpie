@@ -1,6 +1,10 @@
 package com.novalpie.nativeapp.ui
 
+import android.view.KeyEvent
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import com.novalpie.nativeapp.data.ReaderSettingsStore
+import com.novalpie.nativeapp.model.Chapter
 import com.novalpie.nativeapp.model.ChapterComment
 import com.novalpie.nativeapp.model.LoadResult
 import com.novalpie.nativeapp.model.ReaderChapterCacheState
@@ -8,6 +12,56 @@ import com.novalpie.nativeapp.model.ReaderChapterContent
 import com.novalpie.nativeapp.model.ReaderContent
 import com.novalpie.nativeapp.model.ReaderTapArea
 import kotlin.math.abs
+
+/** The compact reader header shows the work title; chapter progress belongs in the footer. */
+internal fun readerTopBarTitle(bookTitle: String?): String =
+    bookTitle?.trim()?.takeIf(String::isNotBlank) ?: readerTopBarLabels().title
+
+/** Resolves the source-order item that should be visible when the unfiltered catalog opens. */
+internal fun readerCatalogCurrentChapterIndex(
+    chapters: List<Chapter>,
+    currentChapterId: Long,
+): Int? = chapters.indexOfFirst { it.id == currentChapterId }.takeIf { it >= 0 }
+
+/** Page mode moves the viewport immediately; only the optional visual veil may animate. */
+internal enum class ReaderPageScrollMotion {
+    Immediate,
+}
+
+internal fun readerPageScrollMotion(): ReaderPageScrollMotion = ReaderPageScrollMotion.Immediate
+
+/** Volume keys are reader controls only while page mode is active. */
+internal enum class ReaderVolumeKeyAction {
+    Ignore,
+    Consume,
+    PreviousPage,
+    NextPage,
+}
+
+internal fun readerVolumeKeyAction(
+    keyCode: Int,
+    action: Int,
+    repeatCount: Int,
+    pageTurnEnabled: Boolean,
+): ReaderVolumeKeyAction {
+    if (
+        !pageTurnEnabled ||
+        (keyCode != KeyEvent.KEYCODE_VOLUME_UP && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN)
+    ) {
+        return ReaderVolumeKeyAction.Ignore
+    }
+    if (action != KeyEvent.ACTION_DOWN || repeatCount != 0) {
+        return ReaderVolumeKeyAction.Consume
+    }
+    return if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+        ReaderVolumeKeyAction.PreviousPage
+    } else {
+        ReaderVolumeKeyAction.NextPage
+    }
+}
+
+/** Android's light-bar appearance flag means the bar has dark icons on a light paper background. */
+internal fun readerSystemBarUsesDarkIcons(background: Color): Boolean = background.luminance() >= 0.5f
 
 /**
  * Publishes the reader body without replacing auxiliary state. Comments, favourites, and the

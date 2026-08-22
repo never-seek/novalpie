@@ -1,5 +1,8 @@
 package com.novalpie.nativeapp.ui
 
+import android.view.KeyEvent
+import androidx.compose.ui.graphics.Color
+import com.novalpie.nativeapp.model.Chapter
 import com.novalpie.nativeapp.model.ChapterComment
 import com.novalpie.nativeapp.model.LoadResult
 import com.novalpie.nativeapp.model.ReaderChapterCacheState
@@ -621,5 +624,76 @@ class ReaderPresentationTest {
         )
         assertEquals("章节评论", chapterCommentsSectionTitle())
         assertEquals("打开网页评论", chapterCommentsFallbackLabel())
+    }
+
+    @Test
+    fun readerTopBarPrefersTheBookTitleAndHasAReaderFallback() {
+        assertEquals("Sample Book", readerTopBarTitle("  Sample Book  "))
+        assertEquals(readerTopBarLabels().title, readerTopBarTitle(null))
+        assertEquals(readerTopBarLabels().title, readerTopBarTitle("   "))
+    }
+
+    @Test
+    fun readerCatalogResolvesTheCurrentChapterIndexInSourceOrder() {
+        val chapters = listOf(
+            Chapter(id = 10L, title = "One", number = 1),
+            Chapter(id = 20L, title = "Two", number = 2),
+            Chapter(id = 30L, title = "Three", number = 3),
+        )
+
+        assertEquals(2, readerCatalogCurrentChapterIndex(chapters, currentChapterId = 30L))
+        assertEquals(null, readerCatalogCurrentChapterIndex(chapters, currentChapterId = 999L))
+    }
+
+    @Test
+    fun readerPageTurnsUseImmediateListMovement() {
+        assertEquals(ReaderPageScrollMotion.Immediate, readerPageScrollMotion())
+    }
+
+    @Test
+    fun readerVolumeKeysMapToPagesOnlyInPageTurnMode() {
+        assertEquals(
+            ReaderVolumeKeyAction.PreviousPage,
+            readerVolumeKeyAction(
+                keyCode = KeyEvent.KEYCODE_VOLUME_UP,
+                action = KeyEvent.ACTION_DOWN,
+                repeatCount = 0,
+                pageTurnEnabled = true,
+            ),
+        )
+        assertEquals(
+            ReaderVolumeKeyAction.NextPage,
+            readerVolumeKeyAction(
+                keyCode = KeyEvent.KEYCODE_VOLUME_DOWN,
+                action = KeyEvent.ACTION_DOWN,
+                repeatCount = 0,
+                pageTurnEnabled = true,
+            ),
+        )
+        assertEquals(
+            ReaderVolumeKeyAction.Consume,
+            readerVolumeKeyAction(
+                keyCode = KeyEvent.KEYCODE_VOLUME_DOWN,
+                action = KeyEvent.ACTION_DOWN,
+                repeatCount = 1,
+                pageTurnEnabled = true,
+            ),
+        )
+        assertEquals(
+            ReaderVolumeKeyAction.Ignore,
+            readerVolumeKeyAction(
+                keyCode = KeyEvent.KEYCODE_VOLUME_DOWN,
+                action = KeyEvent.ACTION_DOWN,
+                repeatCount = 0,
+                pageTurnEnabled = false,
+            ),
+        )
+    }
+
+    @Test
+    fun readerSystemBarIconsFollowTheActiveReaderPaper() {
+        assertTrue(readerSystemBarUsesDarkIcons(Color.White))
+        assertTrue(readerSystemBarUsesDarkIcons(Color(0xFFF4ECD8)))
+        assertFalse(readerSystemBarUsesDarkIcons(Color.Black))
     }
 }

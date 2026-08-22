@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -14,8 +15,17 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.novalpie.nativeapp.data.NetworkConfigStore
 import com.novalpie.nativeapp.data.configureNovalPieImageLoader
 import com.novalpie.nativeapp.ui.NovalPieApp
+import com.novalpie.nativeapp.ui.ReaderVolumeKeyAction
+import com.novalpie.nativeapp.ui.readerVolumeKeyAction
 
 class MainActivity : ComponentActivity() {
+
+    private var readerVolumeKeyHandler: ((Int) -> Unit)? = null
+
+    /** Installs a short-lived page-turn callback owned by the currently composed reader route. */
+    internal fun setReaderVolumeKeyHandler(handler: ((Int) -> Unit)?) {
+        readerVolumeKeyHandler = handler
+    }
 
     /**
      * Held in state rather than read once into a local, so that [onNewIntent] can deliver a
@@ -62,6 +72,30 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         intent.data?.toString()?.let { startUri = it }
+    }
+
+    @SuppressLint("RestrictedApi")
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val handler = readerVolumeKeyHandler
+        return when (
+            readerVolumeKeyAction(
+                keyCode = event.keyCode,
+                action = event.action,
+                repeatCount = event.repeatCount,
+                pageTurnEnabled = handler != null,
+            )
+        ) {
+            ReaderVolumeKeyAction.PreviousPage -> {
+                handler?.invoke(-1)
+                true
+            }
+            ReaderVolumeKeyAction.NextPage -> {
+                handler?.invoke(1)
+                true
+            }
+            ReaderVolumeKeyAction.Consume -> true
+            ReaderVolumeKeyAction.Ignore -> super.dispatchKeyEvent(event)
+        }
     }
 
 }

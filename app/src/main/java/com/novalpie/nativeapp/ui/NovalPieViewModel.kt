@@ -615,6 +615,8 @@ data class ReaderChapterCommentState(
 
 data class ReaderState(
     val bookId: Long = 0,
+    /** The work title shown in the reader header; chapter progress is reserved for the footer. */
+    val bookTitle: String? = null,
     val chapterId: Long = 0,
     /** One-shot viewport request consumed by ReaderScreen after this chapter body composes. */
     val entryPosition: ReaderChapterEntryPosition = ReaderChapterEntryPosition.Start,
@@ -7390,8 +7392,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 listOf(loaded)
             }
         }
+        val retainedBookTitle = previousState.bookTitle
+            ?.trim()
+            ?.takeIf { keepWindow && previousState.bookId == bookId }
+        val initialBookTitle = readerBookTitle(bookId) ?: retainedBookTitle
         readerState = ReaderState(
             bookId = bookId,
+            bookTitle = initialBookTitle,
             chapterId = chapterId,
             entryPosition = entryPosition,
             content = LoadResult.Loading,
@@ -7402,6 +7409,21 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 (chapterId to ReaderChapterCommentState(comments = LoadResult.Loading)),
             favoriteStatus = LoadResult.Loading,
         )
+        if (initialBookTitle == null) {
+            viewModelScope.launch {
+                val resolvedTitle = runCatching { api.bookDetail(bookId).title }
+                    .getOrNull()
+                    ?.trim()
+                    ?.takeIf(String::isNotBlank)
+                if (
+                    resolvedTitle != null &&
+                    requestSerial == readerRequestSerial &&
+                    isFreshReaderResult(currentRoute, readerState, bookId, chapterId)
+                ) {
+                    readerState = readerState.copy(bookTitle = resolvedTitle)
+                }
+            }
+        }
         viewModelScope.launch {
             val content = async {
                 runCatching {
@@ -7637,6 +7659,17 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         if (bookDetailState.bookId == bookId) {
             bookDetailState = bookDetailState.copy(readerProgress = readerProgressStore.load(bookId))
         }
+    }
+
+    /** Prefer the currently loaded source detail; the shelf remains a useful native fallback. */
+    private fun readerBookTitle(bookId: Long): String? {
+        readerProgressBookTitle(bookId)?.let { return it }
+        return (searchResults as? LoadResult.Success<List<NovelCard>>)
+            ?.value
+            ?.firstOrNull { it.id == bookId }
+            ?.title
+            ?.trim()
+            ?.takeIf(String::isNotBlank)
     }
 
     /** Prefer the currently loaded source detail; the shelf remains a useful native fallback. */
