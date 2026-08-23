@@ -697,6 +697,107 @@ class NovalPieApiTest {
     }
 
     @Test
+    fun publicProfileCollectionsFallBackToV2WhenLegacyLaravelRoutesAreUnavailable() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl?.encodedPath) {
+                "/api/users/42/novels",
+                "/api/users/42/checkins",
+                "/api/users/42/checkins/stats",
+                "/api/users/42/checkins/settings" -> MockResponse()
+                    .setResponseCode(404)
+                    .setHeader("content-type", "application/json")
+                    .setBody("{\"error\":\"API endpoint not implemented in Laravel yet.\"}")
+                "/api/v2/users/42/novels" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody(
+                        """
+                        {"success":true,"data":{"novels":[
+                          {"id":361074,"title":"V2 uploaded book","author":"Uploader",
+                           "cover":"/uploads/cover.jpg","serial_state":"finished",
+                           "stats":{"chapter_count":424}}
+                        ]}}
+                        """.trimIndent()
+                    )
+                "/api/v2/users/42/checkins" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody(
+                        """{"success":true,"data":{"records":{"2026-08-22":{"id":7,"points":5}}}}"""
+                    )
+                "/api/v2/users/42/checkins/stats" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody(
+                        """{"success":true,"data":{"stats":{"total_days":200,"total_points":1000,"max_streak":200,"current_streak":200}}}"""
+                    )
+                "/api/v2/users/42/checkins/settings" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody(
+                        """{"success":true,"data":{"checkin_settings":{"show_checkin":true,"auto_checkin":true}}}"""
+                    )
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+
+        val novels = api.userNovels(userId = 42)
+        val records = api.userCheckinRecords(42, "2026-01-01", "2026-12-31")
+        val stats = api.userCheckinStats(42)
+        val settings = api.userCheckinSettings(42)
+
+        assertEquals(361074L, novels.single().id)
+        assertEquals("upload", novels.single().platform)
+        assertEquals("已完结", novels.single().status)
+        assertEquals(424, novels.single().chapterCount)
+        assertEquals(1, records.size)
+        assertEquals(5L, records.single().points)
+        assertEquals(200, stats.totalDays)
+        assertEquals(200, stats.currentStreak)
+        assertTrue(settings.showCheckin)
+        assertTrue(settings.autoCheckin)
+
+        val paths = (1..8).map { server.takeRequest().path }
+        assertTrue(paths.contains("/api/v2/users/42/novels"))
+        assertTrue(paths.contains("/api/v2/users/42/checkins?start_date=2026-01-01&end_date=2026-12-31"))
+        assertTrue(paths.contains("/api/v2/users/42/checkins/stats?user_id=42"))
+        assertTrue(paths.contains("/api/v2/users/42/checkins/settings?user_id=42"))
+    }
+
+    @Test
+    fun publicActivityFeedFallsBackToV2WhenCanonicalLaravelRouteIsUnavailable() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl?.encodedPath) {
+                "/api/users/42/activities" -> MockResponse()
+                    .setResponseCode(404)
+                    .setHeader("content-type", "application/json")
+                    .setBody("{\"error\":\"API endpoint not implemented in Laravel yet.\"}")
+                "/api/v2/users/42/activities" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody(
+                        """
+                        {"success":true,"data":{"activities":[
+                          {"id":4386,"type":"post_comment","created_at":"2026-08-22 08:06:47",
+                           "post":{"id":1834,"title":"V2 activity"},
+                           "comment":{"id":4386,"content":"来自 V2 动态"}}
+                        ]}}
+                        """.trimIndent()
+                    )
+                "/api/posts", "/api/posts/comments", "/api/comments/book-reviews" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody("{\"posts\":[]}")
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+
+        val feed = api.userContentActivityFeed(userId = 42, limit = 200)
+
+        assertEquals(listOf(4386L), feed.activities.map { it.id })
+        assertEquals("post_comment", feed.activities.single().type)
+        assertEquals(1834L, feed.activities.single().postId)
+        assertEquals("V2 activity", feed.activities.single().title)
+        assertEquals("来自 V2 动态", feed.activities.single().content)
+        val requestedPaths = (1..5).map { server.takeRequest().path }
+        assertTrue(requestedPaths.contains("/api/v2/users/42/activities?page=1&limit=200"))
+    }
+
+    @Test
     fun adultVerificationUsesWebsiteBirthYearBody() = runBlocking {
         server.enqueue(MockResponse().setHeader("content-type", "application/json").setBody("{\"success\":true}"))
 

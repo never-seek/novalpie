@@ -3,6 +3,7 @@ package com.novalpie.nativeapp.ui
 import com.novalpie.nativeapp.model.ChapterComment
 import com.novalpie.nativeapp.model.BookEditPermissions
 import com.novalpie.nativeapp.model.Chapter
+import com.novalpie.nativeapp.model.NovelCard
 
 internal data class ChapterListPresentation(
     val numberLabel: String,
@@ -57,6 +58,14 @@ internal fun nativeEpubDownloadMenuLabel(isDownloading: Boolean): String =
 /** TXT uses the source's own download authorization, then streams straight into Android Downloads. */
 internal fun nativeTxtDownloadMenuLabel(isDownloading: Boolean): String =
     if (isDownloading) "正在原生下载 TXT…" else "原生下载 TXT（保存到下载）"
+
+/**
+ * The website EPUB generator receives the page cover (`photoUrl`), not the separate original
+ * preview URL. Keeping this selector explicit prevents native downloads from silently bundling a
+ * much larger alternate cover than the website download.
+ */
+internal fun nativeEpubCoverUrl(book: NovelCard?): String? =
+    book?.coverUrl?.trim()?.takeIf { it.isNotBlank() }
 
 internal fun bookDetailTabLabel(
     tab: BookDetailContentTabLabel,

@@ -651,14 +651,33 @@ class ReaderPresentationTest {
     }
 
     @Test
-    fun readerVolumeKeysMapToPagesOnlyInPageTurnMode() {
+    fun simulatedPageTurnsUseAHorizontalCoverInsteadOfAVerticalScrollEffect() {
+        assertEquals(
+            ReaderPageTurnVisualMode.HorizontalCover,
+            readerPageTurnVisualMode("simulated"),
+        )
+        assertEquals(
+            ReaderPageTurnVisualMode.ListViewport,
+            readerPageTurnVisualMode("fade"),
+        )
+    }
+
+    @Test
+    fun fullscreenReaderRemovesTheParentScaffoldInsetBudget() {
+        assertTrue(readerScaffoldUsesEdgeToEdgeInsets(isReaderRoute = true, isReaderFullscreen = true))
+        assertFalse(readerScaffoldUsesEdgeToEdgeInsets(isReaderRoute = true, isReaderFullscreen = false))
+        assertFalse(readerScaffoldUsesEdgeToEdgeInsets(isReaderRoute = false, isReaderFullscreen = true))
+    }
+
+    @Test
+    fun readerVolumeKeysMapToPagesWhileTheReaderIsActive() {
         assertEquals(
             ReaderVolumeKeyAction.PreviousPage,
             readerVolumeKeyAction(
                 keyCode = KeyEvent.KEYCODE_VOLUME_UP,
                 action = KeyEvent.ACTION_DOWN,
                 repeatCount = 0,
-                pageTurnEnabled = true,
+                readerActive = true,
             ),
         )
         assertEquals(
@@ -667,7 +686,7 @@ class ReaderPresentationTest {
                 keyCode = KeyEvent.KEYCODE_VOLUME_DOWN,
                 action = KeyEvent.ACTION_DOWN,
                 repeatCount = 0,
-                pageTurnEnabled = true,
+                readerActive = true,
             ),
         )
         assertEquals(
@@ -676,7 +695,16 @@ class ReaderPresentationTest {
                 keyCode = KeyEvent.KEYCODE_VOLUME_DOWN,
                 action = KeyEvent.ACTION_DOWN,
                 repeatCount = 1,
-                pageTurnEnabled = true,
+                readerActive = true,
+            ),
+        )
+        assertEquals(
+            ReaderVolumeKeyAction.NextPage,
+            readerVolumeKeyAction(
+                keyCode = KeyEvent.KEYCODE_VOLUME_DOWN,
+                action = KeyEvent.ACTION_DOWN,
+                repeatCount = 0,
+                readerActive = true,
             ),
         )
         assertEquals(
@@ -685,8 +713,22 @@ class ReaderPresentationTest {
                 keyCode = KeyEvent.KEYCODE_VOLUME_DOWN,
                 action = KeyEvent.ACTION_DOWN,
                 repeatCount = 0,
-                pageTurnEnabled = false,
+                readerActive = false,
             ),
+        )
+    }
+
+    @Test
+    fun readerPageTurnOffersAnExplicitNoAnimationMode() {
+        assertEquals(0, readerPageAnimationDurationMs("none"))
+        assertEquals(160, readerPageAnimationDurationMs("fade"))
+        assertEquals(
+            ReaderPageTurnVisualMode.ListViewport,
+            readerPageTurnVisualMode("none"),
+        )
+        assertEquals(
+            ReaderPageTurnVisualMode.HorizontalCover,
+            readerPageTurnVisualMode("simulated"),
         )
     }
 

@@ -3,6 +3,7 @@ package com.novalpie.nativeapp.ui
 import com.novalpie.nativeapp.model.ChapterComment
 import com.novalpie.nativeapp.model.BookEditPermissions
 import com.novalpie.nativeapp.model.Chapter
+import com.novalpie.nativeapp.model.NovelCard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -121,6 +122,18 @@ class BookDetailPresentationTest {
         assertEquals("正在原生下载 EPUB…", nativeEpubDownloadMenuLabel(isDownloading = true))
         assertEquals("原生下载 TXT（保存到下载）", nativeTxtDownloadMenuLabel(isDownloading = false))
         assertEquals("正在原生下载 TXT…", nativeTxtDownloadMenuLabel(isDownloading = true))
+    }
+
+    @Test
+    fun nativeEpubUsesTheSameCoverSourceAsTheWebsiteDownloadGenerator() {
+        val book = NovelCard(
+            id = 350192,
+            title = "Book",
+            coverUrl = "https://images.example.test/thumbnail.file",
+            fullCoverUrl = "https://images.example.test/original.file",
+        )
+
+        assertEquals(book.coverUrl, nativeEpubCoverUrl(book))
     }
 
     @Test

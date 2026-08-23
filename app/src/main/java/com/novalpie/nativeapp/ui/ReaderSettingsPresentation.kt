@@ -52,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.novalpie.nativeapp.data.ReaderSettingsStore
+import com.novalpie.nativeapp.data.ReaderFontStore
 import com.novalpie.nativeapp.model.ReaderCustomTheme
 import com.novalpie.nativeapp.model.ReaderTapArea
 import com.novalpie.nativeapp.model.normalizeReaderCustomTheme
@@ -164,6 +165,23 @@ internal fun ReaderSettingsControls(
     clearingChapterCache: Boolean,
     chapterCacheMessage: String?,
 ) {
+    val context = LocalContext.current
+    var fontImportMessage by remember { mutableStateOf<String?>(null) }
+    val fontPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        ReaderFontStore.import(context, uri).fold(
+            onSuccess = { key ->
+                onOptionsChange(options.copy(fontFamily = key).normalizedReaderOptions())
+                fontImportMessage = "已导入：${ReaderFontStore.displayName(key).orEmpty()}"
+            },
+            onFailure = { failure ->
+                fontImportMessage = failure.message ?: "字体导入失败"
+            },
+        )
+    }
+
     fun update(transform: (ReaderUiOptions) -> ReaderUiOptions) {
         onOptionsChange(transform(options).normalizedReaderOptions())
     }
@@ -209,6 +227,43 @@ internal fun ReaderSettingsControls(
                 )
             }
         }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = ReaderFontStore.displayName(options.fontFamily) ?: "未选择自定义字体",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = metaColor,
+                maxLines = 1,
+            )
+            OutlinedButton(
+                onClick = {
+                    fontPicker.launch(
+                        arrayOf(
+                            "font/ttf",
+                            "font/otf",
+                            "font/ttc",
+                            "application/x-font-ttf",
+                            "application/x-font-opentype",
+                            "application/octet-stream",
+                        )
+                    )
+                },
+            ) { Text("导入字体") }
+            if (ReaderFontStore.customFontFileName(options.fontFamily) != null) {
+                TextButton(onClick = { update { it.copy(fontFamily = ReaderSettingsStore.DEFAULT_FONT_FAMILY) } }) {
+                    Text("清除")
+                }
+            }
+        }
+        Text(
+            text = fontImportMessage ?: "支持 TTF、OTF、TTC；字体会保存在本机阅读器设置中",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (fontImportMessage != null) MaterialTheme.colorScheme.primary else metaColor,
+        )
         }
     }
 
@@ -369,6 +424,7 @@ internal fun ReaderSettingsControls(
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf(
+                "none" to "无动画",
                 "fade" to "淡入",
                 "cover" to "覆盖",
                 "slide" to "滑动",

@@ -115,7 +115,7 @@ class ReaderSettingsStoreTest {
                 contentWidthDp = 100,
                 useInfiniteScroll = false,
                 pageTurnMode = true,
-                pageTurnEffect = "slide",
+                pageTurnEffect = "none",
                 tapAreas = listOf(
                     com.novalpie.nativeapp.model.ReaderTapArea("left", "25%", "pagePrev"),
                     com.novalpie.nativeapp.model.ReaderTapArea("center", "50%", "sidebar"),
@@ -132,8 +132,18 @@ class ReaderSettingsStoreTest {
         assertEquals(false, loaded.showImages)
         assertEquals(400, loaded.contentWidthDp)
         assertEquals(true, loaded.pageTurnMode)
-        assertEquals("slide", loaded.pageTurnEffect)
+        assertEquals("none", loaded.pageTurnEffect)
         assertEquals(3, loaded.tapAreas.size)
+    }
+
+    @Test
+    fun customFontFamilyKeySurvivesAStoreRoundTrip() {
+        val customFont = "custom-font:NotoSansCJK.otf"
+        val store = ReaderSettingsStore(context)
+
+        store.save(ReaderSettingsValues(fontFamily = customFont))
+
+        assertEquals(customFont, store.load().fontFamily)
     }
 
     @Test

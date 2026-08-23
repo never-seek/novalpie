@@ -491,7 +491,10 @@ class NovalPieApi(
     /** The source's owner profile loads its uploaded books from the authenticated books endpoint. */
     suspend fun currentUserUploadedBooks(): List<NovelCard> = withContext(Dispatchers.IO) {
         normalizeNovelList(
-            get("/api/users/me/books"),
+            getProfileCollectionWithV2Fallback(
+                legacyPath = "/api/users/me/books",
+                v2Path = "/api/v2/users/me/novels",
+            ),
             "uploads",
             "items",
             "novels",
@@ -512,12 +515,15 @@ class NovalPieApi(
         page: Int = 1,
         limit: Int = 100
     ): List<UserActivity> = withContext(Dispatchers.IO) {
-        val path = userId?.takeIf { it > 0 }?.let { "/api/users/$it/activities" }
+        val legacyPath = userId?.takeIf { it > 0 }?.let { "/api/users/$it/activities" }
             ?: "/api/users/me/activities"
+        val v2Path = userId?.takeIf { it > 0 }?.let { "/api/v2/users/$it/activities" }
+            ?: "/api/v2/users/me/activities"
         normalizeUserActivities(
-            get(
-                path,
-                mapOf(
+            getProfileCollectionWithV2Fallback(
+                legacyPath = legacyPath,
+                v2Path = v2Path,
+                params = mapOf(
                     "type" to type,
                     "page" to page.coerceAtLeast(1).toString(),
                     // The source ActivityTab requests its first window with limit=200.
@@ -566,12 +572,13 @@ class NovalPieApi(
             val canonical = async {
                 captureUserActivityFeed {
                     normalizeCanonicalUserActivityFeed(
-                        get(
-                            "/api/users/$userId/activities",
-                            mapOf(
+                        getProfileCollectionWithV2Fallback(
+                            legacyPath = "/api/users/$userId/activities",
+                            v2Path = "/api/v2/users/$userId/activities",
+                            params = mapOf(
                                 "page" to safePage.toString(),
                                 "limit" to safeLimit.toString(),
-                            )
+                            ),
                         )
                     )
                 }
@@ -619,9 +626,12 @@ class NovalPieApi(
     }
 
     suspend fun userNovels(userId: Long? = null): List<NovelCard> = withContext(Dispatchers.IO) {
-        val path = userId?.takeIf { it > 0 }?.let { "/api/users/$it/novels" }
+        val legacyPath = userId?.takeIf { it > 0 }?.let { "/api/users/$it/novels" }
             ?: "/api/users/me/novels"
-        normalizeNovelList(get(path))
+        val v2Path = userId?.takeIf { it > 0 }?.let { "/api/v2/users/$it/novels" }
+            ?: "/api/v2/users/me/novels"
+        normalizeNovelList(getProfileCollectionWithV2Fallback(legacyPath, v2Path))
+            .map { novel -> novel.copy(platform = novel.platform ?: "upload") }
     }
 
     suspend fun managedBookInfo(bookId: Long): BookEditInfo = withContext(Dispatchers.IO) {
@@ -755,20 +765,34 @@ class NovalPieApi(
         startDate: String,
         endDate: String
     ): List<UserCheckinRecord> = withContext(Dispatchers.IO) {
-        val path = userId?.takeIf { it > 0 }?.let { "/api/users/$it/checkins" }
+        val legacyPath = userId?.takeIf { it > 0 }?.let { "/api/users/$it/checkins" }
             ?: "/api/users/me/checkins"
+        val v2Path = userId?.takeIf { it > 0 }?.let { "/api/v2/users/$it/checkins" }
+            ?: "/api/v2/users/me/checkins"
         normalizeUserCheckinRecords(
-            get(path, mapOf("start_date" to startDate, "end_date" to endDate))
+            getProfileCollectionWithV2Fallback(
+                legacyPath = legacyPath,
+                v2Path = v2Path,
+                params = mapOf("start_date" to startDate, "end_date" to endDate),
+            )
         )
     }
 
     suspend fun userCheckinSettings(userId: Long? = null): UserCheckinSettings =
         withContext(Dispatchers.IO) {
             val publicUserId = userId?.takeIf { it > 0 }
-            val path = publicUserId?.let { "/api/users/$it/checkins/settings" }
+            val legacyPath = publicUserId?.let { "/api/users/$it/checkins/settings" }
                 ?: "/api/users/me/checkins/settings"
+            val v2Path = publicUserId?.let { "/api/v2/users/$it/checkins/settings" }
+                ?: "/api/v2/users/me/checkins/settings"
             val params = publicUserId?.let { mapOf("user_id" to it.toString()) }.orEmpty()
-            val source = unwrapObject(get(path, params), "checkin_settings", "settings", "data", "result")
+            val source = unwrapObject(
+                getProfileCollectionWithV2Fallback(legacyPath, v2Path, params),
+                "checkin_settings",
+                "settings",
+                "data",
+                "result",
+            )
             UserCheckinSettings(
                 showCheckin = source.firstBooleanOrNull("show_checkin", "showCheckin") ?: true,
                 autoCheckin = source.firstBooleanOrNull("auto_checkin", "autoCheckin") ?: false
@@ -1211,10 +1235,17 @@ class NovalPieApi(
 
     suspend fun userCheckinStats(userId: Long? = null): UserCheckinStats = withContext(Dispatchers.IO) {
         val publicUserId = userId?.takeIf { it > 0 }
-        val path = publicUserId?.let { "/api/users/$it/checkins/stats" }
+        val legacyPath = publicUserId?.let { "/api/users/$it/checkins/stats" }
             ?: "/api/users/me/checkins/stats"
+        val v2Path = publicUserId?.let { "/api/v2/users/$it/checkins/stats" }
+            ?: "/api/v2/users/me/checkins/stats"
         val params = publicUserId?.let { mapOf("user_id" to it.toString()) }.orEmpty()
-        val source = unwrapObject(get(path, params), "stats", "data", "result")
+        val source = unwrapObject(
+            getProfileCollectionWithV2Fallback(legacyPath, v2Path, params),
+            "stats",
+            "data",
+            "result",
+        )
         UserCheckinStats(
             totalDays = source.intOrNull("total_days")
                 ?: source.intOrNull("totalDays")
@@ -2358,6 +2389,41 @@ class NovalPieApi(
         )
     }
 
+    /**
+     * The current Laravel deployment still advertises the legacy profile collection paths, but
+     * returns a 404 placeholder for them.  The live website has already moved these read-only
+     * collections to the versioned API.  Keep the legacy request first for older deployments and
+     * fall back only for that explicit placeholder so a real 404 or a transport failure is not
+     * silently masked.
+     */
+    private fun getProfileCollectionWithV2Fallback(
+        legacyPath: String,
+        v2Path: String,
+        params: Map<String, String> = emptyMap(),
+    ): Any {
+        return try {
+            get(legacyPath, params)
+        } catch (failure: Throwable) {
+            if (failure is CancellationException) throw failure
+            if (!isUnimplementedProfileCollection(failure, legacyPath)) throw failure
+            get(v2Path, params)
+        }
+    }
+
+    private fun isUnimplementedProfileCollection(
+        failure: Throwable,
+        path: String,
+    ): Boolean {
+        val apiFailure = generateSequence(failure) { it.cause }
+            .filterIsInstance<NovalPieApiException>()
+            .firstOrNull()
+            ?: return false
+        if (apiFailure.path != path) return false
+        if (apiFailure.statusCode == 501) return true
+        return apiFailure.statusCode == 404 &&
+            apiFailure.serverMessage.orEmpty().contains("not implemented", ignoreCase = true)
+    }
+
     private fun post(path: String): Any {
         return requestBody(path, "POST", ByteArray(0).toRequestBody())
     }
@@ -2997,7 +3063,8 @@ class NovalPieApi(
                 ?: source.stringOrNull("created_at"),
             tags = normalizeBookTags(source),
             createdAt = source.firstStringOrNull("created_at", "createdAt", "published_at", "publishedAt"),
-            chapterCount = source.firstIntOrNull("chapter_num", "chapterNum", "chapter_count", "chapterCount"),
+            chapterCount = source.firstIntOrNull("chapter_num", "chapterNum", "chapter_count", "chapterCount")
+                ?: source.optJSONObject("stats")?.firstIntOrNull("chapter_count", "chapterCount"),
             maxChapterNumber = source.firstIntOrNull(
                 "max_chapter_number",
                 "maxChapterNumber",
@@ -5244,6 +5311,14 @@ class NovalPieApi(
             "serial_status",
             "serialStatus"
         )?.let { return it }
+
+        source.firstStringOrNull("serial_state", "serialState")?.let { value ->
+            return when (value.trim().lowercase()) {
+                "finished", "complete", "completed", "done" -> "已完结"
+                "serializing", "ongoing", "in_progress", "in-progress" -> "连载中"
+                else -> value
+            }
+        }
 
         val completed = source.firstBooleanOrNull(
             "is_completed",

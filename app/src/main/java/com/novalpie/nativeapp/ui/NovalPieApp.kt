@@ -98,6 +98,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
@@ -156,6 +157,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -166,6 +168,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.SpanStyle
@@ -189,6 +192,7 @@ import coil.size.Precision
 import com.novalpie.nativeapp.MainActivity
 import com.novalpie.nativeapp.data.NovelCoverLoadPriority
 import com.novalpie.nativeapp.data.NovelCoverRequestSize
+import com.novalpie.nativeapp.data.ReaderFontStore
 import com.novalpie.nativeapp.data.novalPieBookCoverRequest
 import com.novalpie.nativeapp.data.novalPieBookCoverTargetSize
 import com.novalpie.nativeapp.data.novalPieStaticImageRequest
@@ -317,6 +321,10 @@ fun NovalPieApp(
 ) {
     val route = viewModel.currentRoute
 
+    LaunchedEffect(route is AppRoute.Reader) {
+        if (route !is AppRoute.Reader) viewModel.updateReaderFullscreen(false)
+    }
+
     // The deep link is consumed once and then cleared by the host activity. Keying the effect on
     // a URI that outlived the navigation meant a rotation re-ran openDeepLink and yanked the user
     // back to the linked book/chapter.
@@ -351,6 +359,15 @@ fun NovalPieApp(
         null
     }
     val routeBackground = activeReaderPalette?.background ?: MaterialTheme.colorScheme.background
+    val readerEdgeToEdge = readerScaffoldUsesEdgeToEdgeInsets(
+        isReaderRoute = route is AppRoute.Reader,
+        isReaderFullscreen = viewModel.readerFullscreen,
+    )
+    val scaffoldInsets = if (readerEdgeToEdge) {
+        WindowInsets(0, 0, 0, 0)
+    } else {
+        WindowInsets.safeDrawing.union(WindowInsets.ime)
+    }
     val systemBarView = LocalView.current
     SideEffect {
         val activity = systemBarView.context as? Activity ?: return@SideEffect
@@ -374,7 +391,7 @@ fun NovalPieApp(
         // Edge-to-edge uses a dynamic IME inset on Android 15. Folding it into the same content
         // contract as status/navigation bars makes every route remeasure back to its real height
         // after the keyboard closes instead of retaining an old resize budget.
-        contentWindowInsets = WindowInsets.safeDrawing.union(WindowInsets.ime),
+        contentWindowInsets = scaffoldInsets,
         topBar = {
             if (globalProductTopBarVisible(route)) {
                 CenterAlignedTopAppBar(
@@ -993,6 +1010,8 @@ private fun ReaderRoute(
     ReaderScreen(
         state = viewModel.readerState,
         options = viewModel.readerUiOptions,
+        readerFullscreen = viewModel.readerFullscreen,
+        onReaderFullscreenChange = viewModel::updateReaderFullscreen,
         ttsSettings = viewModel.readerTtsSettings,
         catalogQuery = viewModel.readerCatalogQuery,
         onCatalogQueryChange = viewModel::updateReaderCatalogQuery,
@@ -5269,6 +5288,8 @@ private fun BookDetailScreen(
 private fun ReaderScreen(
     state: ReaderState,
     options: ReaderUiOptions,
+    readerFullscreen: Boolean,
+    onReaderFullscreenChange: (Boolean) -> Unit,
     ttsSettings: ReaderTtsSettings,
     catalogQuery: String,
     onCatalogQueryChange: (String) -> Unit,
@@ -5310,7 +5331,6 @@ private fun ReaderScreen(
     val toolbarsVisible = remember { mutableStateOf(false) }
     var pendingChapterEntryPosition by remember { mutableStateOf(ReaderChapterEntryPosition.Start) }
     val radialMenuVisible = remember { mutableStateOf(false) }
-    val readerFullscreen = remember { mutableStateOf(false) }
     var lastReaderChromeTapUptime by remember { mutableLongStateOf(0L) }
     var lastReaderChromeTapXFraction by remember { mutableFloatStateOf(-1f) }
     var lastReaderChromeTapYFraction by remember { mutableFloatStateOf(-1f) }
@@ -5337,7 +5357,7 @@ private fun ReaderScreen(
             WindowCompat.getInsetsController(window, readerView)
         }
     }
-    val isReaderFullscreen = readerFullscreen.value
+    val isReaderFullscreen = readerFullscreen
     DisposableEffect(readerInsetsController, isReaderFullscreen) {
         if (isReaderFullscreen) {
             readerInsetsController?.systemBarsBehavior =
@@ -5514,7 +5534,7 @@ private fun ReaderScreen(
             readerHelpVisible.value ||
             readerNavigationVisible.value ||
             radialMenuVisible.value ||
-            readerFullscreen.value ||
+            readerFullscreen ||
             toolbarsVisible.value,
     ) {
         when {
@@ -5522,7 +5542,7 @@ private fun ReaderScreen(
             catalogVisible.value -> catalogVisible.value = false
             readerHelpVisible.value -> readerHelpVisible.value = false
             readerNavigationVisible.value -> readerNavigationVisible.value = false
-            readerFullscreen.value -> readerFullscreen.value = false
+            readerFullscreen -> onReaderFullscreenChange(false)
             radialMenuVisible.value -> radialMenuVisible.value = false
             toolbarsVisible.value -> toolbarsVisible.value = false
         }
@@ -5540,6 +5560,16 @@ private fun ReaderScreen(
     val actionRailVisible = chromeVisible && !radialMenuVisible.value
     val pageAlpha = remember { Animatable(1f) }
     val pageOffset = remember { Animatable(0f) }
+    val simulatedPageCoverOffset = remember { Animatable(0f) }
+    val simulatedPageCoverVisible = remember { mutableStateOf(false) }
+    var readerViewportWidthPx by remember { mutableFloatStateOf(0f) }
+    var pageTurnInProgress by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state.bookId, state.chapterId) {
+        simulatedPageCoverVisible.value = false
+        simulatedPageCoverOffset.snapTo(0f)
+        pageTurnInProgress = false
+    }
 
     fun openReaderPageBoundary(target: ReaderPageBoundaryTarget) {
         val adjacent = adjacentReaderChapters(state.chapterId, chapters)
@@ -5563,6 +5593,7 @@ private fun ReaderScreen(
     }
 
     fun turnReaderPage(direction: Int) {
+        if (pageTurnInProgress) return
         val adjacent = adjacentReaderChapters(state.chapterId, chapters)
         val alreadyAtBoundary = if (direction < 0) !listState.canScrollBackward else !listState.canScrollForward
         val immediateTarget = readerPageBoundaryTarget(
@@ -5575,44 +5606,78 @@ private fun ReaderScreen(
             openReaderPageBoundary(immediateTarget)
             return
         }
+        pageTurnInProgress = true
         val viewport = (listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset)
             .toFloat()
             .coerceAtLeast(320f)
         readerScope.launch {
-            val distance = viewport * 0.86f * direction
-            val duration = readerPageAnimationDurationMs(options.pageTurnEffect)
-            when (options.pageTurnEffect) {
-                "fade" -> pageAlpha.animateTo(0.35f, tween(duration / 2))
-                "cover", "slide" -> pageOffset.snapTo(-direction * viewport * 0.12f)
-                "simulated" -> {
-                    pageAlpha.animateTo(0.72f, tween(duration / 2))
-                    pageOffset.snapTo(-direction * viewport * 0.06f)
+            try {
+                val distance = viewport * 0.86f * direction
+                val duration = readerPageAnimationDurationMs(options.pageTurnEffect)
+                if (options.pageTurnEffect == "none") {
+                    // The explicit no-animation mode must not briefly fade or translate the
+                    // article. Move the viewport and leave all visual layers at their settled
+                    // values; this is useful for low-power devices and readers who prefer a
+                    // purely positional page turn.
+                    listState.scrollBy(distance)
+                } else if (readerPageTurnVisualMode(options.pageTurnEffect) == ReaderPageTurnVisualMode.HorizontalCover) {
+                    // Cover the article with a paper-colored page entering horizontally. The
+                    // underlying LazyColumn is advanced only while that cover is opaque, so the
+                    // user never sees a vertical scroll masquerading as a simulated turn.
+                    val width = readerViewportWidthPx.takeIf { it > 0f } ?: viewport
+                    val enteringFrom = if (direction > 0) width else -width
+                    val leavingTo = -enteringFrom
+                    simulatedPageCoverVisible.value = true
+                    simulatedPageCoverOffset.snapTo(enteringFrom)
+                    simulatedPageCoverOffset.animateTo(0f, tween(duration / 2))
+                    when (readerPageScrollMotion()) {
+                        ReaderPageScrollMotion.Immediate -> listState.scrollBy(distance)
+                    }
+                    simulatedPageCoverOffset.animateTo(leavingTo, tween(duration / 2))
+                } else {
+                    when (options.pageTurnEffect) {
+                        "fade" -> pageAlpha.animateTo(0.35f, tween(duration / 2))
+                        "cover", "slide" -> pageOffset.snapTo(-direction * viewport * 0.12f)
+                    }
+                    // Move the viewport in one operation. The old animated LazyColumn movement
+                    // looked like a full-text vertical scroll and made volume-key turns delayed.
+                    when (readerPageScrollMotion()) {
+                        ReaderPageScrollMotion.Immediate -> listState.scrollBy(distance)
+                    }
+                    pageAlpha.animateTo(1f, tween(duration / 2))
+                    pageOffset.animateTo(0f, tween(duration / 2))
                 }
-            }
-            // Move the viewport in one operation. The old animated LazyColumn movement looked
-            // like a full-text vertical scroll and made volume-key turns feel delayed.
-            when (readerPageScrollMotion()) {
-                ReaderPageScrollMotion.Immediate -> listState.scrollBy(distance)
-            }
-            pageAlpha.animateTo(1f, tween(duration / 2))
-            pageOffset.animateTo(0f, tween(duration / 2))
-            val reachedBoundary = if (direction < 0) !listState.canScrollBackward else !listState.canScrollForward
-            openReaderPageBoundary(
-                readerPageBoundaryTarget(
-                    direction = direction,
-                    reachedBoundary = reachedBoundary,
-                    hasPrevious = adjacent.previous != null,
-                    hasNext = adjacent.next != null,
+                val reachedBoundary = if (direction < 0) !listState.canScrollBackward else !listState.canScrollForward
+                openReaderPageBoundary(
+                    readerPageBoundaryTarget(
+                        direction = direction,
+                        reachedBoundary = reachedBoundary,
+                        hasPrevious = adjacent.previous != null,
+                        hasNext = adjacent.next != null,
+                    )
                 )
-            )
+            } finally {
+                simulatedPageCoverVisible.value = false
+                simulatedPageCoverOffset.snapTo(0f)
+                pageAlpha.snapTo(1f)
+                pageOffset.snapTo(0f)
+                pageTurnInProgress = false
+            }
         }
     }
 
+    // Keep the Activity callback installed for both continuous-scroll and page-turn readers. The
+    // callback itself is updated without reinstalling it whenever font/theme/settings state
+    // changes, so a volume press can never retain an obsolete reader closure.
+    val currentTurnReaderPage = rememberUpdatedState<(Int) -> Unit> { direction ->
+        turnReaderPage(direction)
+    }
     val readerVolumeKeyHost = context as? MainActivity
-    DisposableEffect(readerVolumeKeyHost, pageTurnEnabled, state.bookId, state.chapterId, chapters) {
+    val volumeKeyPagingEnabled = hasReadableBody
+    DisposableEffect(readerVolumeKeyHost, volumeKeyPagingEnabled, state.bookId, state.chapterId, chapters) {
         readerVolumeKeyHost?.setReaderVolumeKeyHandler(
-            if (pageTurnEnabled) {
-                { direction -> turnReaderPage(direction) }
+            if (volumeKeyPagingEnabled) {
+                { direction -> currentTurnReaderPage.value(direction) }
             } else {
                 null
             },
@@ -5739,6 +5804,7 @@ private fun ReaderScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.background)
+            .onSizeChanged { readerViewportWidthPx = it.width.toFloat() },
     ) {
         palette.backgroundImageUri?.let { backgroundUri ->
             AsyncImage(
@@ -5764,8 +5830,10 @@ private fun ReaderScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    alpha = pageAlpha.value
-                    translationX = pageOffset.value
+                    val horizontalCover = readerPageTurnVisualMode(options.pageTurnEffect) ==
+                        ReaderPageTurnVisualMode.HorizontalCover
+                    alpha = if (horizontalCover) 1f else pageAlpha.value
+                    translationX = if (horizontalCover) 0f else pageOffset.value
                 }
                 .pointerInput(
                     options.tapAreas,
@@ -5882,6 +5950,15 @@ private fun ReaderScreen(
                     )
                 }
             }
+        }
+
+        if (simulatedPageCoverVisible.value) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { translationX = simulatedPageCoverOffset.value }
+                    .background(palette.background),
+            )
         }
 
         // The source keeps a slim title rail even while the side controls are hidden. The full
@@ -6035,7 +6112,7 @@ private fun ReaderScreen(
                     readerNavigationVisible.value -> ReaderRailActionId.Navigation
                     else -> null
                 },
-                fullscreen = readerFullscreen.value,
+                fullscreen = readerFullscreen,
                 onClose = {
                     closeReaderSidePanel()
                     radialMenuVisible.value = false
@@ -6058,7 +6135,7 @@ private fun ReaderScreen(
                 onToggleReadingMode = ::toggleReaderReadingMode,
                 onToggleTts = ::toggleTts,
                 ttsState = ttsController.state,
-                onToggleFullscreen = { readerFullscreen.value = !readerFullscreen.value },
+                onToggleFullscreen = { onReaderFullscreenChange(!readerFullscreen) },
                 onOpenNavigation = ::openReaderNavigation,
             )
         }
@@ -10141,11 +10218,19 @@ private fun readerPalette(options: ReaderUiOptions): ReaderPalette = novalPieRea
     )
 }
 
-private fun readerFontFamily(value: String): FontFamily = when (value) {
-    "serif" -> FontFamily.Serif
-    "sans" -> FontFamily.SansSerif
-    "monospace" -> FontFamily.Monospace
-    else -> FontFamily.Default
+@Composable
+private fun readerFontFamily(value: String): FontFamily {
+    val context = LocalContext.current
+    val customFile = remember(value) { ReaderFontStore.fileFor(context, value) }
+    return remember(value, customFile?.absolutePath) {
+        when {
+            customFile != null -> runCatching { FontFamily(Font(customFile)) }.getOrDefault(FontFamily.Default)
+            value == "serif" -> FontFamily.Serif
+            value == "sans" -> FontFamily.SansSerif
+            value == "monospace" -> FontFamily.Monospace
+            else -> FontFamily.Default
+        }
+    }
 }
 
 internal fun String.themeLabel(): String = when (this) {

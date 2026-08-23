@@ -30,7 +30,26 @@ internal enum class ReaderPageScrollMotion {
 
 internal fun readerPageScrollMotion(): ReaderPageScrollMotion = ReaderPageScrollMotion.Immediate
 
-/** Volume keys are reader controls only while page mode is active. */
+/** The simulated turn is rendered by a horizontal opaque page cover, not a vertical list fade. */
+internal enum class ReaderPageTurnVisualMode {
+    ListViewport,
+    HorizontalCover,
+}
+
+internal fun readerPageTurnVisualMode(effect: String): ReaderPageTurnVisualMode =
+    if (effect == "simulated") {
+        ReaderPageTurnVisualMode.HorizontalCover
+    } else {
+        ReaderPageTurnVisualMode.ListViewport
+    }
+
+/** Only the fullscreen reader may remove the root Scaffold's system-bar inset budget. */
+internal fun readerScaffoldUsesEdgeToEdgeInsets(
+    isReaderRoute: Boolean,
+    isReaderFullscreen: Boolean,
+): Boolean = isReaderRoute && isReaderFullscreen
+
+/** Volume keys turn the reader viewport while a readable reader route is active. */
 internal enum class ReaderVolumeKeyAction {
     Ignore,
     Consume,
@@ -42,10 +61,10 @@ internal fun readerVolumeKeyAction(
     keyCode: Int,
     action: Int,
     repeatCount: Int,
-    pageTurnEnabled: Boolean,
+    readerActive: Boolean,
 ): ReaderVolumeKeyAction {
     if (
-        !pageTurnEnabled ||
+        !readerActive ||
         (keyCode != KeyEvent.KEYCODE_VOLUME_UP && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN)
     ) {
         return ReaderVolumeKeyAction.Ignore
@@ -305,6 +324,7 @@ internal fun readerTapActionAt(areas: List<ReaderTapArea>, xFraction: Float): St
 }
 
 internal fun readerPageAnimationDurationMs(effect: String): Int = when (effect) {
+    "none" -> 0
     "cover" -> 280
     "slide" -> 220
     "simulated" -> 360

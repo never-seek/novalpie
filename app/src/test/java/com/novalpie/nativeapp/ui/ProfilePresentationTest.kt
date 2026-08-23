@@ -85,6 +85,25 @@ class ProfilePresentationTest {
     }
 
     @Test
+    fun publicProfileLoadPresentationKeepsActivityFeedCountersAndEntriesTogether() {
+        val activity = UserActivity(id = 91, type = "post_comment", title = "交流区")
+        val presentation = publicProfileLoadPresentation(
+            profile = UserProfile(id = 100002, name = "榛名全色"),
+            feed = UserContentActivityFeed(
+                activities = listOf(activity),
+                postCount = 4,
+                forumCommentCount = 127,
+                bookReviewCount = 21,
+            ),
+            novels = emptyList(),
+        )
+
+        assertEquals(listOf(activity), presentation.activities)
+        assertEquals(148L, presentation.profile?.stats?.get("comments"))
+        assertEquals(0L, presentation.profile?.stats?.get("novels"))
+    }
+
+    @Test
     fun administratorRoleRequiresExactWebsiteRoleValue() {
         assertTrue(isAdminProfile(UserProfile(1, "Exact", role = "admin")))
         assertFalse(isAdminProfile(UserProfile(2, "Uppercase", role = "ADMIN")))
@@ -395,6 +414,20 @@ class ProfilePresentationTest {
         assertFalse(sourceActivitiesEndpointUnavailable(NovalPieApiException(500, "/api/users/100000/activities", "not implemented")))
         assertFalse(sourceActivitiesEndpointUnavailable(NovalPieApiException(501, "/api/users/100000", "not implemented")))
         assertFalse(sourceActivitiesEndpointUnavailable(IllegalStateException("timeout")))
+    }
+
+    @Test
+    fun publicProfileCollectionCountUsesTheVersionedNovelListWhenProfileOmitsStats() {
+        val profile = profileWithPublicCollectionCounts(
+            profile = UserProfile(id = 100002, name = "榛名全色"),
+            feed = UserContentActivityFeed(),
+            novels = listOf(
+                com.novalpie.nativeapp.model.NovelCard(id = 361074, title = "一本书"),
+                com.novalpie.nativeapp.model.NovelCard(id = 361075, title = "另一本书"),
+            ),
+        )
+
+        assertEquals(2L, profile?.stats?.get("novels"))
     }
 
     @Test

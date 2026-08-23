@@ -76,13 +76,32 @@ class MainActivity : ComponentActivity() {
 
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        return handleReaderVolumeKey(event) ?: super.dispatchKeyEvent(event)
+    }
+
+    /**
+     * Some MuMu firmware routes injected hardware keys through Activity.onKeyDown after the
+     * window callback instead of delivering the complete sequence to dispatchKeyEvent. Keep the
+     * same small decision function in both entry points so physical and adb-injected volume keys
+     * have identical reader behavior. A handled dispatch never reaches onKeyDown, so a normal
+     * event cannot turn twice.
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        return handleReaderVolumeKey(event) ?: super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        return handleReaderVolumeKey(event) ?: super.onKeyUp(keyCode, event)
+    }
+
+    private fun handleReaderVolumeKey(event: KeyEvent): Boolean? {
         val handler = readerVolumeKeyHandler
         return when (
             readerVolumeKeyAction(
                 keyCode = event.keyCode,
                 action = event.action,
                 repeatCount = event.repeatCount,
-                pageTurnEnabled = handler != null,
+                readerActive = handler != null,
             )
         ) {
             ReaderVolumeKeyAction.PreviousPage -> {
@@ -94,7 +113,7 @@ class MainActivity : ComponentActivity() {
                 true
             }
             ReaderVolumeKeyAction.Consume -> true
-            ReaderVolumeKeyAction.Ignore -> super.dispatchKeyEvent(event)
+            ReaderVolumeKeyAction.Ignore -> null
         }
     }
 

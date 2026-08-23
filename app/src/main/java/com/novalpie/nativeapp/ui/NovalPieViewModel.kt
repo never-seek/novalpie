@@ -33,6 +33,7 @@ import com.novalpie.nativeapp.data.NativeEpubArchiveWriter
 import com.novalpie.nativeapp.data.NativeEpubAsset
 import com.novalpie.nativeapp.data.NativeEpubExportProgress
 import com.novalpie.nativeapp.data.NativeEpubMetadata
+import com.novalpie.nativeapp.data.cleanupNativeEpubTempFiles
 import com.novalpie.nativeapp.data.PersistedFavoritesSettings
 import com.novalpie.nativeapp.data.PersistedSearchSettings
 import com.novalpie.nativeapp.data.ProxySettings
@@ -40,6 +41,7 @@ import com.novalpie.nativeapp.data.ReaderProgressStore
 import com.novalpie.nativeapp.data.ReaderChapterCacheStore
 import com.novalpie.nativeapp.data.ReaderSessionStore
 import com.novalpie.nativeapp.data.ReaderSettingsStore
+import com.novalpie.nativeapp.data.ReaderFontStore
 import com.novalpie.nativeapp.data.ReaderSettingsValues
 import com.novalpie.nativeapp.data.ReaderTtsSettings
 import com.novalpie.nativeapp.data.ReaderTtsSettingsStore
@@ -139,6 +141,7 @@ import java.io.OutputStream
 import java.nio.charset.Charset
 import java.util.Calendar
 import java.util.Locale
+import java.util.concurrent.ConcurrentLinkedQueue
 
 enum class BottomTab(val title: String) {
     Collection("收藏"),
@@ -781,7 +784,7 @@ internal fun ReaderUiOptions.normalizedReaderOptions(): ReaderUiOptions {
     return copy(
         fontSizeSp = fontSizeSp.coerceIn(ReaderSettingsStore.MIN_FONT_SIZE_SP, ReaderSettingsStore.MAX_FONT_SIZE_SP),
         lineHeight = lineHeight.coerceIn(ReaderSettingsStore.MIN_LINE_HEIGHT, ReaderSettingsStore.MAX_LINE_HEIGHT),
-        fontFamily = fontFamily.takeIf { it in setOf("system", "serif", "sans", "monospace") }
+        fontFamily = fontFamily.takeIf(ReaderFontStore::isSupportedFamily)
             ?: ReaderSettingsStore.DEFAULT_FONT_FAMILY,
         fontWeight = fontWeight.coerceIn(ReaderSettingsStore.MIN_FONT_WEIGHT, ReaderSettingsStore.MAX_FONT_WEIGHT),
         letterSpacing = letterSpacing.coerceIn(ReaderSettingsStore.MIN_LETTER_SPACING, ReaderSettingsStore.MAX_LETTER_SPACING),
@@ -796,7 +799,7 @@ internal fun ReaderUiOptions.normalizedReaderOptions(): ReaderUiOptions {
         // Prefer the user's explicit continuous-scroll switch when an old saved preference contains
         // both modes. The settings UI also writes them as mutually exclusive values.
         pageTurnMode = pageTurnMode && !useInfiniteScroll,
-        pageTurnEffect = pageTurnEffect.takeIf { it in setOf("fade", "cover", "slide", "simulated") } ?: "fade",
+        pageTurnEffect = pageTurnEffect.takeIf { it in setOf("none", "fade", "cover", "slide", "simulated") } ?: "fade",
         tapAreas = tapAreas.takeIf { it.size == 3 } ?: defaultReaderTapAreas(),
     )
 }
@@ -978,6 +981,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     var readerUiOptions by mutableStateOf(
         readerSettingsStore.load().toReaderUiOptions()
     )
+        private set
+    /** Transient window state shared with the root Scaffold so fullscreen removes stale insets. */
+    var readerFullscreen by mutableStateOf(false)
         private set
     var readerTtsSettings by mutableStateOf(readerTtsSettingsStore.load())
         private set
@@ -1421,6 +1427,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         if (route != null && (previous.replaceMode != next.replaceMode || previous.showImages != next.showImages)) {
             loadReader(route.bookId, route.chapterId, preserveContinuousWindow = false)
         }
+    }
+
+    fun updateReaderFullscreen(value: Boolean) {
+        readerFullscreen = value
     }
 
     fun setReaderOptions(value: ReaderUiOptions) {
@@ -1906,7 +1916,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             val resolvedInventory = inventoryCall.toLoadResult("背包")
             val resolvedShopItems = shopItemsResult.await().toLoadResult("商店")
             val profile = profileWithEquippedCosmetics(
-                profile = profileWithContentActivityCounts(sourceProfile, activityFeed),
+                profile = profileWithPublicCollectionCounts(
+                    profile = sourceProfile,
+                    feed = activityFeed,
+                    novels = booksCall.getOrNull(),
+                ),
                 inventory = inventoryCall.getOrNull()
             )
             val resolvedProfileWithFrame: LoadResult<UserProfile> = profile?.let { LoadResult.Success(it) } ?: resolvedProfile
@@ -2286,7 +2300,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val profile = async { runCatching { api.userProfile(userId) } }
             val activities = async {
-                runCatching { api.userContentActivities(userId = userId, limit = 200) }
+                runCatching { api.userContentActivityFeed(userId = userId, limit = 200) }
             }
             val books = async { runCatching { api.userNovels(userId = userId) } }
             val stats = async { runCatching { api.userCheckinStats(userId) } }
@@ -2305,18 +2319,26 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             val settingsResult = settings.await()
             if (!isFreshRequestSerial(requestSerial, userProfileRequestSerial)) return@launch
             val publicProfile = profileResult.getOrNull()
-            userProfileDetailState = userProfileDetailState.copy(
-                userId = userId,
-                profile = profileResult.toLoadResult("用户资料"),
-                activities = activityResult.getOrNull()?.let { LoadResult.Success(it) }
+            val publicProfilePresentation = publicProfileLoadPresentation(
+                profile = publicProfile,
+                feed = activityResult.getOrNull(),
+                novels = booksResult.getOrNull(),
+            )
+            val resolvedPublicActivities: LoadResult<List<UserActivity>> =
+                publicProfilePresentation.activities?.let { LoadResult.Success(it) }
                     ?: if (
                         profileHasNoPublicActivities(publicProfile) ||
                         sourceActivitiesEndpointUnavailable(activityResult.exceptionOrNull())
                     ) {
                         LoadResult.Success(emptyList())
                     } else {
-                        activityResult.toLoadResult("用户动态")
-                    },
+                        LoadResult.Error(activityResult.exceptionOrNull()?.message ?: "用户动态暂时无法加载")
+                    }
+            userProfileDetailState = userProfileDetailState.copy(
+                userId = userId,
+                profile = publicProfilePresentation.profile?.let { LoadResult.Success(it) }
+                    ?: profileResult.toLoadResult("用户资料"),
+                activities = resolvedPublicActivities,
                 books = booksResult.getOrNull()?.let { LoadResult.Success(it) }
                     ?: if (sourceBooksEndpointUnavailable(booksResult.exceptionOrNull())) {
                         LoadResult.Success(emptyList())
@@ -7059,6 +7081,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             )
             return
         }
+        val app = getApplication<Application>()
+        cleanupNativeEpubTempFiles(app.cacheDir)
         nativeEpubDownloadState = NativeEpubDownloadState(
             bookId = bookId,
             format = NativeBookDownloadFormat.Epub,
@@ -7067,7 +7091,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         )
         viewModelScope.launch {
             var destination: NativeDownloadDestination? = null
-            val temporaryAssets = mutableListOf<File>()
+            // NativeEpubArchiveWriter stages several image assets at once. The producer callback
+            // therefore records temporary files from multiple IO workers.
+            val temporaryAssets = ConcurrentLinkedQueue<File>()
             try {
                 val ticket = api.requestEpubDownload(bookId)
                 nativeEpubDownloadState = nativeEpubDownloadState.copy(
@@ -7079,16 +7105,18 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     openNativeDownloadOutput(target).use { output ->
                         api.streamDownloadFile(ticket.fileName) { input ->
                             InputStreamReader(input, Charsets.UTF_8).use { source ->
-                                NativeEpubArchiveWriter.write(
-                                    output = output,
+                                        NativeEpubArchiveWriter.write(
+                                            output = output,
                                     metadata = NativeEpubMetadata(
                                         title = book?.title ?: "NovalPie book $bookId",
                                         author = book?.author ?: "未知作者",
                                         description = book?.description.orEmpty(),
+                                        coverUrl = nativeEpubCoverUrl(book),
                                     ),
-                                    source = source,
-                                    openAsset = { url ->
-                                        val temporary = File.createTempFile("novalpie-asset-", ".bin")
+                                            source = source,
+                                            stagingDirectory = app.cacheDir,
+                                            openAsset = { url ->
+                                        val temporary = File.createTempFile("novalpie-asset-", ".bin", app.cacheDir)
                                         try {
                                             var mediaType: String? = null
                                             api.streamAsset(url) { assetInput, contentType ->
@@ -7097,10 +7125,14 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                                                     assetInput.copyTo(fileOutput)
                                                 }
                                             }
-                                            temporaryAssets += temporary
+                                            temporaryAssets.add(temporary)
                                             NativeEpubAsset(
                                                 mediaType = mediaType,
                                                 input = temporary.inputStream(),
+                                                onConsumed = {
+                                                    temporary.delete()
+                                                    temporaryAssets.remove(temporary)
+                                                },
                                             )
                                         } catch (failure: Throwable) {
                                             temporary.delete()

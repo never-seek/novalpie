@@ -75,7 +75,7 @@ class ReaderSettingsStore(context: Context) {
             fontSizeSp = loadFontSizeSp(),
             lineHeight = prefs.getFloat(KEY_LINE_HEIGHT, DEFAULT_LINE_HEIGHT).coerceIn(MIN_LINE_HEIGHT, MAX_LINE_HEIGHT),
             fontFamily = prefs.getString(KEY_FONT_FAMILY, DEFAULT_FONT_FAMILY).orEmpty()
-                .takeIf { it in SUPPORTED_FONT_FAMILIES } ?: DEFAULT_FONT_FAMILY,
+                .takeIf(ReaderFontStore::isSupportedFamily) ?: DEFAULT_FONT_FAMILY,
             fontWeight = prefs.getInt(KEY_FONT_WEIGHT, DEFAULT_FONT_WEIGHT).coerceIn(MIN_FONT_WEIGHT, MAX_FONT_WEIGHT),
             letterSpacing = prefs.getFloat(KEY_LETTER_SPACING, DEFAULT_LETTER_SPACING).coerceIn(MIN_LETTER_SPACING, MAX_LETTER_SPACING),
             wordSpacing = prefs.getFloat(KEY_WORD_SPACING, DEFAULT_WORD_SPACING).coerceIn(MIN_WORD_SPACING, MAX_WORD_SPACING),
@@ -117,7 +117,7 @@ class ReaderSettingsStore(context: Context) {
         prefs.edit()
             .putInt(KEY_FONT_SIZE_SP, values.fontSizeSp.coerceIn(MIN_FONT_SIZE_SP, MAX_FONT_SIZE_SP))
             .putFloat(KEY_LINE_HEIGHT, values.lineHeight.coerceIn(MIN_LINE_HEIGHT, MAX_LINE_HEIGHT))
-            .putString(KEY_FONT_FAMILY, values.fontFamily.takeIf { it in SUPPORTED_FONT_FAMILIES } ?: DEFAULT_FONT_FAMILY)
+            .putString(KEY_FONT_FAMILY, values.fontFamily.takeIf(ReaderFontStore::isSupportedFamily) ?: DEFAULT_FONT_FAMILY)
             .putInt(KEY_FONT_WEIGHT, values.fontWeight.coerceIn(MIN_FONT_WEIGHT, MAX_FONT_WEIGHT))
             .putFloat(KEY_LETTER_SPACING, values.letterSpacing.coerceIn(MIN_LETTER_SPACING, MAX_LETTER_SPACING))
             .putFloat(KEY_WORD_SPACING, values.wordSpacing.coerceIn(MIN_WORD_SPACING, MAX_WORD_SPACING))
@@ -284,9 +284,8 @@ class ReaderSettingsStore(context: Context) {
         const val MAX_SCREEN_PADDING_DP = 100
         const val DEFAULT_REPLACE_MODE = "india"
         private val SUPPORTED_THEMES = setOf("system", "light", "sepia", "dark", "green", "gray", "high_contrast")
-        private val SUPPORTED_FONT_FAMILIES = setOf("system", "serif", "sans", "monospace")
         private val SUPPORTED_RADIAL_MODES = setOf("doubleTap", "longPress")
-        private val SUPPORTED_PAGE_TURN_EFFECTS = setOf("fade", "cover", "slide", "simulated")
+        private val SUPPORTED_PAGE_TURN_EFFECTS = setOf("none", "fade", "cover", "slide", "simulated")
         private val SUPPORTED_REPLACE_MODES = setOf(
             "", "korea", "india", "europe", "usa", "hyrule", "azeroth", "tamriel",
             "middle_earth", "terra", "genshin"

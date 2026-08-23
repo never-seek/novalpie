@@ -2,7 +2,9 @@ package com.novalpie.nativeapp.ui
 
 import com.novalpie.nativeapp.data.NovalPieApiException
 import com.novalpie.nativeapp.model.LoadResult
+import com.novalpie.nativeapp.model.NovelCard
 import com.novalpie.nativeapp.model.ReaderProgress
+import com.novalpie.nativeapp.model.UserActivity
 import com.novalpie.nativeapp.model.UserProfile
 import com.novalpie.nativeapp.model.UserCheckinRecord
 import com.novalpie.nativeapp.model.UserCheckinStats
@@ -88,6 +90,34 @@ internal fun profileWithContentActivityCounts(
     if ("comments" !in mergedStats) feed.commentCount?.let { mergedStats["comments"] = it }
     return profile.copy(stats = mergedStats)
 }
+
+/** The public profile payload often omits its novels counter; the versioned collection is exact. */
+internal fun profileWithPublicCollectionCounts(
+    profile: UserProfile?,
+    feed: UserContentActivityFeed?,
+    novels: List<NovelCard>?,
+): UserProfile? {
+    val withActivityCounts = profileWithContentActivityCounts(profile, feed) ?: return null
+    if (novels == null || "novels" in withActivityCounts.stats) return withActivityCounts
+    return withActivityCounts.copy(
+        stats = withActivityCounts.stats + ("novels" to novels.size.toLong()),
+    )
+}
+
+/** Keep the public profile's visible timeline and its aggregate counters from the same feed. */
+internal data class PublicProfileLoadPresentation(
+    val profile: UserProfile?,
+    val activities: List<UserActivity>?,
+)
+
+internal fun publicProfileLoadPresentation(
+    profile: UserProfile?,
+    feed: UserContentActivityFeed?,
+    novels: List<NovelCard>?,
+): PublicProfileLoadPresentation = PublicProfileLoadPresentation(
+    profile = profileWithPublicCollectionCounts(profile, feed, novels),
+    activities = feed?.activities,
+)
 
 /** The profile response is authoritative; the equipped inventory frame fills only a missing URL. */
 internal fun profileWithEquippedAvatarFrame(
