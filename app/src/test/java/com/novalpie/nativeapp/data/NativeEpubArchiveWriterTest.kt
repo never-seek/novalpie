@@ -3,6 +3,7 @@ package com.novalpie.nativeapp.data
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.io.StringReader
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.CRC32
@@ -198,6 +199,27 @@ class NativeEpubArchiveWriterTest {
     }
 
     @Test
+    fun stagedAssetCacheRejectsAFileWhoseBytesWereTruncatedAfterStaging() {
+        val file = File.createTempFile("novalpie-cache-integrity-", ".asset")
+        file.writeBytes(ByteArray(10))
+        val cache = NativeEpubStagedAssetCache(maxBytes = 100)
+        cache.put(
+            key = "https://images.example.test/truncated.jpg",
+            value = NativeEpubStagedFile(
+                file = file,
+                mediaType = "image/jpeg",
+                size = 10L,
+                crc = 0L,
+            ),
+        )
+
+        file.writeBytes(ByteArray(5))
+
+        assertEquals(null, cache.get("https://images.example.test/truncated.jpg"))
+        assertFalse(file.exists())
+    }
+
+    @Test
     fun consumesAssetInvokesCleanupAfterTheWriterCopiesIt() = runBlocking {
         val source = File.createTempFile("novalpie-source-cleanup-", ".asset")
         source.writeBytes(byteArrayOf(1, 2, 3, 4))
@@ -243,6 +265,48 @@ class NativeEpubArchiveWriterTest {
             assertEquals(expectedCrc, staged.crc)
             assertEquals("image/jpeg", staged.mediaType)
             assertArrayEquals(bytes, staged.file.readBytes())
+        } finally {
+            destination.delete()
+        }
+    }
+
+    @Test
+    fun doesNotExposePartiallyStagedFileBeforeCopyCompletes() {
+        val bytes = ByteArray(64 * 1024) { index -> (index * 17).toByte() }
+        val destination = File.createTempFile("novalpie-stage-atomic-test-", ".asset").apply {
+            delete()
+        }
+        var partialFileWasVisible = false
+        val source = object : InputStream() {
+            private var position = 0
+
+            override fun read(): Int {
+                val one = ByteArray(1)
+                return if (read(one, 0, 1) < 0) -1 else one[0].toInt() and 0xFF
+            }
+
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                if (position >= bytes.size) return -1
+                if (destination.isFile && destination.length() > 0L) {
+                    partialFileWasVisible = true
+                }
+                val count = minOf(length, 4096, bytes.size - position)
+                bytes.copyInto(buffer, offset, position, position + count)
+                position += count
+                return count
+            }
+        }
+
+        try {
+            val staged = stageNativeEpubFile(
+                input = source,
+                mediaType = "image/jpeg",
+                destination = destination,
+            )
+
+            assertFalse("final staging path was visible before the copy completed", partialFileWasVisible)
+            assertEquals(bytes.size.toLong(), staged.size)
+            assertArrayEquals(bytes, destination.readBytes())
         } finally {
             destination.delete()
         }
@@ -363,9 +427,13 @@ class NativeEpubArchiveWriterTest {
         assertEquals(listOf(coverUrl), openedUrls)
         assertArrayEquals(imageBytes, entries.getValue("OEBPS/images/cover.webp"))
         assertArrayEquals(imageBytes, entries.getValue("OEBPS/images/image-1.webp"))
+        val coverPage = entries.getValue("OEBPS/cover.xhtml").toString(Charsets.UTF_8)
+        assertTrue(coverPage.contains("src=\"images/cover.webp\""))
         val opf = entries.getValue("OEBPS/content.opf").toString(Charsets.UTF_8)
         assertTrue(opf.contains("id=\"cover-image\""))
         assertTrue(opf.contains("name=\"cover\" content=\"cover-image\""))
+        assertTrue(opf.contains("id=\"cover-page\""))
+        assertTrue(opf.contains("idref=\"cover-page\""))
         assertEquals(1, progress.last().totalImages)
         assertEquals(1, progress.last().completedImages)
     }

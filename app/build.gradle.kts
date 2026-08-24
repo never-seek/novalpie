@@ -23,8 +23,8 @@ android {
         applicationId = "com.novalpie.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2026082001
-        versionName = "2.0.0-native-beta2"
+        versionCode = 2026082401
+        versionName = "2.0.0-native-beta4"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

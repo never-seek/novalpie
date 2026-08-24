@@ -351,6 +351,100 @@ class ForumPresentationTest {
     }
 
     @Test
+    fun liveCommentMarkdownImageBecomesADedicatedRenderableParagraph() {
+        val imageUrl = "https://p.sda1.dev/34/d8f8ba919c228eddf5f9bf1630748042/7196e54684e89fcf3d971058a75bd5b7.jpg"
+        val paragraphs = forumRichParagraphs(
+            """
+            ![]($imageUrl)
+            不是很想修，反正皇書站也沒啥人看和尚文。
+            """.trimIndent()
+        )
+
+        assertEquals(2, paragraphs.size)
+        assertEquals(
+            "Image(url=$imageUrl, alt=)",
+            paragraphs.first().segments.single().toString(),
+        )
+        assertEquals("不是很想修，反正皇書站也沒啥人看和尚文。", paragraphs.last().plainText)
+        assertFalse(paragraphs.any { it.plainText.contains("![](") })
+    }
+
+    @Test
+    fun forumHtmlImageSupportsLazySourceButNeverRendersUnsafeScheme() {
+        val imageUrl = "https://p.sda1.dev/34/d8f8ba919c228eddf5f9bf1630748042/7196e54684e89fcf3d971058a75bd5b7.jpg"
+        val paragraphs = forumRichParagraphs(
+            "<p>图片前</p><img data-src=\"$imageUrl\" alt=\"动态插图\"><p>图片后</p>"
+        )
+
+        assertEquals(listOf("图片前", "图片后"), paragraphs.map(ForumRichParagraph::plainText).filter(String::isNotBlank))
+        assertEquals(
+            "Image(url=$imageUrl, alt=动态插图)",
+            paragraphs.single { it.plainText.isBlank() }.segments.single().toString(),
+        )
+        assertTrue(
+            forumRichParagraphs("![](javascript:alert(1))")
+                .flatMap(ForumRichParagraph::segments)
+                .none { it::class.simpleName == "Image" },
+        )
+    }
+
+    @Test
+    fun standaloneBookReferenceSyntaxIsNotRenderedAsLiteralCommentText() {
+        val paragraphs = forumRichParagraphs(
+            """
+            厉害，我甚至把这本上万张插图的书给下载下来了
+            [bookid:350192]
+            不过实际看书的时候还是有点难受
+            """.trimIndent()
+        )
+
+        assertFalse(
+            paragraphs.any { paragraph ->
+                paragraph.plainText.contains("[bookid:", ignoreCase = true)
+            }
+        )
+    }
+
+    @Test
+    fun bookReferenceSyntaxSeparatesSurroundingTextAndRetainsItsPositiveId() {
+        val raw = "前文[bookid:350192]后文"
+        val paragraphs = forumRichParagraphs(raw)
+
+        assertEquals(listOf("前文", "后文"), paragraphs.map(ForumRichParagraph::plainText).filter(String::isNotBlank))
+        assertEquals(listOf(350192L), paragraphs.mapNotNull(ForumRichParagraph::bookReferenceId))
+        assertEquals(listOf(350192L), forumBookReferenceIds(raw))
+        assertEquals(
+            ForumTextSegment.BookReference(350192L),
+            paragraphs.single { it.bookReferenceId != null }.segments.single()
+        )
+    }
+
+    @Test
+    fun invalidBookReferenceSyntaxRemainsPlainTextAndDoesNotCreateANetworkId() {
+        val raw = "[bookid:0]\n[bookid:]\n[bookid:not-a-number]"
+
+        assertEquals(emptyList<Long>(), forumBookReferenceIds(raw))
+        assertTrue(forumRichParagraphs(raw).single().plainText.contains("[bookid:0]"))
+    }
+
+    @Test
+    fun forumPostCommentsAndRepliesShareOneDeduplicatedBookReferenceParser() {
+        val rootComment = ForumComment(id = 1, content = "根评论 [bookid:350192]")
+        val reply = ForumComment(id = 2, parentCommentId = 1, content = "回复 [bookid:354491]")
+
+        assertEquals(
+            listOf(350192L, 354491L),
+            forumBookReferenceIds(
+                listOf(
+                    "帖子正文 [bookid:350192]",
+                    rootComment.content,
+                    reply.content,
+                )
+            )
+        )
+    }
+
+    @Test
     fun forumSpoilerMarkersBecomeMaskedSegmentsInsteadOfLiteralDelimiters() {
         val paragraph = forumRichParagraphs(
             "前文 ||需要隐藏的剧透|| 后文"

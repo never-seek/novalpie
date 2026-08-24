@@ -1829,6 +1829,7 @@ private fun ForumPostDetailScreen(
                 item {
                     ForumPostHeader(
                         detail = detail.value,
+                        bookReferences = state.bookReferences,
                         onLike = onLike,
                         onDislike = onDislike,
                         onEmoji = onEmoji,
@@ -1877,6 +1878,7 @@ private fun ForumPostDetailScreen(
                     items(threads) { thread ->
                         ForumCommentThreadBlock(
                             thread = thread,
+                            bookReferences = state.bookReferences,
                             onLike = onCommentLike,
                             onDislike = onCommentDislike,
                             onEmoji = onCommentEmoji,
@@ -1898,6 +1900,7 @@ private fun ForumPostDetailScreen(
 @OptIn(ExperimentalLayoutApi::class)
 private fun ForumPostHeader(
     detail: ForumPostDetail,
+    bookReferences: Map<Long, LoadResult<NovelCard>>,
     onLike: () -> Unit,
     onDislike: () -> Unit,
     onEmoji: () -> Unit,
@@ -1978,6 +1981,7 @@ private fun ForumPostHeader(
                 content = detail.content.orEmpty(),
                 style = MaterialTheme.typography.bodyLarge,
                 onOpenLink = onOpenLink,
+                bookReferences = bookReferences,
                 emptyLabel = "正文暂时为空"
             )
 
@@ -2099,13 +2103,24 @@ internal fun ForumFeedExcerpt(
                         is ForumTextSegment.Bold -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
                             append(segment.value)
                         }
-                        is ForumTextSegment.Link -> withStyle(
-                            SpanStyle(
-                                color = linkColor,
+                    is ForumTextSegment.Link -> withStyle(
+                        SpanStyle(
+                            color = linkColor,
                                 textDecoration = TextDecoration.Underline,
                             )
                         ) {
                             append(segment.label)
+                        }
+                    is ForumTextSegment.Image -> append(
+                        segment.alt.takeIf(String::isNotBlank)?.let { "[图片：$it]" } ?: "[图片]"
+                    )
+                    is ForumTextSegment.BookReference -> withStyle(
+                        SpanStyle(
+                            color = linkColor,
+                                textDecoration = TextDecoration.Underline,
+                            )
+                        ) {
+                            append("《书籍 #${segment.bookId}》")
                         }
                         is ForumTextSegment.Spoiler -> {
                             val currentSpoilerIndex = spoilerIndex++
@@ -2188,6 +2203,7 @@ private fun ForumRichContent(
     content: String,
     style: androidx.compose.ui.text.TextStyle,
     onOpenLink: (String) -> Unit,
+    bookReferences: Map<Long, LoadResult<NovelCard>> = emptyMap(),
     emptyLabel: String,
     hideSpoilers: Boolean = LocalForumHideSpoilers.current,
 ) {
@@ -2204,23 +2220,233 @@ private fun ForumRichContent(
             paragraphs.forEach { paragraph ->
                 val paragraphSpoilerOffset = spoilerOffset
                 spoilerOffset += paragraph.segments.count { it is ForumTextSegment.Spoiler }
-                ForumRichParagraphText(
-                    paragraph = paragraph,
-                    style = style,
-                    onOpenLink = onOpenLink,
-                    hideSpoilers = hideSpoilers,
-                    revealedSpoilerIndexes = revealedSpoilerIndexes,
-                    spoilerOffset = paragraphSpoilerOffset,
-                    onRevealSpoiler = { spoilerIndex ->
-                        revealedSpoilerIndexes = forumRevealSpoiler(
-                            hideSpoilers = hideSpoilers,
-                            revealedSpoilerIndexes = revealedSpoilerIndexes,
-                            spoilerIndex = spoilerIndex,
-                        )
-                    },
-                )
+                val bookReferenceId = paragraph.bookReferenceId
+                val image = paragraph.image
+                if (bookReferenceId != null) {
+                    ForumEmbeddedBookCard(
+                        bookId = bookReferenceId,
+                        bookState = bookReferences[bookReferenceId],
+                        onOpen = {
+                            onOpenLink("https://novalpie.cc/book/$bookReferenceId")
+                        },
+                    )
+                } else if (image != null) {
+                    ForumEmbeddedImage(image)
+                } else {
+                    ForumRichParagraphText(
+                        paragraph = paragraph,
+                        style = style,
+                        onOpenLink = onOpenLink,
+                        hideSpoilers = hideSpoilers,
+                        revealedSpoilerIndexes = revealedSpoilerIndexes,
+                        spoilerOffset = paragraphSpoilerOffset,
+                        onRevealSpoiler = { spoilerIndex ->
+                            revealedSpoilerIndexes = forumRevealSpoiler(
+                                hideSpoilers = hideSpoilers,
+                                revealedSpoilerIndexes = revealedSpoilerIndexes,
+                                spoilerIndex = spoilerIndex,
+                            )
+                        },
+                    )
+                }
             }
         }
+    }
+}
+
+/**
+ * Native counterpart of the website's [bookid:...] embed. Its loading state is supplied by the
+ * view model, so a LazyColumn recompose cannot repeat the detail request for the same marker.
+ */
+@Composable
+private fun ForumEmbeddedBookCard(
+    bookId: Long,
+    bookState: LoadResult<NovelCard>?,
+    onOpen: () -> Unit,
+) {
+    val book = (bookState as? LoadResult.Success)?.value
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics {
+                contentDescription = book?.let { "打开关联书籍 ${it.title}" } ?: "打开关联书籍 #$bookId"
+            }
+            .clickable(onClick = onOpen),
+        shape = RoundedCornerShape(NovalPieRadius.md),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.46f),
+        ),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = NovalPieElevation.none),
+    ) {
+        Row(
+            modifier = Modifier.padding(NovalPieSpacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (book != null) {
+                BookCover(
+                    title = book.title,
+                    coverUrl = novelThumbnailCoverUrl(book),
+                    width = 64.dp,
+                    height = 92.dp,
+                    previewPolicy = CoverPreviewPolicy.Disabled,
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xxs),
+                ) {
+                    Text(
+                        text = book.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    book.author?.takeIf(String::isNotBlank)?.let { author ->
+                        Text(
+                            text = author,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    val metrics = buildList {
+                        book.favoriteCount?.let { add("$it 收藏") }
+                        book.siteReadCount?.let { add("$it 阅读") }
+                        book.wordCount?.let { add("${it / 10_000} 万字") }
+                    }
+                    if (metrics.isNotEmpty()) {
+                        Text(
+                            text = metrics.joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    book.tags.take(3).filter(String::isNotBlank).takeIf { it.isNotEmpty() }?.let { tags ->
+                        Text(
+                            text = tags.joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                    contentDescription = null,
+                    modifier = Modifier.size(NovalPieSize.iconSm),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            } else {
+                if (bookState is LoadResult.Loading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(NovalPieSize.iconMd),
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.MenuBook,
+                        contentDescription = null,
+                        modifier = Modifier.size(NovalPieSize.iconLg),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (bookState is LoadResult.Loading) "正在载入关联书籍" else "关联书籍 #$bookId",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "点此打开书籍详情",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Source forum comments lazy-load image blocks rather than flattening their Markdown/HTML into
+ * text. This shares the app-wide Coil loader, so proxy routing and GIF/animated WebP support stay
+ * identical to book covers and reader illustrations.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ForumEmbeddedImage(image: ForumTextSegment.Image) {
+    val context = LocalContext.current
+    val touchSlop = LocalViewConfiguration.current.touchSlop
+    val title = image.alt.takeIf(String::isNotBlank) ?: "论坛图片"
+    val imageRequest = remember(image.url, context) {
+        ImageRequest.Builder(context)
+            .data(image.url)
+            .size(2048, 2048)
+            .precision(Precision.INEXACT)
+            .crossfade(true)
+            .build()
+    }
+    var previewVisible by remember(image.url) { mutableStateOf(false) }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .longPressOnly(touchSlop) { previewVisible = true },
+        shape = RoundedCornerShape(NovalPieRadius.sm),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+        tonalElevation = NovalPieElevation.none,
+    ) {
+        Column {
+            SubcomposeAsyncImage(
+                model = imageRequest,
+                contentDescription = "$title，长按查看大图",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 120.dp, max = 720.dp),
+                contentScale = ContentScale.Fit,
+                loading = {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(160.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(NovalPieSize.iconMd), strokeWidth = 2.dp)
+                    }
+                },
+                error = {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "图片加载失败",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
+            )
+            Text(
+                text = if (image.alt.isBlank()) "长按查看大图" else "$title · 长按查看大图",
+                modifier = Modifier.padding(horizontal = NovalPieSpacing.sm, vertical = NovalPieSpacing.xs),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+
+    if (previewVisible) {
+        ImagePreviewDialog(
+            imageUrl = image.url,
+            title = title,
+            onDismiss = { previewVisible = false },
+        )
     }
 }
 
@@ -2283,6 +2509,25 @@ private fun ForumRichParagraphText(
                             )
                         ) {
                             append(segment.label)
+                        }
+                        pop()
+                    }
+                    is ForumTextSegment.Image -> {
+                        append(segment.alt.takeIf(String::isNotBlank)?.let { "[图片：$it]" } ?: "[图片]")
+                    }
+                    is ForumTextSegment.BookReference -> {
+                        pushStringAnnotation(
+                            tag = FORUM_LINK_ANNOTATION,
+                            annotation = "https://novalpie.cc/book/${segment.bookId}",
+                        )
+                        withStyle(
+                            SpanStyle(
+                                color = linkColor,
+                                textDecoration = TextDecoration.Underline,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        ) {
+                            append("《书籍 #${segment.bookId}》")
                         }
                         pop()
                     }
@@ -2462,6 +2707,7 @@ private fun InlineCommentComposer(
 @Composable
 private fun ForumCommentThreadBlock(
     thread: ForumCommentThread,
+    bookReferences: Map<Long, LoadResult<NovelCard>>,
     onLike: (Long) -> Unit,
     onDislike: (Long) -> Unit,
     onEmoji: (Long) -> Unit,
@@ -2475,6 +2721,7 @@ private fun ForumCommentThreadBlock(
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         ForumCommentRow(
             comment = thread.comment,
+            bookReferences = bookReferences,
             onLike = { onLike(thread.comment.id) },
             onDislike = { onDislike(thread.comment.id) },
             onEmoji = { onEmoji(thread.comment.id) },
@@ -2504,6 +2751,7 @@ private fun ForumCommentThreadBlock(
                     ) {
                         ForumCommentRow(
                             comment = reply,
+                            bookReferences = bookReferences,
                             onLike = { onLike(reply.id) },
                             onDislike = { onDislike(reply.id) },
                             onEmoji = { onEmoji(reply.id) },
@@ -2523,6 +2771,7 @@ private fun ForumCommentThreadBlock(
 @OptIn(ExperimentalLayoutApi::class)
 private fun ForumCommentRow(
     comment: ForumComment,
+    bookReferences: Map<Long, LoadResult<NovelCard>>,
     onLike: () -> Unit,
     onDislike: () -> Unit,
     onEmoji: () -> Unit,
@@ -2586,6 +2835,7 @@ private fun ForumCommentRow(
                 content = comment.content,
                 style = MaterialTheme.typography.bodyMedium,
                 onOpenLink = onOpenLink,
+                bookReferences = bookReferences,
                 emptyLabel = "评论内容暂时为空"
             )
             FlowRow(
@@ -9646,6 +9896,31 @@ internal enum class CoverPreviewPolicy {
  */
 internal fun bookDetailCoverPreviewPolicy(): CoverPreviewPolicy = CoverPreviewPolicy.LongPressOnly
 
+/**
+ * Cover inspection should require a little more intent than the platform's generic long press.
+ * The extra 400ms gives a finger beginning to scroll time to cross touch slop and cancel the
+ * preview, while a deliberate stationary hold still remains responsive.
+ */
+internal const val COVER_PREVIEW_EXTRA_LONG_PRESS_MILLIS = 400L
+
+internal fun coverPreviewLongPressTimeoutMillis(platformTimeoutMillis: Long): Long =
+    platformTimeoutMillis.coerceAtLeast(1L) + COVER_PREVIEW_EXTRA_LONG_PRESS_MILLIS
+
+internal fun coverPreviewLongPressMovementExceedsSlop(
+    distancePx: Float,
+    touchSlopPx: Float,
+): Boolean =
+    !distancePx.isFinite() || !touchSlopPx.isFinite() || distancePx >= touchSlopPx.coerceAtLeast(0f)
+
+internal fun coverPreviewLongPressShouldTrigger(
+    durationMillis: Long,
+    distancePx: Float,
+    touchSlopPx: Float,
+    platformTimeoutMillis: Long,
+): Boolean =
+    durationMillis >= coverPreviewLongPressTimeoutMillis(platformTimeoutMillis) &&
+        !coverPreviewLongPressMovementExceedsSlop(distancePx, touchSlopPx)
+
 private enum class StationaryLongPressOutcome {
     Released,
     Moved,
@@ -9675,7 +9950,9 @@ private fun Modifier.longPressOnly(
         // This is AwaitPointerEventScope.withTimeoutOrNull, not the general coroutine helper. The
         // restricted scope permits awaitPointerEvent inside the timer and keeps the event pass
         // ahead of the ancestor combinedClickable.
-        val outcome = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+        val outcome = withTimeoutOrNull(
+            coverPreviewLongPressTimeoutMillis(viewConfiguration.longPressTimeoutMillis)
+        ) {
             while (true) {
                 val event = awaitPointerEvent(PointerEventPass.Initial)
                 val change = event.changes.firstOrNull()
@@ -9684,7 +9961,10 @@ private fun Modifier.longPressOnly(
                     return@withTimeoutOrNull StationaryLongPressOutcome.Released
                 }
                 if (event.changes.size > 1 ||
-                    (change.position - downPosition).getDistance() > touchSlopPx
+                    coverPreviewLongPressMovementExceedsSlop(
+                        distancePx = (change.position - downPosition).getDistance(),
+                        touchSlopPx = touchSlopPx,
+                    )
                 ) {
                     return@withTimeoutOrNull StationaryLongPressOutcome.Moved
                 }

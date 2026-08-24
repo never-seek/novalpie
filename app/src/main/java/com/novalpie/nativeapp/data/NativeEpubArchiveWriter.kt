@@ -1,5 +1,6 @@
 package com.novalpie.nativeapp.data
 
+import android.util.Log
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
@@ -18,6 +19,20 @@ import java.util.Locale
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+
+private const val NATIVE_EPUB_LOG_TAG = "NovalPieEpub"
+
+private fun logNativeEpubDiagnostic(message: String, failure: Throwable? = null) {
+    // Local JVM tests use the Android SDK's "not mocked" stubs. Diagnostics must never change
+    // the cache/export result when the platform logger is unavailable, so keep logging best-effort.
+    runCatching {
+        if (failure == null) {
+            Log.w(NATIVE_EPUB_LOG_TAG, message)
+        } else {
+            Log.e(NATIVE_EPUB_LOG_TAG, message, failure)
+        }
+    }
+}
 
 /** Metadata used when the source site grants an EPUB export to the native app. */
 data class NativeEpubMetadata(
@@ -76,9 +91,14 @@ internal class NativeEpubStagedAssetCache(
 
     fun get(key: String): NativeEpubStagedFile? = synchronized(this) {
         val value = entries[key] ?: return@synchronized null
-        if (!value.file.isFile) {
+        val actualSize = if (value.file.isFile) value.file.length() else -1L
+        if (actualSize != value.size) {
+            logNativeEpubDiagnostic(
+                "discarding staged cache entry key=$key file=${value.file.name} expected=${value.size} actual=$actualSize"
+            )
             entries.remove(key)
             totalBytes -= value.size.coerceAtLeast(0L)
+            value.file.delete()
             return@synchronized null
         }
         value
@@ -92,6 +112,12 @@ internal class NativeEpubStagedAssetCache(
         synchronized(this) {
             entries.remove(key)?.let { previous ->
                 totalBytes -= previous.size.coerceAtLeast(0L)
+                val previousSize = if (previous.file.isFile) previous.file.length() else -1L
+                if (previousSize != previous.size) {
+                    logNativeEpubDiagnostic(
+                        "replacing damaged staged cache entry key=$key file=${previous.file.name} expected=${previous.size} actual=$previousSize"
+                    )
+                }
                 if (previous.file != value.file) previous.file.delete()
             }
             entries[key] = value
@@ -197,8 +223,15 @@ internal fun stageNativeEpubFile(
     var size = 0L
     val header = ByteArray(32)
     var headerSize = 0
+    // Never expose the destination while the network bytes are still being copied. Android's
+    // cache/filesystem can be observed by another worker (or an interrupted old job) between two
+    // reads; publishing a partially written final path lets that observer retain a bad length and
+    // later makes FileInputStream stop early even though the path metadata looks complete. The
+    // sibling temporary file is renamed only after the copy and buffered flush finish.
+    val temporary = File.createTempFile("novalpie-stage-", ".part", destination.parentFile)
     input.use { source ->
-        FileOutputStream(destination).buffered().use { output ->
+        try {
+            FileOutputStream(temporary).buffered().use { output ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
             while (true) {
                 val read = source.read(buffer)
@@ -213,9 +246,19 @@ internal fun stageNativeEpubFile(
                 }
                 size += read
             }
+            }
+            if (size <= 0L) throw IllegalStateException("图片内容为空")
+            if (destination.exists() && !destination.delete()) {
+                throw IllegalStateException("无法替换 EPUB 阶段文件")
+            }
+            if (!temporary.renameTo(destination)) {
+                throw IllegalStateException("无法发布 EPUB 阶段文件")
+            }
+        } catch (failure: Throwable) {
+            temporary.delete()
+            throw failure
         }
     }
-    if (size <= 0L) throw IllegalStateException("图片内容为空")
     return NativeEpubStagedFile(
         file = destination,
         mediaType = detectNativeEpubMediaType(mediaType, header.copyOf(headerSize)),
@@ -395,6 +438,15 @@ object NativeEpubArchiveWriter {
                         stagedAssets.trim()
                         record
                     }
+                // A cover-image manifest property is valid EPUB 3, but a number of Android
+                // readers still discover the cover only through a dedicated XHTML page in the
+                // spine. Keep the original bytes and media type; the page is just a compatibility
+                // entry and never duplicates the image asset.
+                coverRecord?.let { cover ->
+                    if (cover.path != null) {
+                        writeText(zip, "OEBPS/cover.xhtml", coverPageXhtml(metadata, cover))
+                    }
+                }
 
                 // The website reports illustration progress for chapter descriptors only. The
                 // cover is a separate EPUB phase and must not make the displayed image count one
@@ -540,7 +592,7 @@ object NativeEpubArchiveWriter {
             // A failed first staging attempt must be retried for this occurrence, just as the
             // website retries each descriptor independently. Successful staged bytes are shared.
             val staged = stagedByUrl[url]
-                ?.takeIf { it.file != null }
+                ?.takeIf(::isStagedAssetIntact)
                 ?: stageAsset(
                     stagedAssets = stagedAssets,
                     url = url,
@@ -574,6 +626,9 @@ object NativeEpubArchiveWriter {
         }
         return paragraphs(withImages)
     }
+
+    private fun isStagedAssetIntact(staged: StagedAsset): Boolean =
+        staged.file?.let { file -> file.isFile && file.length() == staged.size } == true
 
     private suspend fun stageAssetsConcurrently(
         urls: List<String>,
@@ -739,7 +794,16 @@ object NativeEpubArchiveWriter {
                 )
             }
         } finally {
-            zip.closeEntry()
+            try {
+                zip.closeEntry()
+            } catch (failure: Throwable) {
+                val actualSize = if (staged.file.isFile) staged.file.length() else -1L
+                logNativeEpubDiagnostic(
+                    "ZIP image entry failed path=$path file=${staged.file.name} expected=${staged.size} actual=$actualSize",
+                    failure,
+                )
+                throw failure
+            }
         }
         return ImageRecord(path = path, mediaType = staged.mediaType)
     }
@@ -825,6 +889,9 @@ object NativeEpubArchiveWriter {
         val coverManifest = cover?.path?.let { path ->
             "    <item id=\"cover-image\" href=\"$path\" media-type=\"${escapeXml(cover.mediaType ?: mediaTypeForPath(path))}\" properties=\"cover-image\"/>"
         }.orEmpty()
+        val coverPageManifest = cover?.path?.let {
+            "    <item id=\"cover-page\" href=\"cover.xhtml\" media-type=\"application/xhtml+xml\"/>"
+        }.orEmpty()
         val imageManifest = images.mapIndexedNotNull { index, image ->
             image.path?.let { path ->
                 "    <item id=\"image-${index + 1}\" href=\"$path\" media-type=\"${escapeXml(image.mediaType ?: mediaTypeForPath(path))}\"/>"
@@ -833,6 +900,7 @@ object NativeEpubArchiveWriter {
         val spine = chapters.joinToString("\n") { chapter ->
             "    <itemref idref=\"chapter-${chapter.index}\"/>"
         }
+        val coverSpineItem = cover?.path?.let { "    <itemref idref=\"cover-page\"/>" }.orEmpty()
         return """<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -848,13 +916,27 @@ ${cover?.path?.let { "    <meta name=\"cover\" content=\"cover-image\"/>" }.orEm
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
     <item id="style" href="Styles/style.css" media-type="text/css"/>
 $chapterManifest
+$coverPageManifest
 $coverManifest
 $imageManifest
   </manifest>
   <spine>
+$coverSpineItem
 $spine
   </spine>
 </package>"""
+    }
+
+    private fun coverPageXhtml(metadata: NativeEpubMetadata, cover: ImageRecord): String {
+        val imagePath = cover.path ?: return ""
+        return """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head><meta charset="UTF-8"/><title>封面</title><link rel="stylesheet" type="text/css" href="Styles/style.css"/></head>
+<body class="cover-page">
+<img class="cover-image" src="${escapeXml(imagePath)}" alt="封面"/>
+<h1>${escapeXml(metadata.title)}</h1>
+<p class="cover-author">${escapeXml(metadata.author)}</p>
+</body></html>"""
     }
 
     private fun navigationXhtml(title: String, chapters: List<ChapterRecord>): String {
@@ -880,7 +962,11 @@ $body
 h1 { text-align: center; font-size: 1.35em; margin: 0 0 1.5em; }
 p { margin: 0 0 0.9em; text-indent: 2em; }
 .chapter-image { display: block; max-width: 100%; height: auto; margin: 1em auto; }
-.image-missing { color: #a33; }"""
+.image-missing { color: #a33; }
+.cover-page { margin: 0; padding: 1.2em; text-align: center; }
+.cover-image { display: block; max-width: 100%; max-height: 78vh; height: auto; margin: 0 auto 1.5em; }
+.cover-page h1 { margin: 0.5em 0 0.25em; }
+.cover-author { text-indent: 0; color: #666; }"""
 
     private fun mediaTypeForPath(path: String): String = when (path.substringAfterLast('.', "").lowercase(Locale.US)) {
         "webp" -> "image/webp"

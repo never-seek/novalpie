@@ -33,7 +33,9 @@ import com.novalpie.nativeapp.data.NativeEpubArchiveWriter
 import com.novalpie.nativeapp.data.NativeEpubAsset
 import com.novalpie.nativeapp.data.NativeEpubExportProgress
 import com.novalpie.nativeapp.data.NativeEpubMetadata
+import com.novalpie.nativeapp.data.copyNativeDownloadFile
 import com.novalpie.nativeapp.data.cleanupNativeEpubTempFiles
+import com.novalpie.nativeapp.data.nativeEpubGenerationFile
 import com.novalpie.nativeapp.data.PersistedFavoritesSettings
 import com.novalpie.nativeapp.data.PersistedSearchSettings
 import com.novalpie.nativeapp.data.ProxySettings
@@ -514,6 +516,8 @@ data class ForumPostDetailState(
     val postId: Long = 0,
     val detail: LoadResult<ForumPostDetail> = LoadResult.Idle,
     val comments: LoadResult<List<ForumComment>> = LoadResult.Idle,
+    /** Source [bookid:...] markers resolved for the currently open post and its discussion tree. */
+    val bookReferences: Map<Long, LoadResult<NovelCard>> = emptyMap(),
     val commentDraft: String = "",
     val replyingToCommentId: Long? = null,
     val replyingToName: String? = null,
@@ -4846,11 +4850,50 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val detail = async { runCatching { api.forumPostDetail(postId) } }
             val comments = async { runCatching { api.forumPostComments(postId = postId) } }
+            val detailResult = detail.await()
+            val commentsResult = comments.await()
             if (currentRoute != AppRoute.ForumPostDetail(postId)) return@launch
             forumPostDetailState = forumPostDetailState.copy(
-                detail = detail.await().toLoadResult(VisibleUiLabels.ForumPostDetail),
-                comments = comments.await().toLoadResult(VisibleUiLabels.Comments)
+                detail = detailResult.toLoadResult(VisibleUiLabels.ForumPostDetail),
+                comments = commentsResult.toLoadResult(VisibleUiLabels.Comments)
             )
+            loadForumBookReferences(
+                postId = postId,
+                contents = buildList {
+                    detailResult.getOrNull()?.content?.let(::add)
+                    commentsResult.getOrNull().orEmpty().map(ForumComment::content).forEach(::add)
+                }
+            )
+        }
+    }
+
+    /**
+     * Resolve each source book marker once per detail route. Compose receives immutable loading
+     * states and therefore never starts network work during recomposition or while a comment row
+     * is being flung.
+     */
+    private fun loadForumBookReferences(postId: Long, contents: List<String>) {
+        val bookIds = forumBookReferenceIds(contents)
+        if (currentRoute != AppRoute.ForumPostDetail(postId) || forumPostDetailState.postId != postId) return
+        if (bookIds.isEmpty()) {
+            forumPostDetailState = forumPostDetailState.copy(bookReferences = emptyMap())
+            return
+        }
+
+        forumPostDetailState = forumPostDetailState.copy(
+            bookReferences = bookIds.associateWith { LoadResult.Loading }
+        )
+        viewModelScope.launch {
+            val requests = bookIds.associateWith { bookId ->
+                async { runCatching { api.bookDetail(bookId) } }
+            }
+            val resolved = requests.mapValues { (_, request) ->
+                request.await().toLoadResult("关联书籍")
+            }
+            if (currentRoute != AppRoute.ForumPostDetail(postId) || forumPostDetailState.postId != postId) {
+                return@launch
+            }
+            forumPostDetailState = forumPostDetailState.copy(bookReferences = resolved)
         }
     }
 
@@ -7091,6 +7134,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         )
         viewModelScope.launch {
             var destination: NativeDownloadDestination? = null
+            var epubWorkDirectory: File? = null
+            var generatedEpubFile: File? = null
             // NativeEpubArchiveWriter stages several image assets at once. The producer callback
             // therefore records temporary files from multiple IO workers.
             val temporaryAssets = ConcurrentLinkedQueue<File>()
@@ -7100,23 +7145,29 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     message = "正在下载正文并整理 EPUB…",
                 )
                 withContext(Dispatchers.IO) {
-                    destination = createNativeEpubDestination(book?.title ?: "novalpie", bookId)
-                    val target = destination ?: throw IOException("无法创建下载目标")
-                    openNativeDownloadOutput(target).use { output ->
+                    val workDirectory = createNativeEpubWorkDirectory(app, bookId)
+                    epubWorkDirectory = workDirectory
+                    val generated = nativeEpubGenerationFile(workDirectory, bookId)
+                    generatedEpubFile = generated
+                    generated.outputStream().use { output ->
                         api.streamDownloadFile(ticket.fileName) { input ->
                             InputStreamReader(input, Charsets.UTF_8).use { source ->
-                                        NativeEpubArchiveWriter.write(
-                                            output = output,
+                                NativeEpubArchiveWriter.write(
+                                    output = output,
                                     metadata = NativeEpubMetadata(
                                         title = book?.title ?: "NovalPie book $bookId",
                                         author = book?.author ?: "未知作者",
                                         description = book?.description.orEmpty(),
                                         coverUrl = nativeEpubCoverUrl(book),
                                     ),
-                                            source = source,
-                                            stagingDirectory = app.cacheDir,
-                                            openAsset = { url ->
-                                        val temporary = File.createTempFile("novalpie-asset-", ".bin", app.cacheDir)
+                                    source = source,
+                                    stagingDirectory = epubWorkDirectory,
+                                    openAsset = { url ->
+                                        val temporary = File.createTempFile(
+                                            "novalpie-asset-",
+                                            ".bin",
+                                            epubWorkDirectory,
+                                        )
                                         try {
                                             var mediaType: String? = null
                                             api.streamAsset(url) { assetInput, contentType ->
@@ -7149,6 +7200,15 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                             }
                         }
                     }
+                    if (!generated.isFile || generated.length() <= 0L) {
+                        throw IOException("EPUB 临时文件为空")
+                    }
+                    nativeEpubDownloadState = nativeEpubDownloadState.copy(
+                        message = "正在写入下载目录…",
+                    )
+                    destination = createNativeEpubDestination(book?.title ?: "novalpie", bookId)
+                    val target = destination ?: throw IOException("无法创建下载目标")
+                    publishNativeEpubFile(generated, target)
                     commitNativeDownloadDestination(target)
                 }
                 nativeEpubDownloadState = nativeEpubDownloadState.copy(
@@ -7166,6 +7226,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 )
             } finally {
                 temporaryAssets.forEach { it.delete() }
+                generatedEpubFile?.delete()
+                epubWorkDirectory?.deleteRecursively()
             }
         }
     }
@@ -7301,6 +7363,23 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         return "正在生成 EPUB：$chapterText$imageText"
     }
 
+    /**
+     * EPUB staging is deliberately kept out of cacheDir. Android may evict cache files while a
+     * multi-minute, multi-gigabyte export is still reading them; a private per-job directory gives
+     * the writer a stable filesystem boundary and is removed in the coroutine's finally block.
+     */
+    private fun createNativeEpubWorkDirectory(app: Application, bookId: Long): File {
+        val root = File(app.filesDir, "novalpie-epub-work")
+        if (!root.isDirectory && !root.mkdirs()) {
+            throw IOException("无法创建 EPUB 临时目录")
+        }
+        val directory = File(root, "$bookId-${System.currentTimeMillis()}-${System.nanoTime()}")
+        if (!directory.mkdirs()) {
+            throw IOException("无法创建 EPUB 工作目录")
+        }
+        return directory
+    }
+
     private fun createNativeEpubDestination(title: String, bookId: Long): NativeDownloadDestination =
         createNativeDownloadDestination(
             title = title,
@@ -7365,6 +7444,61 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 ?: throw IOException("无法打开下载文件")
         } ?: destination.file?.outputStream()
         ?: throw IOException("下载目标无效")
+
+    /**
+     * Publish only after NativeEpubArchiveWriter has closed and validated the complete ZIP. A
+     * MediaStore/FUSE stream can stop at the 4 GiB boundary on large books; keeping ZIP assembly
+     * on a private regular file avoids exposing that boundary to ZipOutputStream.
+     */
+    private fun publishNativeEpubFile(
+        source: File,
+        destination: NativeDownloadDestination,
+    ) {
+        val expected = source.length()
+        if (expected <= 0L) throw IOException("EPUB 临时文件为空")
+        destination.uri?.let { uri ->
+            val resolver = getApplication<Application>().contentResolver
+            resolver.openOutputStream(uri, "w")?.use { output ->
+                copyNativeDownloadFile(source, output)
+            } ?: throw IOException("无法打开下载文件")
+            val publishedSize = resolver.query(
+                uri,
+                arrayOf(OpenableColumns.SIZE),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (!cursor.moveToFirst()) null else {
+                    val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (index < 0 || cursor.isNull(index)) null else cursor.getLong(index)
+                }
+            }
+            if (publishedSize != null && publishedSize >= 0L && publishedSize != expected) {
+                throw IOException("下载文件复制不完整：预期 $expected 字节，实际 $publishedSize 字节")
+            }
+            return
+        }
+
+        val target = destination.file ?: throw IOException("下载目标无效")
+        val temporary = File(target.parentFile, ".${target.name}.part")
+        try {
+            temporary.delete()
+            temporary.outputStream().use { output ->
+                copyNativeDownloadFile(source, output)
+            }
+            if (temporary.length() != expected) {
+                throw IOException("下载文件复制不完整：预期 $expected 字节，实际 ${temporary.length()} 字节")
+            }
+            if (target.exists() && !target.delete()) {
+                throw IOException("无法替换下载文件")
+            }
+            if (!temporary.renameTo(target)) {
+                throw IOException("无法发布下载文件")
+            }
+        } finally {
+            temporary.delete()
+        }
+    }
 
     private fun commitNativeDownloadDestination(destination: NativeDownloadDestination) {
         destination.uri?.let { uri ->

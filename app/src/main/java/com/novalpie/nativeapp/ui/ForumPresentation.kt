@@ -28,6 +28,10 @@ internal sealed interface ForumTextSegment {
     data class Plain(val value: String) : ForumTextSegment
     data class Bold(val value: String) : ForumTextSegment
     data class Link(val label: String, val url: String) : ForumTextSegment
+    /** Source Markdown/HTML images render as their own native media block. */
+    data class Image(val url: String, val alt: String = "") : ForumTextSegment
+    /** Source sharing syntax: [bookid:123]. It renders as a native book card, never raw text. */
+    data class BookReference(val bookId: Long) : ForumTextSegment
     /** The source uses ||...|| for content hidden by the review-feed spoiler switch. */
     data class Spoiler(val value: String) : ForumTextSegment
 }
@@ -39,9 +43,17 @@ internal data class ForumRichParagraph(val segments: List<ForumTextSegment>) {
                 is ForumTextSegment.Plain -> segment.value
                 is ForumTextSegment.Bold -> segment.value
                 is ForumTextSegment.Link -> segment.label
+                is ForumTextSegment.Image -> ""
+                is ForumTextSegment.BookReference -> ""
                 is ForumTextSegment.Spoiler -> segment.value
             }
         }.trim()
+
+    val image: ForumTextSegment.Image?
+        get() = segments.singleOrNull() as? ForumTextSegment.Image
+
+    val bookReferenceId: Long?
+        get() = (segments.singleOrNull() as? ForumTextSegment.BookReference)?.bookId
 }
 
 internal fun forumSpoilerIsVisible(
@@ -257,7 +269,26 @@ internal fun forumCommentLinkPreviews(comment: ForumComment): List<String> =
 internal fun forumRichParagraphs(raw: String): List<ForumRichParagraph> =
     forumMarkupParagraphs(raw)
         .map(::forumRichParagraph)
-        .filter { it.segments.isNotEmpty() && it.plainText.isNotBlank() }
+        .filter { paragraph ->
+            paragraph.segments.isNotEmpty() &&
+                (paragraph.plainText.isNotBlank() || paragraph.image != null || paragraph.bookReferenceId != null)
+        }
+
+/**
+ * Extracts only valid source sharing markers after HTML sanitisation and paragraph processing, so
+ * an example inside a stripped script/style block cannot trigger a network request.
+ */
+internal fun forumBookReferenceIds(raw: String): List<Long> =
+    forumRichParagraphs(raw)
+        .flatMap { paragraph ->
+            paragraph.segments.mapNotNull { segment ->
+                (segment as? ForumTextSegment.BookReference)?.bookId
+            }
+        }
+        .distinct()
+
+internal fun forumBookReferenceIds(contents: Iterable<String>): List<Long> =
+    contents.flatMap(::forumBookReferenceIds).distinct()
 
 /**
  * Feed cards render only a few lines, so handing a whole review to Android's text layout engine
@@ -293,6 +324,19 @@ internal class ForumRichParagraphCache(
 }
 
 private fun forumRichParagraph(raw: String): ForumRichParagraph {
+    forumBookReferenceRegex.matchEntire(raw.trim())
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toLongOrNull()
+        ?.takeIf { it > 0L }
+        ?.let { bookId ->
+            return ForumRichParagraph(listOf(ForumTextSegment.BookReference(bookId)))
+        }
+
+    forumImageSegment(raw.trim())?.let { image ->
+        return ForumRichParagraph(listOf(image))
+    }
+
     val segments = mutableListOf<ForumTextSegment>()
     var cursor = 0
     forumInlineTokenRegex.findAll(raw).forEach { match ->
@@ -373,6 +417,61 @@ private fun forumMarkupParagraphs(raw: String): List<String> {
         .split(Regex("\\n{2,}"))
         .map { paragraph -> paragraph.lines().joinToString("\n") { line -> line.trim() }.trim() }
         .filter(String::isNotBlank)
+        .flatMap(::forumSeparateBlockWidgets)
+}
+
+/** Source book shares and images stay block widgets even when they occur beside ordinary text. */
+private fun forumSeparateBlockWidgets(paragraph: String): List<String> {
+    if (!forumBlockWidgetRegex.containsMatchIn(paragraph)) return listOf(paragraph)
+
+    val separated = mutableListOf<String>()
+    var cursor = 0
+    forumBlockWidgetRegex.findAll(paragraph).forEach { match ->
+        if (forumBlockWidgetSegment(match.value) == null) return@forEach
+        paragraph.substring(cursor, match.range.first)
+            .trim()
+            .takeIf(String::isNotBlank)
+            ?.let(separated::add)
+        separated += match.value
+        cursor = match.range.last + 1
+    }
+    paragraph.substring(cursor)
+        .trim()
+        .takeIf(String::isNotBlank)
+        ?.let(separated::add)
+    return separated
+}
+
+private fun forumBlockWidgetSegment(raw: String): ForumTextSegment? =
+    forumBookReferenceRegex.matchEntire(raw.trim())
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toLongOrNull()
+        ?.takeIf { it > 0L }
+        ?.let(ForumTextSegment::BookReference)
+        ?: forumImageSegment(raw)
+
+private fun forumImageSegment(raw: String): ForumTextSegment.Image? {
+    val token = raw.trim()
+    val markdown = forumMarkdownImageRegex.matchEntire(token)
+    if (markdown != null) {
+        val url = forumNormalizeImageUrl(markdown.groupValues[2]) ?: return null
+        return ForumTextSegment.Image(
+            url = url,
+            alt = forumInlineText(markdown.groupValues[1]).trim(),
+        )
+    }
+
+    if (forumHtmlImageTagRegex.matchEntire(token) == null) return null
+    val url = forumHtmlAttribute(token, "data-src")
+        ?: forumHtmlAttribute(token, "src")
+        ?: return null
+    return forumNormalizeImageUrl(url)?.let { normalizedUrl ->
+        ForumTextSegment.Image(
+            url = normalizedUrl,
+            alt = forumHtmlAttribute(token, "alt").orEmpty().trim(),
+        )
+    }
 }
 
 private fun forumInlineText(raw: String): String =
@@ -408,6 +507,18 @@ private fun forumNormalizeLink(raw: String): String? {
     return when {
         value.startsWith("http://", ignoreCase = true) || value.startsWith("https://", ignoreCase = true) -> value
         value.startsWith("/") -> "https://novalpie.cc$value"
+        else -> null
+    }
+}
+
+/** Images are fetched only from HTTP(S) or a source-relative site path; executable/data URLs stay text. */
+private fun forumNormalizeImageUrl(raw: String): String? {
+    val value = forumInlineText(raw).trim().takeIf(String::isNotBlank) ?: return null
+    return when {
+        value.startsWith("http://", ignoreCase = true) || value.startsWith("https://", ignoreCase = true) -> value
+        value.startsWith("//") -> "https:$value"
+        value.startsWith("/") -> "https://novalpie.cc$value"
+        ':' !in value && !value.startsWith('#') -> "https://novalpie.cc/${value.trimStart('/')}"
         else -> null
     }
 }
@@ -450,6 +561,16 @@ private fun forumCommentRoot(
 }
 
 private val forumDatePattern = Regex("""(\d{4})[-/](\d{1,2})[-/](\d{1,2})""")
+private val forumBookReferenceRegex = Regex("""\[bookid\s*:\s*([1-9]\d*)\]""", RegexOption.IGNORE_CASE)
+private val forumMarkdownImageRegex = Regex(
+    """!\[([^\]]*)]\(\s*([^\s)]+)(?:\s+["'][^"']*["'])?\s*\)""",
+    RegexOption.DOT_MATCHES_ALL,
+)
+private val forumHtmlImageTagRegex = Regex("""<img\b[^>]*>""", RegexOption.IGNORE_CASE)
+private val forumBlockWidgetRegex = Regex(
+    """(?:${forumBookReferenceRegex.pattern})|(?:${forumMarkdownImageRegex.pattern})|(?:${forumHtmlImageTagRegex.pattern})""",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+)
 private val forumInlineTokenRegex = Regex(
     """\|\|.*?\|\||\|\|.+$|<a\b[^>]*>.*?</a\s*>|<(?:strong|b)\b[^>]*>.*?</(?:strong|b)\s*>|\[[^\]\n]+]\(https?://[^)\s]+\)|\*\*.+?\*\*|__.+?__|https?://[^\s<>"']+""",
     setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
