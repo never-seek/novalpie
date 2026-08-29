@@ -3,6 +3,7 @@ package com.novalpie.nativeapp.ui.design
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -15,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 
 /**
@@ -83,11 +85,10 @@ private fun chipColors(tone: NpChipTone): NpChipColors {
 }
 
 /**
- * A non-interactive metadata chip.
+ * A metadata chip, optionally promoted to a real action.
  *
- * Deliberately not clickable. The old UI had seven `AssistChip(onClick = {})` instances that
- * rippled on touch and announced themselves as buttons to TalkBack while doing nothing; a chip
- * that is only a label should not pretend otherwise. Use a real button when an action is intended.
+ * A label remains non-interactive by default.  Callers must opt in with [onClick], so an ordinary
+ * metadata chip never pretends to be a button while real source-link tags remain accessible.
  */
 @Composable
 @Suppress("ModifierParameter") // Keep the stable label/tone call shape used throughout the app.
@@ -95,6 +96,7 @@ fun NpChip(
     label: String,
     tone: NpChipTone = NpChipTone.Neutral,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
     val colors = chipColors(tone)
     val shape = RoundedCornerShape(NpChipRadius)
@@ -113,6 +115,10 @@ fun NpChip(
                 } else {
                     Modifier
                 }
+            )
+            .then(
+                if (onClick != null) Modifier.clickable(role = Role.Button, onClick = onClick)
+                else Modifier
             )
             .padding(horizontal = NovalPieSpacing.sm, vertical = NovalPieSpacing.xxs),
     )

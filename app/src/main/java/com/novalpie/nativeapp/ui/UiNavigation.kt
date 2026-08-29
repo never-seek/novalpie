@@ -1,5 +1,8 @@
 package com.novalpie.nativeapp.ui
 
+import com.novalpie.nativeapp.model.UserProfile
+import com.novalpie.nativeapp.model.LoadResult
+
 internal fun bottomTabDisplayLabel(tab: BottomTab): String = when (tab) {
     BottomTab.Collection -> "收藏"
     BottomTab.Discover -> "搜索"
@@ -14,6 +17,72 @@ internal fun bottomTabShortLabel(tab: BottomTab): String = when (tab) {
     BottomTab.Tools -> "工"
     BottomTab.Forum -> "论"
     BottomTab.Profile -> "我"
+}
+
+/** Root routes own their tab selection; child pages preserve it until Back reaches the root. */
+internal fun rootRouteTab(route: AppRoute): BottomTab? = when (route) {
+    AppRoute.Home -> BottomTab.Collection
+    AppRoute.Search -> BottomTab.Discover
+    AppRoute.Tools -> BottomTab.Tools
+    AppRoute.Forum -> BottomTab.Forum
+    AppRoute.Profile -> BottomTab.Profile
+    else -> null
+}
+
+/**
+ * An admin route is only valid while the current account still has the exact website admin role.
+ * If that access disappears, keep the user inside the native tools surface but drop every stale
+ * admin child route so previously loaded management data cannot remain visible after logout or a
+ * role refresh.
+ */
+internal fun sanitizeAdminRouteStack(
+    routes: List<AppRoute>,
+    isAdmin: Boolean,
+): List<AppRoute> = if (
+    isAdmin || routes.none { it is AppRoute.Admin }
+) {
+    routes
+} else {
+    listOf(AppRoute.Tools)
+}
+
+/**
+ * A completed `/users/me` response is authoritative for the active account's role.  Route
+ * cleanup must therefore follow that response rather than a possibly stale JWT payload or an
+ * earlier profile snapshot.
+ */
+internal fun sanitizeAdminRouteStackForAuthoritativeProfile(
+    routes: List<AppRoute>,
+    profile: UserProfile,
+): List<AppRoute> = sanitizeAdminRouteStack(
+    routes = routes,
+    isAdmin = isAdminProfile(profile),
+)
+
+/**
+ * Select the account identity used to gate the tools surface.
+ *
+ * The profile tab and the collection shelf load `/users/me` independently. During a fast tab
+ * switch one result can be newer than the other, so the profile-tab result wins when it belongs to
+ * the current token identity. A stale profile from a previous account is ignored; the shelf result
+ * or the token identity is then the safe fallback.
+ */
+internal fun effectiveToolsUserProfile(
+    profile: LoadResult<UserProfile>,
+    shelfUser: LoadResult<UserProfile>,
+    tokenProfile: UserProfile?,
+): UserProfile? {
+    fun belongsToCurrentAccount(candidate: UserProfile): Boolean {
+        val tokenId = tokenProfile?.id ?: return true
+        val candidateId = candidate.id ?: return false
+        return candidateId == tokenId
+    }
+
+    return listOf(profile, shelfUser)
+        .asSequence()
+        .mapNotNull { (it as? LoadResult.Success)?.value }
+        .firstOrNull(::belongsToCurrentAccount)
+        ?: tokenProfile
 }
 
 internal fun routeContextLabel(route: AppRoute, fallbackTab: BottomTab): String = when (route) {

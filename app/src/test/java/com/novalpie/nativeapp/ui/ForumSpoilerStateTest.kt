@@ -23,4 +23,23 @@ class ForumSpoilerStateTest {
 
         assertFalse(viewModel.forumState.hideSpoilers)
     }
+
+    @Test
+    fun oneSharedPreferenceUnmasksEveryForumFeedCategory() {
+        assertTrue(forumFeedHideSpoilers(type = "discussion", reviewFeedHideSpoilers = true))
+        assertFalse(forumFeedHideSpoilers(type = "discussion", reviewFeedHideSpoilers = false))
+        assertTrue(forumFeedHideSpoilers(type = "feedback", reviewFeedHideSpoilers = true))
+        assertFalse(forumFeedHideSpoilers(type = "feedback", reviewFeedHideSpoilers = false))
+        assertTrue(forumFeedHideSpoilers(type = "review", reviewFeedHideSpoilers = true))
+        assertFalse(forumFeedHideSpoilers(type = "review", reviewFeedHideSpoilers = false))
+    }
+
+    @Test
+    fun deepFoldFallbackNeverUsesRawMarkupAsVisibleText() {
+        val label = forumFoldDepthFallbackLabel("  内层内容  ")
+
+        assertEquals("嵌套折叠层级过深，已收起：内层内容", label)
+        assertFalse(label.contains("[fold", ignoreCase = true))
+        assertFalse(label.contains("[/fold", ignoreCase = true))
+    }
 }

@@ -11,8 +11,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FitScreen
@@ -25,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -46,8 +49,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.SubcomposeAsyncImage
+import coil.decode.GifDecoder
 import coil.request.ImageRequest
 import coil.size.Precision
+
+/**
+ * Lets the route temporarily freeze animated thumbnails underneath the full-screen preview. A
+ * Dialog is a separate window, but the obscured Compose tree is still alive and animated drawables
+ * continue to invalidate it on some Android/MuMu builds.
+ */
+internal val LocalImagePreviewActive = compositionLocalOf { false }
 
 internal fun clampImagePreviewScale(value: Float): Float = value.coerceIn(1f, 6f)
 
@@ -67,12 +78,34 @@ internal data class ImagePreviewLoadPolicy(
     val maxWidthPx: Int,
     val maxHeightPx: Int,
     val precision: Precision,
+    val allowHardware: Boolean,
+    val animationRepeatCount: Int,
 )
 
 internal fun imagePreviewLoadPolicy(): ImagePreviewLoadPolicy = ImagePreviewLoadPolicy(
     maxWidthPx = 1440,
     maxHeightPx = 2160,
     precision = Precision.INEXACT,
+    // AnimatedImageDrawable's hardware path is disproportionately expensive on the MuMu GPU
+    // backend. Software frames are bounded to the phone viewport and are safer for previews.
+    allowHardware = false,
+    // Keep the real GIF/WebP animation visible, then hold its final frame instead of invalidating
+    // an obscured full-screen window forever. Zero means one play-through in Coil/Android.
+    animationRepeatCount = 0,
+)
+
+internal data class ImagePreviewTargetSize(
+    val widthPx: Int,
+    val heightPx: Int,
+)
+
+internal fun imagePreviewTargetSize(
+    screenWidthPx: Int,
+    screenHeightPx: Int,
+    policy: ImagePreviewLoadPolicy = imagePreviewLoadPolicy(),
+): ImagePreviewTargetSize = ImagePreviewTargetSize(
+    widthPx = screenWidthPx.coerceAtLeast(1).coerceAtMost(policy.maxWidthPx),
+    heightPx = screenHeightPx.coerceAtLeast(1).coerceAtMost(policy.maxHeightPx),
 )
 
 /**
@@ -153,13 +186,23 @@ internal fun ImagePreviewDialog(
     var viewport by remember(imageUrl) { mutableStateOf(IntSize.Zero) }
     val context = LocalContext.current
     val loadPolicy = imagePreviewLoadPolicy()
+    val displayMetrics = context.resources.displayMetrics
+    val targetSize = imagePreviewTargetSize(
+        screenWidthPx = displayMetrics.widthPixels,
+        screenHeightPx = displayMetrics.heightPixels,
+        policy = loadPolicy,
+    )
     // Keep one request across zoom/pan recompositions. Rebuilding the model during a gesture can
     // restart an animated Drawable at frame zero, which makes GIF covers look like static images.
-    val imageRequest = remember(imageUrl, context) {
+    val imageRequest = remember(imageUrl, context, targetSize, loadPolicy) {
         ImageRequest.Builder(context)
             .data(imageUrl)
-            .size(loadPolicy.maxWidthPx, loadPolicy.maxHeightPx)
+            .size(targetSize.widthPx, targetSize.heightPx)
             .precision(loadPolicy.precision)
+            .allowHardware(loadPolicy.allowHardware)
+            // Demonstrate the real animated/inner content without an endless frame invalidation
+            // loop while the user inspects a single image.
+            .setParameter(GifDecoder.REPEAT_COUNT_KEY, loadPolicy.animationRepeatCount)
             .crossfade(false)
             .build()
     }
@@ -185,38 +228,18 @@ internal fun ImagePreviewDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = true, dismissOnClickOutside = false)
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color(0xFF0B0D12))
         ) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(bottom = imagePreviewBottomSafePadding()),
-                color = Color.Black.copy(alpha = 0.72f)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(title, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text("双击复原/放大 · 双指缩放 · 放大后拖动", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.labelSmall)
-                    }
-                    Text("${(scale * 100).toInt()}%", color = Color.White, style = MaterialTheme.typography.labelMedium)
-                    IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "关闭大图", tint = Color.White) }
-                }
-            }
-
-            // The image receives its own measured viewport between fixed chrome regions. This
-            // guarantees ContentScale.Fit can show the entire original without a floating tool
-            // bar covering its bottom edge.
+            // Keep the image in a bounded safe viewport. A weighted child in a full-screen
+            // Dialog can retain its old minimum height and push the bottom chrome past the
+            // display edge, especially when the device reports no navigation inset.
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
+                    .fillMaxSize()
+                    .padding(top = 80.dp, bottom = 80.dp)
                     .onSizeChanged { viewport = it },
                 contentAlignment = Alignment.Center,
             ) {
@@ -250,7 +273,43 @@ internal fun ImagePreviewDialog(
             }
 
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    // This is the top chrome. Using navigationBarsPadding here put a bottom
+                    // inset above the image and left the toolbar under the status bar on phones
+                    // with a cutout. Keep the top controls below the actual status bar instead.
+                    .statusBarsPadding(),
+                color = Color.Black.copy(alpha = 0.72f)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(title, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("双击复原/放大 · 双指缩放 · 放大后拖动", color = Color.White.copy(alpha = 0.72f), style = MaterialTheme.typography.labelSmall)
+                    }
+                    Text("${(scale * 100).toInt()}%", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "关闭大图", tint = Color.White) }
+                }
+            }
+
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    // IconButton's 48dp minimum was previously measured after the weighted
+                    // image box and got clipped to the remaining pixels on full-screen Dialogs.
+                    // Reserve a fixed chrome row and lift it above the Dialog's clipped edge;
+                    // some gesture-navigation Dialog windows report a zero inset while still
+                    // clipping child content at the physical display bottom.
+                    .height(80.dp)
+                    // Gesture-navigation devices often report a zero inset to a full-screen
+                    // Dialog. Reserve both the reported bottom inset and a conservative physical
+                    // margin so the entire icon row remains visible on those windows.
+                    .navigationBarsPadding()
+                    .padding(bottom = 40.dp),
                 color = Color.Black.copy(alpha = 0.72f)
             ) {
                 Row(

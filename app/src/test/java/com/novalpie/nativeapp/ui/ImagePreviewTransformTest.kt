@@ -25,6 +25,20 @@ class ImagePreviewTransformTest {
         assertEquals(1440, policy.maxWidthPx)
         assertEquals(2160, policy.maxHeightPx)
         assertEquals(Precision.INEXACT, policy.precision)
+        assertEquals(false, policy.allowHardware)
+        assertEquals(0, policy.animationRepeatCount)
+    }
+
+    @Test
+    fun previewTargetSizeIsBoundedByThePhoneViewport() {
+        assertEquals(
+            ImagePreviewTargetSize(widthPx = 900, heightPx = 1600),
+            imagePreviewTargetSize(screenWidthPx = 900, screenHeightPx = 1600),
+        )
+        assertEquals(
+            ImagePreviewTargetSize(widthPx = 1440, heightPx = 2160),
+            imagePreviewTargetSize(screenWidthPx = 3000, screenHeightPx = 4000),
+        )
     }
 
     @Test

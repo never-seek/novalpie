@@ -37,4 +37,26 @@ class ReaderActionPresentationTest {
         assertFalse(readerRailActionEnabled(ReaderRailActionId.Tts, hasPrevious = true, hasNext = true, showTts = false))
         assertTrue(readerRailActionEnabled(ReaderRailActionId.Tts, hasPrevious = true, hasNext = true, showTts = true))
     }
+
+    @Test
+    fun disablingTtsRemovesItsRailControlInsteadOfShowingADisabledButton() {
+        val visible = readerVisibleRailActionSpecs(showTts = false)
+
+        assertFalse(visible.any { it.id == ReaderRailActionId.Tts })
+        assertEquals(
+            listOf(
+                ReaderRailActionId.Close,
+                ReaderRailActionId.Help,
+                ReaderRailActionId.Catalog,
+                ReaderRailActionId.Settings,
+                ReaderRailActionId.Theme,
+                ReaderRailActionId.Previous,
+                ReaderRailActionId.Next,
+                ReaderRailActionId.ReadingMode,
+                ReaderRailActionId.Fullscreen,
+                ReaderRailActionId.Navigation,
+            ),
+            visible.map(ReaderRailActionSpec::id),
+        )
+    }
 }

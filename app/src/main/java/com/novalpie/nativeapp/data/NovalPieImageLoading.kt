@@ -90,12 +90,14 @@ internal fun buildNovalPieImageLoader(
     ImageLoader.Builder(context.applicationContext)
         .okHttpClient { novalPieImageOkHttpClient(proxySettings, emulatorRuntime) }
         // The source uses GIF and Animated WebP covers. Coil's base Compose artifact decodes
-        // only the first frame, so register the platform decoder (or the pre-P GIF fallback).
+        // only the first frame. Prefer Coil's MovieDrawable for GIFs: unlike the platform
+        // AnimatedImageDrawable it keeps one bounded software frame buffer on MuMu while still
+        // playing the real inner animation. Animated WebP/HEIF continues through the platform
+        // decoder below.
         .components {
+            add(GifDecoder.Factory())
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 add(ImageDecoderDecoder.Factory())
-            } else {
-                add(GifDecoder.Factory())
             }
         }
         // Source covers are high-resolution originals. Decoding four at once saturates the CPU

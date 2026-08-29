@@ -62,11 +62,11 @@ class SearchCoverPrefetchTest {
     }
 
     @Test
-    fun defaultLookAheadIsCappedToOneSmallBatch() {
+    fun scrollingLookAheadWarmsOnlyOneResponsiveRow() {
         val books = (1L..10L).map { id -> NovelCard(id, "book-$id", coverUrl = "cover-$id") }
 
         assertEquals(
-            listOf("cover-3", "cover-4", "cover-5", "cover-6"),
+            listOf("cover-3", "cover-4"),
             searchCoverPreloadUrlsAfterVisible(
                 books = books,
                 visibleBookIds = listOf(1, 2)

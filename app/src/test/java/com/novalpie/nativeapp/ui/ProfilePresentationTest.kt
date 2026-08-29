@@ -206,6 +206,29 @@ class ProfilePresentationTest {
     }
 
     @Test
+    fun currentUserHeroArrivingFirstLeavesSlowPanelsLoading() {
+        val profile = UserProfile(id = 100000, name = "seeking", role = "admin")
+
+        val updated = currentUserProfileWithLoadedHero(
+            state = ProfileState(
+                profile = LoadResult.Loading,
+                activities = LoadResult.Loading,
+                books = LoadResult.Loading,
+                inventory = LoadResult.Loading,
+                shopItems = LoadResult.Loading,
+            ),
+            result = Result.success(profile),
+            tokenProfile = null,
+        )
+
+        assertEquals(profile, (updated.profile as LoadResult.Success<UserProfile>).value)
+        assertTrue(updated.activities is LoadResult.Loading)
+        assertTrue(updated.books is LoadResult.Loading)
+        assertTrue(updated.inventory is LoadResult.Loading)
+        assertTrue(updated.shopItems is LoadResult.Loading)
+    }
+
+    @Test
     fun tokenOnlyProfileDoesNotPretendToContainRemoteProfileFacts() {
         val tokenProfile = UserProfile(id = 100000, name = "seeking", role = "admin")
 

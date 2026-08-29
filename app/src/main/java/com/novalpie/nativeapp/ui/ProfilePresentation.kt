@@ -110,6 +110,13 @@ internal data class PublicProfileLoadPresentation(
     val activities: List<UserActivity>?,
 )
 
+/**
+ * A public route already has a stable user id before its hero response arrives.  The source
+ * loads timeline, books, and check-in panels independently, so a failed hero must not make
+ * successful secondary panels unreachable behind the error card.
+ */
+internal fun shouldRenderPublicProfilePanels(state: UserProfileDetailState): Boolean = state.userId > 0L
+
 internal fun publicProfileLoadPresentation(
     profile: UserProfile?,
     feed: UserContentActivityFeed?,
@@ -117,6 +124,247 @@ internal fun publicProfileLoadPresentation(
 ): PublicProfileLoadPresentation = PublicProfileLoadPresentation(
     profile = profileWithPublicCollectionCounts(profile, feed, novels),
     activities = feed?.activities,
+)
+
+/**
+ * The signed-in profile must not wait for its activity, uploads, backpack, shop, and reward
+ * requests.  Those requests arrive independently on the website, so the native hero is promoted
+ * as soon as `/users/me` succeeds and is enriched again only when a related section arrives.
+ */
+internal fun currentUserProfileWithLoadedHero(
+    state: ProfileState,
+    result: Result<UserProfile>,
+    tokenProfile: UserProfile?,
+): ProfileState {
+    val resolved = resolveUserLoadResult(result, tokenProfile)
+    val profile = (resolved as? LoadResult.Success<UserProfile>)?.value
+        ?: return state.copy(profile = resolved)
+    return state
+        .copy(profile = LoadResult.Success(profile))
+        .withEnrichedCurrentUserHero()
+        .copy(
+            nameDraft = profile.name,
+            bioDraft = profile.bio.orEmpty(),
+            showCheckin = profile.showCheckin ?: true,
+            autoCheckin = profile.autoCheckin ?: false,
+        )
+}
+
+/** A late activity response changes only its own panel and optionally fills omitted profile counts. */
+internal fun currentUserProfileWithLoadedActivities(
+    state: ProfileState,
+    result: Result<UserContentActivityFeed>,
+): ProfileState = result.fold(
+    onSuccess = { feed ->
+        state.copy(
+            activities = LoadResult.Success(feed.activities),
+            activityFeed = feed,
+        ).withEnrichedCurrentUserHero()
+    },
+    onFailure = { failure ->
+        state.copy(
+            activities = if (
+                profileHasNoPublicActivities((state.profile as? LoadResult.Success<UserProfile>)?.value) ||
+                sourceActivitiesEndpointUnavailable(failure)
+            ) {
+                LoadResult.Success(emptyList())
+            } else {
+                LoadResult.Error(apiFailureMessage("个人动态", failure))
+            },
+        )
+    },
+)
+
+/** A late uploads response is similarly isolated from the profile hero and other panels. */
+internal fun currentUserProfileWithLoadedBooks(
+    state: ProfileState,
+    result: Result<List<NovelCard>>,
+): ProfileState = result.fold(
+    onSuccess = { books ->
+        state.copy(
+            books = LoadResult.Success(books),
+            uploadedBooks = books,
+        ).withEnrichedCurrentUserHero()
+    },
+    onFailure = { failure ->
+        state.copy(
+            books = if (sourceBooksEndpointUnavailable(failure)) {
+                LoadResult.Success(emptyList())
+            } else {
+                LoadResult.Error(apiFailureMessage("上传书籍", failure))
+            },
+        )
+    },
+)
+
+/** Inventory only augments a displayed profile with its equipped frame/badges after it succeeds. */
+internal fun currentUserProfileWithLoadedInventory(
+    state: ProfileState,
+    result: Result<UserInventory>,
+): ProfileState = state.copy(
+    inventory = result.fold(
+        onSuccess = { LoadResult.Success(it) },
+        onFailure = { LoadResult.Error(apiFailureMessage("背包", it)) },
+    ),
+).withEnrichedCurrentUserHero()
+
+internal fun currentUserProfileWithLoadedCheckinStats(
+    state: ProfileState,
+    result: Result<UserCheckinStats>,
+    today: String,
+): ProfileState = result.fold(
+    onSuccess = { source ->
+        val records = (state.checkinRecords as? LoadResult.Success<List<UserCheckinRecord>>)?.value.orEmpty()
+        state.copy(checkinStats = LoadResult.Success(reconcileCheckinStats(source, records, today)))
+    },
+    onFailure = { failure ->
+        val records = (state.checkinRecords as? LoadResult.Success<List<UserCheckinRecord>>)?.value.orEmpty()
+        state.copy(
+            checkinStats = if (records.isNotEmpty()) {
+                LoadResult.Success(reconcileCheckinStats(UserCheckinStats(), records, today))
+            } else {
+                LoadResult.Error(apiFailureMessage("签到统计", failure))
+            },
+        )
+    },
+)
+
+internal fun currentUserProfileWithLoadedCheckinRecords(
+    state: ProfileState,
+    result: Result<List<UserCheckinRecord>>,
+    today: String,
+): ProfileState = result.fold(
+    onSuccess = { records ->
+        val source = (state.checkinStats as? LoadResult.Success<UserCheckinStats>)?.value
+            ?: UserCheckinStats()
+        state.copy(
+            checkinRecords = LoadResult.Success(records),
+            checkinStats = LoadResult.Success(reconcileCheckinStats(source, records, today)),
+        )
+    },
+    onFailure = { failure ->
+        state.copy(checkinRecords = LoadResult.Error(apiFailureMessage("签到记录", failure)))
+    },
+)
+
+private fun ProfileState.withEnrichedCurrentUserHero(): ProfileState {
+    val profile = (profile as? LoadResult.Success<UserProfile>)?.value ?: return this
+    val inventory = (inventory as? LoadResult.Success<UserInventory>)?.value
+    val enriched = profileWithEquippedCosmetics(
+        profile = profileWithPublicCollectionCounts(profile, activityFeed, uploadedBooks),
+        inventory = inventory,
+    ) ?: profile
+    return copy(profile = LoadResult.Success(enriched))
+}
+
+/** The hero can render as soon as its own source request returns. */
+internal fun userProfileDetailWithLoadedProfile(
+    state: UserProfileDetailState,
+    result: Result<UserProfile>,
+): UserProfileDetailState = state.copy(
+    profile = result.fold(
+        onSuccess = { profile ->
+            profileWithPublicCollectionCounts(
+                profile = profile,
+                feed = state.activityFeed,
+                novels = state.publicBooks,
+            )?.let { LoadResult.Success(it) } ?: LoadResult.Success(profile)
+        },
+        onFailure = { failure ->
+            LoadResult.Error(apiFailureMessage("用户资料", failure))
+        },
+    ),
+)
+
+/** Independent public-profile endpoints may be retried without blanking the rendered hero. */
+internal enum class PublicUserProfilePanel {
+    Activities,
+    Books,
+    CheckinStats,
+    CheckinRecords,
+    CheckinSettings,
+}
+
+internal fun userProfileDetailForPanelRetry(
+    state: UserProfileDetailState,
+    panel: PublicUserProfilePanel,
+): UserProfileDetailState = when (panel) {
+    PublicUserProfilePanel.Activities -> state.copy(activities = LoadResult.Loading)
+    PublicUserProfilePanel.Books -> state.copy(books = LoadResult.Loading)
+    PublicUserProfilePanel.CheckinStats -> state.copy(checkinStats = LoadResult.Loading)
+    PublicUserProfilePanel.CheckinRecords -> state.copy(checkinRecords = LoadResult.Loading)
+    PublicUserProfilePanel.CheckinSettings -> state.copy(checkinSettings = LoadResult.Loading)
+}
+
+/** Retrying the timeline must not replace a successfully rendered public profile hero. */
+internal fun userProfileDetailForActivitiesRetry(
+    state: UserProfileDetailState,
+): UserProfileDetailState = userProfileDetailForPanelRetry(
+    state = state,
+    panel = PublicUserProfilePanel.Activities,
+)
+
+/**
+ * Activity data is independent of the profile hero.  When it arrives later, refresh the profile
+ * counters as a small secondary update rather than keeping the entire page behind a spinner.
+ */
+internal fun userProfileDetailWithLoadedActivities(
+    state: UserProfileDetailState,
+    result: Result<UserContentActivityFeed>,
+): UserProfileDetailState = result.fold(
+    onSuccess = { feed ->
+        val profile = (state.profile as? LoadResult.Success<UserProfile>)?.value
+        state.copy(
+            profile = profileWithPublicCollectionCounts(profile, feed, state.publicBooks)
+                ?.let { LoadResult.Success(it) }
+                ?: state.profile,
+            activities = LoadResult.Success(feed.activities),
+            activityFeed = feed,
+        )
+    },
+    onFailure = { failure ->
+        state.copy(
+            activities = if (
+                profileHasNoPublicActivities((state.profile as? LoadResult.Success<UserProfile>)?.value) ||
+                sourceActivitiesEndpointUnavailable(failure)
+            ) {
+                LoadResult.Success(emptyList())
+            } else {
+                LoadResult.Error(apiFailureMessage("用户动态", failure))
+            },
+        )
+    },
+)
+
+/** The source collection route may be a documented placeholder; otherwise expose an explicit retry state. */
+internal fun userProfileDetailWithLoadedBooks(
+    state: UserProfileDetailState,
+    result: Result<List<NovelCard>>,
+): UserProfileDetailState = result.fold(
+    onSuccess = { books ->
+        val profile = (state.profile as? LoadResult.Success<UserProfile>)?.value
+        state.copy(
+            profile = profileWithPublicCollectionCounts(profile, state.activityFeed, books)
+                ?.let { LoadResult.Success(it) }
+                ?: state.profile,
+            books = LoadResult.Success(books),
+            publicBooks = books,
+        )
+    },
+    onFailure = { failure ->
+        state.copy(
+            books = if (sourceBooksEndpointUnavailable(failure)) {
+                LoadResult.Success(emptyList())
+            } else {
+                LoadResult.Error(apiFailureMessage("用户作品", failure))
+            },
+        )
+    },
+)
+
+private fun <T> Result<T>.toPublicProfileLoadResult(): LoadResult<T> = fold(
+    onSuccess = { LoadResult.Success(it) },
+    onFailure = { LoadResult.Error(apiFailureMessage("用户资料", it)) },
 )
 
 /** The profile response is authoritative; the equipped inventory frame fills only a missing URL. */

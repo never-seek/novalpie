@@ -5,11 +5,12 @@ import kotlin.math.ceil
 import kotlin.math.floor
 
 // These values mirror the compact source tag pills used by the native grid: 8dp horizontal
-// padding, 2dp gaps, and one 20dp label line with a 2dp inter-line gap.
+// padding, a roughly 22dp rendered pill row, and 2dp gaps between FlowRow lines.
 internal const val SEARCH_GRID_PAGE_HORIZONTAL_PADDING_DP = 32
 internal const val SEARCH_GRID_CELL_GAP_DP = 12
 internal const val SEARCH_GRID_CARD_HORIZONTAL_PADDING_DP = 16
 internal const val SEARCH_GRID_TAG_LINE_HEIGHT_DP = 22
+internal const val SEARCH_GRID_TAG_LINE_GAP_DP = 2
 internal const val SEARCH_GRID_TAG_MIN_AREA_HEIGHT_DP = 68
 internal const val SEARCH_GRID_METRIC_ICON_SIZE_DP = 13
 internal const val SEARCH_GRID_METRIC_ICON_TEXT_GAP_DP = 2
@@ -95,10 +96,12 @@ internal fun searchGridRowTagLineCount(
     )
 }.orEmptyTagLineCount()
 
-internal fun searchGridTagAreaMinHeightDp(lineCount: Int): Int = maxOf(
-    SEARCH_GRID_TAG_MIN_AREA_HEIGHT_DP,
-    lineCount.coerceAtLeast(1) * SEARCH_GRID_TAG_LINE_HEIGHT_DP - 2,
-)
+internal fun searchGridTagAreaMinHeightDp(lineCount: Int): Int {
+    val lines = lineCount.coerceAtLeast(1)
+    val flowRowHeight = lines * SEARCH_GRID_TAG_LINE_HEIGHT_DP +
+        (lines - 1) * SEARCH_GRID_TAG_LINE_GAP_DP
+    return maxOf(SEARCH_GRID_TAG_MIN_AREA_HEIGHT_DP, flowRowHeight)
+}
 
 /**
  * The compact favorite/read/word-count rail is a FlowRow on phones. Predict its line count from

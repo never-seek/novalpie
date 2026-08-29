@@ -29,6 +29,10 @@ internal fun libraryOverview(
     )
 )
 
+/** A paged shelf must report the source total, never merely the currently rendered page size. */
+internal fun collectionFavoriteCount(sourceTotal: Int?, loadedCount: Int): Int =
+    sourceTotal?.coerceAtLeast(0) ?: loadedCount.coerceAtLeast(0)
+
 internal fun libraryContinueTitle(hasProgress: Boolean): String =
     if (hasProgress) "继续阅读" else "阅读记录"
 

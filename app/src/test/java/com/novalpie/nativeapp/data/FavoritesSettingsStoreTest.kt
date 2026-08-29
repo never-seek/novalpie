@@ -20,7 +20,7 @@ class FavoritesSettingsStoreTest {
 
     @Test
     fun savesAndRestoresCollectionPresentationChoices() {
-        val expected = PersistedFavoritesSettings(
+        val saved = PersistedFavoritesSettings(
             cacheMode = FavoritesCacheMode.All,
             tab = "history",
             layout = "list",
@@ -33,9 +33,43 @@ class FavoritesSettingsStoreTest {
             searchQuery = "saved query"
         )
 
-        store.save(expected)
+        store.save(saved)
 
-        assertEquals(expected, store.load())
+        assertEquals(saved.copy(currentPage = 1), store.load())
+    }
+
+    @Test
+    fun coldLaunchResetsPaginationButKeepsCollectionPresentationChoices() {
+        store.save(
+            PersistedFavoritesSettings(
+                cacheMode = FavoritesCacheMode.All,
+                tab = "history",
+                layout = "list",
+                gridColumns = 4,
+                displayMode = "all",
+                selectedDisplayGroupId = 8L,
+                currentPage = 4,
+                sortField = "last_read_time",
+                sortOrder = "asc",
+                searchQuery = "saved query",
+            ),
+        )
+
+        assertEquals(
+            PersistedFavoritesSettings(
+                cacheMode = FavoritesCacheMode.All,
+                tab = "history",
+                layout = "list",
+                gridColumns = 4,
+                displayMode = "all",
+                selectedDisplayGroupId = 8L,
+                currentPage = 1,
+                sortField = "last_read_time",
+                sortOrder = "asc",
+                searchQuery = "saved query",
+            ),
+            store.load(),
+        )
     }
 
     @Test
@@ -71,7 +105,7 @@ class FavoritesSettingsStoreTest {
                 layout = "list",
                 displayMode = "all",
                 selectedDisplayGroupId = 12L,
-                currentPage = 4,
+                currentPage = 1,
                 sortField = "updated_at",
                 sortOrder = "asc",
                 searchQuery = "must not persist"
@@ -85,7 +119,7 @@ class FavoritesSettingsStoreTest {
                 layout = "list",
                 displayMode = "all",
                 selectedDisplayGroupId = 12L,
-                currentPage = 4,
+                currentPage = 1,
                 sortField = "updated_at",
                 sortOrder = "asc"
             ),

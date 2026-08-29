@@ -27,11 +27,25 @@ internal data class ForumCommentThread(
 internal sealed interface ForumTextSegment {
     data class Plain(val value: String) : ForumTextSegment
     data class Bold(val value: String) : ForumTextSegment
+    data class Italic(val value: String) : ForumTextSegment
+    data class Underline(val value: String) : ForumTextSegment
+    data class Strikethrough(val value: String) : ForumTextSegment
+    data class InlineCode(val value: String) : ForumTextSegment
+    data class CodeBlock(val value: String, val language: String? = null) : ForumTextSegment
     data class Link(val label: String, val url: String) : ForumTextSegment
     /** Source Markdown/HTML images render as their own native media block. */
     data class Image(val url: String, val alt: String = "") : ForumTextSegment
-    /** Source sharing syntax: [bookid:123]. It renders as a native book card, never raw text. */
-    data class BookReference(val bookId: Long) : ForumTextSegment
+    /**
+     * Source sharing syntax: [bookid:123|tags,bio]. It renders as a native book card, never raw
+     * text. The optional flags deliberately mirror the website's BookCard props.
+     */
+    data class BookReference(
+        val bookId: Long,
+        val showTags: Boolean = false,
+        val showBio: Boolean = false,
+    ) : ForumTextSegment
+    /** The source forum uses [fold:title]...[/fold] for collapsible rich-content blocks. */
+    data class Fold(val title: String, val content: String) : ForumTextSegment
     /** The source uses ||...|| for content hidden by the review-feed spoiler switch. */
     data class Spoiler(val value: String) : ForumTextSegment
 }
@@ -42,9 +56,15 @@ internal data class ForumRichParagraph(val segments: List<ForumTextSegment>) {
             when (segment) {
                 is ForumTextSegment.Plain -> segment.value
                 is ForumTextSegment.Bold -> segment.value
+                is ForumTextSegment.Italic -> segment.value
+                is ForumTextSegment.Underline -> segment.value
+                is ForumTextSegment.Strikethrough -> segment.value
+                is ForumTextSegment.InlineCode -> segment.value
+                is ForumTextSegment.CodeBlock -> segment.value
                 is ForumTextSegment.Link -> segment.label
                 is ForumTextSegment.Image -> ""
                 is ForumTextSegment.BookReference -> ""
+                is ForumTextSegment.Fold -> "折叠：${segment.title}"
                 is ForumTextSegment.Spoiler -> segment.value
             }
         }.trim()
@@ -52,8 +72,17 @@ internal data class ForumRichParagraph(val segments: List<ForumTextSegment>) {
     val image: ForumTextSegment.Image?
         get() = segments.singleOrNull() as? ForumTextSegment.Image
 
+    val codeBlock: ForumTextSegment.CodeBlock?
+        get() = segments.singleOrNull() as? ForumTextSegment.CodeBlock
+
     val bookReferenceId: Long?
         get() = (segments.singleOrNull() as? ForumTextSegment.BookReference)?.bookId
+
+    val bookReference: ForumTextSegment.BookReference?
+        get() = segments.singleOrNull() as? ForumTextSegment.BookReference
+
+    val fold: ForumTextSegment.Fold?
+        get() = segments.singleOrNull() as? ForumTextSegment.Fold
 }
 
 internal fun forumSpoilerIsVisible(
@@ -93,12 +122,25 @@ internal fun forumRevealSpoiler(
     revealedSpoilerIndexes
 }
 
-/** The source's review-feed toggle must not spill into unrelated discussion/detail content. */
+/**
+ * The native preference is shared by every surface that renders the same forum markup.  The
+ * source API only uses the flag as a server-side filter for the review feed, but discussion posts
+ * and detail/comment responses still contain inline `||...||` segments that must follow the same
+ * local preference.  Keep the type argument for call-site/API compatibility with older tests.
+ */
 internal fun forumFeedHideSpoilers(type: String, reviewFeedHideSpoilers: Boolean): Boolean =
-    !type.trim().equals("review", ignoreCase = true) || reviewFeedHideSpoilers
+    reviewFeedHideSpoilers
 
-/** Detail pages, replies, chapter comments, and activity previews start masked by default. */
-internal fun forumContentHideSpoilers(): Boolean = true
+/**
+ * The same spoiler preference is shared by detail pages, replies, chapter comments, and activity
+ * previews. The default remains masked for a fresh session, while an explicit forum preference
+ * can opt every native rich-content surface into the source text.
+ */
+internal fun forumContentHideSpoilers(preference: Boolean = true): Boolean = preference
+
+/** Do not print raw nested-fold syntax when a hostile/deeply nested payload reaches the renderer. */
+internal fun forumFoldDepthFallbackLabel(title: String): String =
+    "嵌套折叠层级过深，已收起：${title.trim().ifBlank { "折叠内容" }}"
 
 /** A delayed down/up pair from a busy frame must not be promoted to a card navigation click. */
 internal fun forumCardTapIsEligible(
@@ -111,6 +153,32 @@ internal fun forumCardTapIsEligible(
     durationMillis >= 0L &&
     durationMillis < maxDurationMillis.coerceAtLeast(1L) &&
     distancePx <= touchSlopPx.coerceAtLeast(1f)
+
+/**
+ * Shared navigation gate for forum feed cards and native [bookid] embeds.  Keeping the decision
+ * in presentation code makes the pointer modifier and the regression suite use the same contract.
+ */
+internal fun forumCardNavigationAllowed(
+    durationMillis: Long,
+    distancePx: Float,
+    touchSlopPx: Float,
+    childConsumed: Boolean = false,
+): Boolean = forumCardTapIsEligible(
+    durationMillis = durationMillis,
+    distancePx = distancePx,
+    touchSlopPx = touchSlopPx,
+    childConsumed = childConsumed,
+)
+
+/**
+ * A navigation target inside a lazy forum list is not eligible while that list is consuming a
+ * scroll. Compose's regular clickable handles ordinary tap cancellation, while this extra gate
+ * covers a delayed/coalesced up event after a busy frame or a recycled row.
+ */
+internal fun forumNavigationTapEnabled(
+    destinationAvailable: Boolean,
+    isScrollInProgress: Boolean,
+): Boolean = destinationAvailable && !isScrollInProgress
 
 /** A book-review card is backed by a comment id, so its safe route is the linked book, not /forum/id. */
 internal sealed interface ForumFeedDestination {
@@ -253,25 +321,35 @@ internal fun forumActionBarLabels(): List<String> =
 
 internal fun forumContentLinks(paragraphs: List<String>): List<String> =
     paragraphs.flatMap { paragraph ->
-        forumRichParagraphs(paragraph).flatMap { richParagraph ->
-            richParagraph.segments.mapNotNull { segment ->
-                (segment as? ForumTextSegment.Link)?.url
-            }
-        }
+        forumLinksFromRichParagraphs(forumRichParagraphs(paragraph))
     }.distinct()
 
 internal fun forumCommentLinkPreviews(comment: ForumComment): List<String> =
-    forumRichParagraphs(comment.content)
-        .flatMap { paragraph -> paragraph.segments }
-        .mapNotNull { segment -> (segment as? ForumTextSegment.Link)?.url }
-        .distinct()
+    forumLinksFromRichParagraphs(forumRichParagraphs(comment.content)).distinct()
+
+private fun forumLinksFromRichParagraphs(paragraphs: List<ForumRichParagraph>): List<String> =
+    paragraphs.flatMap { paragraph ->
+        paragraph.segments.flatMap { segment ->
+            when (segment) {
+                is ForumTextSegment.Link -> listOf(segment.url)
+                is ForumTextSegment.Fold -> forumLinksFromRichParagraphs(forumRichParagraphs(segment.content))
+                else -> emptyList()
+            }
+        }
+    }
 
 internal fun forumRichParagraphs(raw: String): List<ForumRichParagraph> =
     forumMarkupParagraphs(raw)
         .map(::forumRichParagraph)
         .filter { paragraph ->
             paragraph.segments.isNotEmpty() &&
-                (paragraph.plainText.isNotBlank() || paragraph.image != null || paragraph.bookReferenceId != null)
+                (
+                    paragraph.plainText.isNotBlank() ||
+                        paragraph.image != null ||
+                        paragraph.bookReferenceId != null ||
+                        paragraph.fold != null ||
+                        paragraph.codeBlock != null
+                    )
         }
 
 /**
@@ -279,16 +357,21 @@ internal fun forumRichParagraphs(raw: String): List<ForumRichParagraph> =
  * an example inside a stripped script/style block cannot trigger a network request.
  */
 internal fun forumBookReferenceIds(raw: String): List<Long> =
-    forumRichParagraphs(raw)
-        .flatMap { paragraph ->
-            paragraph.segments.mapNotNull { segment ->
-                (segment as? ForumTextSegment.BookReference)?.bookId
-            }
-        }
-        .distinct()
+    forumBookReferenceIdsFromParagraphs(forumRichParagraphs(raw)).distinct()
 
 internal fun forumBookReferenceIds(contents: Iterable<String>): List<Long> =
     contents.flatMap(::forumBookReferenceIds).distinct()
+
+private fun forumBookReferenceIdsFromParagraphs(paragraphs: List<ForumRichParagraph>): List<Long> =
+    paragraphs.flatMap { paragraph ->
+        paragraph.segments.flatMap { segment ->
+            when (segment) {
+                is ForumTextSegment.BookReference -> listOf(segment.bookId)
+                is ForumTextSegment.Fold -> forumBookReferenceIdsFromParagraphs(forumRichParagraphs(segment.content))
+                else -> emptyList()
+            }
+        }
+    }
 
 /**
  * Feed cards render only a few lines, so handing a whole review to Android's text layout engine
@@ -297,11 +380,21 @@ internal fun forumBookReferenceIds(contents: Iterable<String>): List<Long> =
  */
 internal fun forumFeedExcerptText(raw: String, maxCharacters: Int = 640): String {
     val limit = maxCharacters.coerceAtLeast(1)
-    if (raw.length <= limit) return raw
+    // Never cut a fold between its opening and closing markers. Compact complete fold bodies to
+    // their closed title form before applying the feed character budget.
+    val foldSafeRaw = raw.replace(forumFoldBlockRegex) { match ->
+        "[fold:${match.groupValues[1]}][/fold]"
+    }.replace(forumUnclosedFoldBlockRegex) { match ->
+        // The source review endpoint may already return a character-limited excerpt, so its
+        // closing marker is absent. Treat the remaining body as an opaque collapsed block rather
+        // than allowing [fold:...] and the hidden text to leak into the card preview.
+        "[fold:${match.groupValues[1]}][/fold]"
+    }
+    if (foldSafeRaw.length <= limit) return foldSafeRaw
 
     var cutoff = limit
-    if (raw[cutoff - 1] == '|' && raw.getOrNull(cutoff) == '|') cutoff += 1
-    return raw.take(cutoff).trimEnd() + "…"
+    if (foldSafeRaw[cutoff - 1] == '|' && foldSafeRaw.getOrNull(cutoff) == '|') cutoff += 1
+    return foldSafeRaw.take(cutoff).trimEnd() + "…"
 }
 
 /**
@@ -324,14 +417,27 @@ internal class ForumRichParagraphCache(
 }
 
 private fun forumRichParagraph(raw: String): ForumRichParagraph {
-    forumBookReferenceRegex.matchEntire(raw.trim())
-        ?.groupValues
-        ?.getOrNull(1)
-        ?.toLongOrNull()
-        ?.takeIf { it > 0L }
-        ?.let { bookId ->
-            return ForumRichParagraph(listOf(ForumTextSegment.BookReference(bookId)))
-        }
+    forumCodeFenceRegex.matchEntire(raw.trim())?.let { match ->
+        val language = match.groupValues.getOrNull(2)?.trim()?.takeIf(String::isNotBlank)
+        val value = match.groupValues.getOrNull(3).orEmpty().trimEnd()
+        return ForumRichParagraph(listOf(ForumTextSegment.CodeBlock(value, language)))
+    }
+
+    forumFoldBlockRegex.matchEntire(raw.trim())?.let { match ->
+        val title = forumInlineText(match.groupValues[1]).trim().ifBlank { "折叠内容" }
+        return ForumRichParagraph(
+            listOf(
+                ForumTextSegment.Fold(
+                    title = title,
+                    content = match.groupValues[2].trim(),
+                )
+            )
+        )
+    }
+
+    forumBookReferenceSegment(raw.trim())?.let { reference ->
+        return ForumRichParagraph(listOf(reference))
+    }
 
     forumImageSegment(raw.trim())?.let { image ->
         return ForumRichParagraph(listOf(image))
@@ -360,32 +466,102 @@ private fun appendForumInlineToken(target: MutableList<ForumTextSegment>, token:
         return
     }
 
+    forumBbCodeLinkRegex.matchEntire(token)?.let { bbCode ->
+        val explicitUrl = bbCode.groupValues.getOrNull(1).orEmpty().trim()
+        val labelRaw = if (explicitUrl.isNotBlank()) {
+            bbCode.groupValues.getOrNull(2).orEmpty()
+        } else {
+            bbCode.groupValues.getOrNull(3).orEmpty()
+        }
+        val url = forumNormalizeLink(explicitUrl.ifBlank { labelRaw })
+        if (url != null) {
+            target += ForumTextSegment.Link(
+                label = forumInlineText(labelRaw).trim().ifBlank { url },
+                url = url,
+            )
+        } else {
+            appendForumPlainSegment(target, token)
+        }
+        return
+    }
+
     val markdownLink = forumMarkdownLinkRegex.matchEntire(token)
     if (markdownLink != null) {
-        val url = forumNormalizeLink(markdownLink.groupValues[2]) ?: return
-        target += ForumTextSegment.Link(
-            label = forumInlineText(markdownLink.groupValues[1]).trim().ifBlank { url },
-            url = url
-        )
+        val label = forumInlineText(markdownLink.groupValues[1]).trim()
+        val url = forumNormalizeLink(markdownLink.groupValues[2])
+        if (url != null) {
+            target += ForumTextSegment.Link(
+                label = label.ifBlank { url },
+                url = url,
+            )
+        } else if (label.isNotBlank()) {
+            // The source editor inserts `(url)` as a placeholder. Keep the human label readable
+            // when a user submits it unchanged instead of exposing the Markdown delimiters.
+            appendForumPlainSegment(target, label)
+        }
         return
     }
 
     if (token.startsWith("<a", ignoreCase = true)) {
-        val url = forumHtmlAttribute(token, "href")?.let(::forumNormalizeLink) ?: return
-        val label = forumInlineText(token.replace(forumAnchorTagRegex, "")).trim().ifBlank { url }
-        target += ForumTextSegment.Link(label = label, url = url)
+        val label = forumInlineText(token.replace(forumAnchorTagRegex, "")).trim()
+        val url = forumHtmlAttribute(token, "href")?.let(::forumNormalizeLink)
+        if (url != null) {
+            target += ForumTextSegment.Link(label = label.ifBlank { url }, url = url)
+        } else if (label.isNotBlank()) {
+            appendForumPlainSegment(target, label)
+        }
         return
     }
 
-    if (token.startsWith("<strong", ignoreCase = true) || token.startsWith("<b", ignoreCase = true)) {
-        val value = forumInlineText(token.replace(forumBoldTagRegex, "")).trim()
-        if (value.isNotBlank()) target += ForumTextSegment.Bold(value)
+    forumStyledHtmlTagRegex.matchEntire(token)?.let { styled ->
+        val innerMarkup = styled.groupValues[2]
+        // Source posts sometimes wrap a Markdown link in an HTML decoration tag, for example
+        // `<u>[#1173](https://novalpie.cc/forum/1173)</u>`. Flattening the wrapper before the
+        // Markdown pass leaves raw link syntax on screen and loses its click target. Preserve the
+        // nested segments whenever they contain a link; the link remains actionable even though
+        // Compose cannot apply the outer decoration to an independently clickable span.
+        val nestedSegments = forumRichParagraph(innerMarkup).segments
+        // The website editor freely nests Markdown inside an HTML decoration, for example
+        // `<u>**全部规则**</u>`. If we flatten that wrapper with forumInlineText(), the Markdown
+        // control characters leak into the native UI. Preserve every parsed nested segment (not
+        // only links) so the inner text remains semantic and actionable.
+        if (nestedSegments.any { it !is ForumTextSegment.Plain }) {
+            target += nestedSegments
+            return
+        }
+        val value = forumInlineText(innerMarkup).trim()
+        if (value.isBlank()) return
+        when (styled.groupValues[1].lowercase()) {
+            "strong", "b" -> target += ForumTextSegment.Bold(value)
+            "em", "i" -> target += ForumTextSegment.Italic(value)
+            "u" -> target += ForumTextSegment.Underline(value)
+            "s", "del", "strike" -> target += ForumTextSegment.Strikethrough(value)
+            "code" -> target += ForumTextSegment.InlineCode(value)
+        }
         return
     }
 
     if (token.startsWith("**") || token.startsWith("__")) {
         val value = token.drop(2).dropLast(2).let(::forumInlineText).trim()
         if (value.isNotBlank()) target += ForumTextSegment.Bold(value)
+        return
+    }
+
+    if (token.startsWith("~~") && token.endsWith("~~")) {
+        val value = token.drop(2).dropLast(2).let(::forumInlineText).trim()
+        if (value.isNotBlank()) target += ForumTextSegment.Strikethrough(value)
+        return
+    }
+
+    if (token.startsWith('`') && token.endsWith('`')) {
+        val value = token.drop(1).dropLast(1).let(::forumInlineText).trim()
+        if (value.isNotBlank()) target += ForumTextSegment.InlineCode(value)
+        return
+    }
+
+    if (token.startsWith('*') && token.endsWith('*')) {
+        val value = token.drop(1).dropLast(1).let(::forumInlineText).trim()
+        if (value.isNotBlank()) target += ForumTextSegment.Italic(value)
         return
     }
 
@@ -396,7 +572,20 @@ private fun appendForumInlineToken(target: MutableList<ForumTextSegment>, token:
 
 private fun appendForumPlainSegment(target: MutableList<ForumTextSegment>, raw: String) {
     val value = forumInlineText(raw)
-    if (value.isBlank()) return
+    if (value.isBlank()) {
+        // A newline between two inline links is meaningful layout. Do not discard it merely
+        // because it contains no visible glyph; otherwise source fold URL lists collapse into
+        // one unscannable, concatenated hyperlink block.
+        if (raw.contains('\n') && target.isNotEmpty()) {
+            val last = target.lastOrNull()
+            if (last is ForumTextSegment.Plain && !last.value.endsWith('\n')) {
+                target[target.lastIndex] = last.copy(value = last.value + "\n")
+            } else if (last !is ForumTextSegment.Plain || !last.value.endsWith('\n')) {
+                target += ForumTextSegment.Plain("\n")
+            }
+        }
+        return
+    }
     val last = target.lastOrNull()
     if (last is ForumTextSegment.Plain) {
         target[target.lastIndex] = last.copy(value = last.value + value)
@@ -406,22 +595,113 @@ private fun appendForumPlainSegment(target: MutableList<ForumTextSegment>, raw: 
 }
 
 private fun forumMarkupParagraphs(raw: String): List<String> {
-    val prepared = raw.trim()
+    val prepared = forumNormalizeBbCodeLinks(
+        forumNormalizeHtmlDetails(forumDecodeHtmlEntities(raw.trim()))
+    )
         .replace(forumUnsafeBlockRegex, "")
         .replace(forumLineBreakRegex, "\n")
         .replace(forumBlockEndTagRegex, "\n\n")
         .replace(forumBlockStartTagRegex, "")
 
     if (prepared.isBlank()) return emptyList()
-    return prepared
+    val codeBlocks = mutableListOf<String>()
+    val codeMasked = prepared.replace(forumCodeFenceRegex) { match ->
+        codeBlocks += match.value
+        "\n\n__NOVALPIE_CODE_${codeBlocks.lastIndex}__\n\n"
+    }
+    val foldBlocks = mutableListOf<String>()
+    val foldMasked = codeMasked.replace(forumFoldBlockRegex) { match ->
+        foldBlocks += match.value
+        "\n\n__NOVALPIE_FOLD_${foldBlocks.lastIndex}__\n\n"
+    }
+    return foldMasked
         .split(Regex("\\n{2,}"))
         .map { paragraph -> paragraph.lines().joinToString("\n") { line -> line.trim() }.trim() }
         .filter(String::isNotBlank)
         .flatMap(::forumSeparateBlockWidgets)
+        .map { paragraph ->
+            forumRestoreCodePlaceholder(
+                forumRestoreFoldPlaceholder(paragraph, foldBlocks),
+                codeBlocks,
+            )
+        }
+}
+
+private fun forumRestoreCodePlaceholder(
+    paragraph: String,
+    codeBlocks: List<String>,
+): String {
+    val match = forumCodePlaceholderRegex.matchEntire(paragraph.trim()) ?: return paragraph
+    return codeBlocks.getOrNull(match.groupValues[1].toIntOrNull() ?: -1) ?: paragraph
+}
+
+/**
+ * Older content can contain the HTML representation produced by the website renderer. Normalize
+ * that safe `details`/`summary` form to the source fold syntax before generic HTML cleanup.
+ */
+private fun forumNormalizeHtmlDetails(raw: String): String {
+    var normalized = raw
+    repeat(MAX_FORUM_PRESENTATION_FOLD_DEPTH) {
+        val next = normalized.replace(forumHtmlDetailsRegex) { match ->
+            val title = forumInlineText(match.groupValues[1]).trim().ifBlank { "折叠内容" }
+            "[fold:$title]\n${match.groupValues[2]}\n[/fold]"
+        }
+        if (next == normalized) return normalized
+        normalized = next
+    }
+    return normalized
+}
+
+private const val MAX_FORUM_PRESENTATION_FOLD_DEPTH = 8
+
+/** Accept the common BBCode URL form used by copied forum content as an alias of Markdown links. */
+private fun forumNormalizeBbCodeLinks(raw: String): String =
+    raw.replace(forumBbCodeLinkRegex) { match ->
+        val explicitUrl = match.groupValues.getOrNull(1).orEmpty().trim()
+        val labelRaw = if (explicitUrl.isNotBlank()) {
+            match.groupValues.getOrNull(2).orEmpty()
+        } else {
+            match.groupValues.getOrNull(3).orEmpty()
+        }
+        val url = forumNormalizeLink(explicitUrl.ifBlank { labelRaw })
+        if (url == null) {
+            match.value
+        } else {
+            val label = forumInlineText(labelRaw).trim().ifBlank { url }
+            "[$label]($url)"
+        }
+    }
+
+/**
+ * Some source responses contain already-sanitized HTML as entity text (for example
+ * `&lt;a href=...&gt;`). Decode only the small, presentation-safe entity set before parsing
+ * tags/links; a bounded second pass handles the common double-encoded response without turning
+ * arbitrary user content into executable markup.
+ */
+private fun forumDecodeHtmlEntities(raw: String): String {
+    var decoded = raw
+    repeat(2) {
+        val next = decoded
+            .replace("&nbsp;", " ", ignoreCase = true)
+            .replace("&amp;", "&", ignoreCase = true)
+            .replace("&lt;", "<", ignoreCase = true)
+            .replace("&gt;", ">", ignoreCase = true)
+            .replace("&quot;", "\"", ignoreCase = true)
+            .replace("&#39;", "'", ignoreCase = true)
+        if (next == decoded) return decoded
+        decoded = next
+    }
+    return decoded
+}
+
+private fun forumRestoreFoldPlaceholder(paragraph: String, foldBlocks: List<String>): String {
+    val match = forumFoldPlaceholderRegex.matchEntire(paragraph.trim()) ?: return paragraph
+    return foldBlocks.getOrNull(match.groupValues[1].toIntOrNull() ?: -1) ?: paragraph
 }
 
 /** Source book shares and images stay block widgets even when they occur beside ordinary text. */
 private fun forumSeparateBlockWidgets(paragraph: String): List<String> {
+    if (forumFoldBlockRegex.matches(paragraph.trim())) return listOf(paragraph.trim())
     if (!forumBlockWidgetRegex.containsMatchIn(paragraph)) return listOf(paragraph)
 
     val separated = mutableListOf<String>()
@@ -443,13 +723,18 @@ private fun forumSeparateBlockWidgets(paragraph: String): List<String> {
 }
 
 private fun forumBlockWidgetSegment(raw: String): ForumTextSegment? =
-    forumBookReferenceRegex.matchEntire(raw.trim())
-        ?.groupValues
-        ?.getOrNull(1)
-        ?.toLongOrNull()
-        ?.takeIf { it > 0L }
-        ?.let(ForumTextSegment::BookReference)
-        ?: forumImageSegment(raw)
+    forumBookReferenceSegment(raw.trim()) ?: forumImageSegment(raw)
+
+private fun forumBookReferenceSegment(raw: String): ForumTextSegment.BookReference? {
+    val match = forumBookReferenceRegex.matchEntire(raw.trim()) ?: return null
+    val bookId = match.groupValues[1].toLongOrNull()?.takeIf { it > 0L } ?: return null
+    val options = match.groupValues.getOrNull(2).orEmpty().lowercase()
+    return ForumTextSegment.BookReference(
+        bookId = bookId,
+        showTags = options.contains("tag"),
+        showBio = options.contains("bio") || options.contains("desc") || options.contains("description"),
+    )
+}
 
 private fun forumImageSegment(raw: String): ForumTextSegment.Image? {
     val token = raw.trim()
@@ -482,6 +767,12 @@ private fun forumInlineText(raw: String): String =
         .replace("&gt;", ">", ignoreCase = true)
         .replace("&quot;", "\"", ignoreCase = true)
         .replace("&#39;", "'", ignoreCase = true)
+        // Markdown headings are source presentation markers, not literal forum text.
+        .replace(Regex("(?m)^[ \\t]{0,3}#{1,6}[ \\t]+"), "")
+        // Keep quoted/list content readable without exposing its control characters.
+        .replace(Regex("(?m)^[ \\t]{0,3}>[ \\t]?"), "")
+        .replace(Regex("(?m)^[ \\t]{0,3}[-*+][ \\t]+"), "• ")
+        .replace(Regex("(?m)^[ \\t]{0,3}\\d+[.)][ \\t]+"), "")
         .replace(Regex("[ \\t\\u000B\\f]+"), " ")
         .replace(Regex(" *\\n *"), "\n")
 
@@ -506,7 +797,13 @@ private fun forumNormalizeLink(raw: String): String? {
         ?: return null
     return when {
         value.startsWith("http://", ignoreCase = true) || value.startsWith("https://", ignoreCase = true) -> value
+        value.startsWith("//") -> "https:$value"
         value.startsWith("/") -> "https://novalpie.cc$value"
+        // Markdown permits relative destinations. The editor's default `url` placeholder is one
+        // such destination; resolving it to the source origin prevents `[label](url)` from leaking
+        // raw brackets while retaining the website's normal navigation semantics.
+        ':' !in value && !value.startsWith("#") && !value.any(Char::isWhitespace) ->
+            "https://novalpie.cc/${value.trimStart('/')}"
         else -> null
     }
 }
@@ -542,6 +839,148 @@ internal fun forumCommentThreads(comments: List<ForumComment>): List<ForumCommen
     }
 }
 
+/**
+ * Forum detail keeps the composer immediately after the back link, detail header, and section
+ * title. When a user replies to a comment several screens down, this is the item that must be
+ * brought into view so the target and send action are not silently off-screen.
+ */
+internal const val FORUM_POST_DETAIL_COMPOSER_ITEM_INDEX = 3
+
+internal fun forumPostDetailComposerScrollIndex(replyingToCommentId: Long?): Int? =
+    replyingToCommentId?.takeIf { it > 0L }?.let { FORUM_POST_DETAIL_COMPOSER_ITEM_INDEX }
+
+/**
+ * Resolve the thread root used by the source forum composer and nested interaction endpoints.
+ *
+ * The visible reply can be several levels below the root, but the website always sends the root
+ * comment id in `comment_id` and keeps the directly selected author's name in `reply_to_name`.
+ * When a paged response omits an ancestor, the known parent id is the safest root fallback.
+ */
+internal fun forumCommentThreadRootId(
+    comment: ForumComment,
+    availableComments: List<ForumComment> = emptyList(),
+): Long {
+    val byId = availableComments.associateBy(ForumComment::id)
+    val visited = mutableSetOf<Long>()
+    var current = comment
+    while (visited.add(current.id)) {
+        val parentId = current.parentCommentId ?: return current.id
+        val parent = byId[parentId] ?: return parentId
+        current = parent
+    }
+    return current.id
+}
+
+internal fun forumReplySubmissionCommentId(
+    comment: ForumComment,
+    availableComments: List<ForumComment> = emptyList(),
+): Long = forumCommentThreadRootId(comment, availableComments)
+
+/**
+ * Keep the reply body independent from the direct reply target.
+ *
+ * The website shows `回复 @name` as composer chrome and sends the name in `reply_to_name`; it does
+ * not inject an `@name` token into the content body. Clear a legacy auto-prefix left by an older
+ * native build, but never create one for a newly selected target.
+ */
+internal fun replyComposerDraftForTarget(
+    currentDraft: String,
+    previousTargetName: String?,
+    nextTargetName: String?,
+): String {
+    if (currentDraft.isBlank()) return ""
+    val previousPrefix = previousTargetName?.trim()?.takeIf(String::isNotBlank)?.let { "@$it " }
+    return if (previousPrefix != null && currentDraft == previousPrefix) "" else currentDraft
+}
+
+/** The exact insertions exposed by the source Markdown editor, kept independent from Compose. */
+internal enum class ForumCommentMarkupAction(val label: String) {
+    Bold("粗体"),
+    Italic("斜体"),
+    Heading("标题"),
+    Quote("引用"),
+    Code("代码"),
+    Link("链接"),
+    List("列表"),
+    Underline("下划线"),
+    Strikethrough("删除线"),
+    Spoiler("黑幕"),
+    Fold("折叠"),
+}
+
+internal data class ForumCommentMarkupEdit(
+    val text: String,
+    val selectionStart: Int,
+    val selectionEnd: Int,
+)
+
+/**
+ * Insert or wrap the current selection using the same source syntax as the website editor. The
+ * returned selection intentionally stays on the editable inner text, so repeated toolbar taps
+ * do not strand a cursor outside an inserted marker pair.
+ */
+internal fun forumCommentMarkupEdit(
+    text: String,
+    selectionStart: Int,
+    selectionEnd: Int,
+    action: ForumCommentMarkupAction,
+): ForumCommentMarkupEdit {
+    val start = minOf(selectionStart, selectionEnd).coerceIn(0, text.length)
+    val end = maxOf(selectionStart, selectionEnd).coerceIn(start, text.length)
+    val selected = text.substring(start, end)
+
+    if (action == ForumCommentMarkupAction.Fold) {
+        val title = selected.ifBlank { "点击展开" }
+        val body = selected.ifBlank { "这里是可以折叠的内容..." }
+        val prefix = "[fold:$title]\n"
+        val replacement = "$prefix$body\n[/fold]"
+        return ForumCommentMarkupEdit(
+            text = text.replaceRange(start, end, replacement),
+            selectionStart = start + prefix.length,
+            selectionEnd = start + prefix.length + body.length,
+        )
+    }
+
+    val template = when (action) {
+        ForumCommentMarkupAction.Bold -> Triple("**", "**", "粗体文字")
+        ForumCommentMarkupAction.Italic -> Triple("*", "*", "斜体文字")
+        ForumCommentMarkupAction.Heading -> Triple("## ", "", "标题")
+        ForumCommentMarkupAction.Quote -> Triple("> ", "", "引用文字")
+        ForumCommentMarkupAction.Code -> Triple("`", "`", "代码")
+        ForumCommentMarkupAction.Link -> Triple("[", "](url)", "链接文字")
+        ForumCommentMarkupAction.List -> Triple("- ", "", "列表项")
+        ForumCommentMarkupAction.Underline -> Triple("<u>", "</u>", "下划线文字")
+        ForumCommentMarkupAction.Strikethrough -> Triple("~~", "~~", "删除线文字")
+        ForumCommentMarkupAction.Spoiler -> Triple("||", "||", "黑幕文字")
+        ForumCommentMarkupAction.Fold -> error("fold handled above")
+    }
+    val body = selected.ifBlank { template.third }
+    val replacement = template.first + body + template.second
+    return ForumCommentMarkupEdit(
+        text = text.replaceRange(start, end, replacement),
+        selectionStart = start + template.first.length,
+        selectionEnd = start + template.first.length + body.length,
+    )
+}
+
+internal data class ForumCommentActionTarget(
+    val parentCommentId: Long,
+    val replyId: Long? = null,
+)
+
+/** Resolve the source immediate-parent/reply pair used by forum like, reaction, and award endpoints. */
+internal fun forumCommentActionTarget(
+    comment: ForumComment,
+    availableComments: List<ForumComment> = emptyList(),
+): ForumCommentActionTarget {
+    val rootId = forumCommentThreadRootId(comment, availableComments)
+    if (rootId == comment.id) return ForumCommentActionTarget(parentCommentId = rootId)
+    return ForumCommentActionTarget(
+        parentCommentId = rootId,
+        replyId = comment.id,
+    )
+}
+
 internal fun forumCommentThreadSummary(threads: List<ForumCommentThread>): String {
     val replyCount = threads.sumOf { it.replies.size }
     return "${threads.size} 条评论 · $replyCount 条回复"
@@ -561,7 +1000,28 @@ private fun forumCommentRoot(
 }
 
 private val forumDatePattern = Regex("""(\d{4})[-/](\d{1,2})[-/](\d{1,2})""")
-private val forumBookReferenceRegex = Regex("""\[bookid\s*:\s*([1-9]\d*)\]""", RegexOption.IGNORE_CASE)
+private val forumBookReferenceRegex = Regex(
+    """\[bookid\s*:\s*([1-9]\d*)\s*(?:\|\s*([^\]\r\n]+?))?\s*\]""",
+    RegexOption.IGNORE_CASE,
+)
+private val forumFoldBlockRegex = Regex(
+    """\[fold\s*:\s*([^\]\r\n]+?)\]\s*([\s\S]*?)\s*\[/fold\s*\]""",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+)
+private val forumUnclosedFoldBlockRegex = Regex(
+    """\[fold\s*:\s*([^\]\r\n]+?)\](?:(?!\[/fold\s*\])[\s\S])*\z""",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+)
+private val forumHtmlDetailsRegex = Regex(
+    """<details\b[^>]*>\s*<summary\b[^>]*>([\s\S]*?)</summary\s*>([\s\S]*?)</details\s*>""",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+)
+private val forumCodeFenceRegex = Regex(
+    """(?m)^[ \t]{0,3}(`{3,}|~{3,})[ \t]*([^\r\n]*)\r?\n([\s\S]*?)\r?\n^[ \t]{0,3}\1[ \t]*(?=\r?$)""",
+    setOf(RegexOption.MULTILINE, RegexOption.DOT_MATCHES_ALL),
+)
+private val forumCodePlaceholderRegex = Regex("""__NOVALPIE_CODE_(\d+)__""")
+private val forumFoldPlaceholderRegex = Regex("""__NOVALPIE_FOLD_(\d+)__""")
 private val forumMarkdownImageRegex = Regex(
     """!\[([^\]]*)]\(\s*([^\s)]+)(?:\s+["'][^"']*["'])?\s*\)""",
     RegexOption.DOT_MATCHES_ALL,
@@ -572,12 +1032,19 @@ private val forumBlockWidgetRegex = Regex(
     setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
 )
 private val forumInlineTokenRegex = Regex(
-    """\|\|.*?\|\||\|\|.+$|<a\b[^>]*>.*?</a\s*>|<(?:strong|b)\b[^>]*>.*?</(?:strong|b)\s*>|\[[^\]\n]+]\(https?://[^)\s]+\)|\*\*.+?\*\*|__.+?__|https?://[^\s<>"']+""",
+    """\|\|.*?\|\||\|\|.+$|<a\b[^>]*>.*?</a\s*>|<(?:strong|b|em|i|u|s|del|strike|code)\b[^>]*>.*?</(?:strong|b|em|i|u|s|del|strike|code)\s*>|\[[^\]\n]+]\([^)\s]+\)|\*\*.+?\*\*|__.+?__|(?<!\*)\*(?!\*)[^\n*]+?(?<!\*)\*(?!\*)|~~[^\n~]+?~~|`[^\n`]+?`|https?://[^\s<>"']+""",
     setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
 )
-private val forumMarkdownLinkRegex = Regex("""\[([^\]]+)]\((https?://[^)\s]+)\)""", RegexOption.DOT_MATCHES_ALL)
+private val forumMarkdownLinkRegex = Regex("""\[([^\]]+)]\(([^)\s]+)\)""", RegexOption.DOT_MATCHES_ALL)
+private val forumBbCodeLinkRegex = Regex(
+    """\[url\s*=\s*([^\]\r\n]+)]([\s\S]*?)\[/url\s*]|\[url\]([\s\S]*?)\[/url\s*]""",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+)
 private val forumAnchorTagRegex = Regex("""</?a\b[^>]*>""", RegexOption.IGNORE_CASE)
-private val forumBoldTagRegex = Regex("""</?(?:strong|b)\b[^>]*>""", RegexOption.IGNORE_CASE)
+private val forumStyledHtmlTagRegex = Regex(
+    """<(strong|b|em|i|u|s|del|strike|code)\b[^>]*>(.*?)</\1\s*>""",
+    setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+)
 private val forumUnsafeBlockRegex = Regex(
     """<(script|style)\b[^>]*>.*?</\1\s*>""",
     setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)

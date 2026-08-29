@@ -7,6 +7,16 @@ import org.junit.Test
 
 class WebFallbackPolicyTest {
     @Test
+    fun existingWebTokenIsNeverOverwrittenByAnOlderNativeToken() {
+        assertNull(
+            webFallbackTokenToSeed(
+                existingWebToken = "fresh-web-session",
+                nativeToken = "stale-native-session",
+            )
+        )
+    }
+
+    @Test
     fun explicitProxyAlwaysWins() {
         val settings = ProxySettings(enabled = true, host = "proxy.example", port = 8080)
 

@@ -111,14 +111,26 @@ class DiscoverPresentationTest {
     }
 
     @Test
-    fun sourceDefaultSearchUsesTheWebsiteSafeContentRating() {
+    fun sourceDefaultSearchUsesTheWebsiteAllContentRating() {
         val contentRating = sourcePrimarySearchFilterGroups(SearchOptions())
             .single { group -> group.choices.any { choice -> choice.value == "adult_only" } }
 
         assertEquals(
-            "unrestricted",
+            "all",
             contentRating.choices.single { choice -> choice.selected }.value,
         )
+    }
+
+    @Test
+    fun selectingAiSearchAlsoUsesTheWebsiteRelevanceSortState() {
+        val next = searchOptionsAfterMatchTypeChange(
+            SearchOptions(sortBy = "favorite_count", sortOrder = "asc"),
+            "ai",
+        )
+
+        assertEquals("ai", next.matchType)
+        assertEquals("relevance", next.sortBy)
+        assertEquals("desc", next.sortOrder)
     }
 
     @Test

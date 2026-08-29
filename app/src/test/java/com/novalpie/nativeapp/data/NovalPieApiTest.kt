@@ -48,6 +48,114 @@ class NovalPieApiTest {
     }
 
     @Test
+    fun authenticatedJsonRequestsPreferTokenWithoutTouchingWebCookieProvider() = runBlocking {
+        var cookieProviderCalls = 0
+        api = NovalPieApi(
+            baseUrl = server.url("/").toString().trimEnd('/'),
+            authTokenProvider = { "reader-token" },
+            cookieProvider = {
+                cookieProviderCalls += 1
+                error("A bearer-authenticated JSON request must not initialize WebView cookies")
+            },
+        )
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody("""{"data":{"favorite_groups":[]}}"""),
+        )
+
+        api.favoriteGroups()
+
+        assertEquals(0, cookieProviderCalls)
+        val request = server.takeRequest()
+        assertEquals("Bearer reader-token", request.getHeader("authorization"))
+        assertNull(request.getHeader("cookie"))
+    }
+
+    @Test
+    fun expiredBearerFallsBackToWebCookieOnlyAfterUnauthorizedResponse() = runBlocking {
+        var cookieProviderCalls = 0
+        api = NovalPieApi(
+            baseUrl = server.url("/").toString().trimEnd('/'),
+            authTokenProvider = { "expired-reader-token" },
+            cookieProvider = {
+                cookieProviderCalls += 1
+                "session-cookie=web-login"
+            },
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(401)
+                .setHeader("content-type", "application/json")
+                .setBody("""{"message":"token expired"}"""),
+        )
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody("""{"data":{"favorite_groups":[]}}"""),
+        )
+
+        assertTrue(api.favoriteGroups().isEmpty())
+        assertEquals(1, cookieProviderCalls)
+
+        val tokenRequest = server.takeRequest()
+        assertEquals("Bearer expired-reader-token", tokenRequest.getHeader("authorization"))
+        assertNull(tokenRequest.getHeader("cookie"))
+        val cookieRequest = server.takeRequest()
+        assertNull(cookieRequest.getHeader("authorization"))
+        assertEquals("session-cookie=web-login", cookieRequest.getHeader("cookie"))
+    }
+
+    @Test
+    fun missingBearerFallsBackToWebCookieOnlyAfterUnauthorizedResponse() = runBlocking {
+        var cookieProviderCalls = 0
+        api = NovalPieApi(
+            baseUrl = server.url("/").toString().trimEnd('/'),
+            authTokenProvider = { null },
+            cookieProvider = {
+                cookieProviderCalls += 1
+                "session-cookie=web-login"
+            },
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(401)
+                .setHeader("content-type", "application/json")
+                .setBody("""{"message":"login required"}"""),
+        )
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody("""{"data":{"favorite_groups":[]}}"""),
+        )
+
+        assertTrue(api.favoriteGroups().isEmpty())
+        assertEquals(1, cookieProviderCalls)
+
+        val anonymousRequest = server.takeRequest()
+        assertNull(anonymousRequest.getHeader("authorization"))
+        assertNull(anonymousRequest.getHeader("cookie"))
+        val cookieRequest = server.takeRequest()
+        assertNull(cookieRequest.getHeader("authorization"))
+        assertEquals("session-cookie=web-login", cookieRequest.getHeader("cookie"))
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun forumGetRequestsMirrorTheWebsiteJsonContentTypeContract() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody("""{"data":{"posts":[]}}"""),
+        )
+
+        api.forumPostsPage(type = "discussion")
+
+        val request = server.takeRequest()
+        assertEquals("application/json", request.getHeader("content-type"))
+    }
+
+    @Test
     fun chaptersNormalizeWebsiteFieldAliases() = runBlocking {
         server.enqueue(
             MockResponse()
@@ -1239,7 +1347,7 @@ class NovalPieApiTest {
             sortBy = "favorite_count",
             sortOrder = "asc",
             scope = "tags",
-            matchType = "ai",
+            matchType = "fuzzy_strict",
             adultFilter = "adult_only",
             source = "novelPia",
             minWordCount = 100000,
@@ -1276,7 +1384,8 @@ class NovalPieApiTest {
         assertEquals("favorite_count", request.requestUrl?.queryParameter("sort_by"))
         assertEquals("asc", request.requestUrl?.queryParameter("sort_order"))
         assertEquals("tags", request.requestUrl?.queryParameter("scope"))
-        assertEquals("ai", request.requestUrl?.queryParameter("match_type"))
+        assertEquals("fuzzy_strict", request.requestUrl?.queryParameter("match_type"))
+        assertNull(request.requestUrl?.queryParameter("ai_search"))
         assertEquals("adult_only", request.requestUrl?.queryParameter("adult_filter"))
         assertNull(request.requestUrl?.queryParameter("source"))
         assertEquals("100000", request.requestUrl?.queryParameter("min_word_count"))
@@ -1290,6 +1399,46 @@ class NovalPieApiTest {
         assertEquals("玄幻", request.requestUrl?.queryParameter("type"))
         assertEquals("连载", request.requestUrl?.queryParameter("status"))
         assertTrue(request.getHeader("user-agent").orEmpty().contains("NovalPieNative"))
+    }
+
+    @Test
+    fun aiSearchMirrorsWebsiteQueryContract() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody("""{"results":[]}"""),
+        )
+
+        api.searchPage(
+            keyword = "semantic search",
+            sortBy = "favorite_count",
+            sortOrder = "asc",
+            matchType = "ai",
+        )
+
+        val request = server.takeRequest()
+        assertEquals("fuzzy_strict", request.requestUrl?.queryParameter("match_type"))
+        assertEquals("1", request.requestUrl?.queryParameter("ai_search"))
+        assertEquals("relevance", request.requestUrl?.queryParameter("sort_by"))
+        assertEquals("desc", request.requestUrl?.queryParameter("sort_order"))
+    }
+
+    @Test
+    fun searchDefaultsMirrorWebsiteQueryContract() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody("""{"results":[]}"""),
+        )
+
+        api.searchPage(keyword = "")
+
+        val request = server.takeRequest()
+        assertEquals("favorite_count", request.requestUrl?.queryParameter("sort_by"))
+        assertEquals("desc", request.requestUrl?.queryParameter("sort_order"))
+        assertEquals("fuzzy_strict", request.requestUrl?.queryParameter("match_type"))
+        assertEquals("all", request.requestUrl?.queryParameter("adult_filter"))
+        assertNull(request.requestUrl?.queryParameter("ai_search"))
     }
 
     @Test
@@ -1396,7 +1545,7 @@ class NovalPieApiTest {
     }
 
     @Test
-    fun downloadAndAssetStreamsKeepBinaryBytesAndSessionHeaders() = runBlocking {
+    fun downloadAndAssetStreamsPreferTokenWithoutTouchingWebCookieProvider() = runBlocking {
         val textBytes = "第1章 开始\n正文\n".toByteArray(Charsets.UTF_8)
         val imageBytes = byteArrayOf(0, 1, 2, 127, -1, 42)
         server.enqueue(
@@ -1409,9 +1558,13 @@ class NovalPieApiTest {
                 .setHeader("content-type", "image/webp")
                 .setBody(Buffer().write(imageBytes))
         )
+        var cookieProviderCalls = 0
         val authenticatedApi = NovalPieApi(
             baseUrl = server.url("/").toString().trimEnd('/'),
-            cookieProvider = { "novalpie_session=test" },
+            cookieProvider = {
+                cookieProviderCalls += 1
+                error("A bearer-authenticated stream must not initialize WebView cookies")
+            },
             authTokenProvider = { "token-test" },
         )
         val downloadedText = ByteArrayOutputStream()
@@ -1426,14 +1579,117 @@ class NovalPieApiTest {
         assertEquals(textBytes.toList(), downloadedText.toByteArray().toList())
         assertEquals(imageBytes.toList(), downloadedImage.toByteArray().toList())
         assertEquals("image/webp", mediaType)
+        assertEquals(0, cookieProviderCalls)
         val textRequest = server.takeRequest()
         assertEquals("/api/downloads/book-354491.txt", textRequest.requestUrl?.encodedPath)
-        assertEquals("novalpie_session=test", textRequest.getHeader("cookie"))
+        assertNull(textRequest.getHeader("cookie"))
         assertEquals("Bearer token-test", textRequest.getHeader("authorization"))
         val imageRequest = server.takeRequest()
         assertEquals("/images/original.webp", imageRequest.requestUrl?.encodedPath)
-        assertEquals("novalpie_session=test", imageRequest.getHeader("cookie"))
+        assertNull(imageRequest.getHeader("cookie"))
         assertEquals("Bearer token-test", imageRequest.getHeader("authorization"))
+    }
+
+    @Test
+    fun downloadAndAssetStreamsRetryWithWebCookieAfterAuthenticationFailures() = runBlocking {
+        val textBytes = "第1章 重新授权后下载\n正文\n".toByteArray(Charsets.UTF_8)
+        val imageBytes = byteArrayOf(3, 1, 4, 1, 5, 9)
+        var cookieProviderCalls = 0
+        api = NovalPieApi(
+            baseUrl = server.url("/").toString().trimEnd('/'),
+            authTokenProvider = { "expired-native-token" },
+            cookieProvider = {
+                cookieProviderCalls += 1
+                "session-cookie=web-login"
+            },
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(401)
+                .setHeader("content-type", "application/json")
+                .setBody("""{"message":"native token expired"}"""),
+        )
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "text/plain; charset=utf-8")
+                .setBody(String(textBytes, Charsets.UTF_8)),
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(403)
+                .setHeader("content-type", "application/json")
+                .setBody("""{"message":"asset token expired"}"""),
+        )
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "image/webp")
+                .setBody(Buffer().write(imageBytes)),
+        )
+
+        val downloadedText = ByteArrayOutputStream()
+        api.streamDownloadFile("book-354491.txt") { input -> input.copyTo(downloadedText) }
+        val downloadedImage = ByteArrayOutputStream()
+        api.streamAsset(server.url("images/original.webp").toString()) { input, _ ->
+            input.copyTo(downloadedImage)
+        }
+
+        assertEquals(textBytes.toList(), downloadedText.toByteArray().toList())
+        assertEquals(imageBytes.toList(), downloadedImage.toByteArray().toList())
+        assertEquals(2, cookieProviderCalls)
+
+        val downloadTokenRequest = server.takeRequest()
+        assertEquals("Bearer expired-native-token", downloadTokenRequest.getHeader("authorization"))
+        assertNull(downloadTokenRequest.getHeader("cookie"))
+        val downloadCookieRequest = server.takeRequest()
+        assertNull(downloadCookieRequest.getHeader("authorization"))
+        assertEquals("session-cookie=web-login", downloadCookieRequest.getHeader("cookie"))
+        val assetTokenRequest = server.takeRequest()
+        assertEquals("Bearer expired-native-token", assetTokenRequest.getHeader("authorization"))
+        assertNull(assetTokenRequest.getHeader("cookie"))
+        val assetCookieRequest = server.takeRequest()
+        assertNull(assetCookieRequest.getHeader("authorization"))
+        assertEquals("session-cookie=web-login", assetCookieRequest.getHeader("cookie"))
+    }
+
+    @Test
+    fun rejectedDownloadStreamNeverInvokesConsumerOrPublishesUnauthorizedPayload() = runBlocking {
+        var cookieProviderCalls = 0
+        api = NovalPieApi(
+            baseUrl = server.url("/").toString().trimEnd('/'),
+            authTokenProvider = { "expired-native-token" },
+            cookieProvider = {
+                cookieProviderCalls += 1
+                "session-cookie=web-login"
+            },
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(401)
+                .setHeader("content-type", "application/json")
+                .setBody("""{"message":"login required"}"""),
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(403)
+                .setHeader("content-type", "application/json")
+                .setBody("""{"message":"cookie session expired"}"""),
+        )
+
+        val output = ByteArrayOutputStream()
+        var consumerCalls = 0
+        val failure = runCatching {
+            api.streamDownloadFile("book-354491.txt") { input ->
+                consumerCalls += 1
+                input.copyTo(output)
+            }
+        }.exceptionOrNull()
+
+        assertTrue(failure is NovalPieApiException)
+        assertEquals(403, (failure as NovalPieApiException).statusCode)
+        assertEquals(1, cookieProviderCalls)
+        assertEquals(0, consumerCalls)
+        assertEquals(0, output.size())
+        assertEquals(2, server.requestCount)
     }
 
     @Test
@@ -1467,7 +1723,7 @@ class NovalPieApiTest {
         val request = server.takeRequest()
         assertEquals("5", request.requestUrl?.queryParameter("page"))
         assertEquals("60", request.requestUrl?.queryParameter("limit"))
-        assertEquals("unrestricted", request.requestUrl?.queryParameter("adult_filter"))
+        assertEquals("all", request.requestUrl?.queryParameter("adult_filter"))
     }
 
     @Test
@@ -3319,6 +3575,35 @@ class NovalPieApiTest {
     }
 
     @Test
+    fun flatCommentReplyUsesSourceCommentIdAsThreadParent() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "comments": [
+                        {
+                          "id": 2305,
+                          "comment_id": 4396,
+                          "book_id": 354491,
+                          "content": "回复回复",
+                          "reply_to_name": "原作者"
+                        }
+                      ]
+                    }
+                    """.trimIndent()
+                )
+        )
+
+        val comments = api.bookComments(bookId = 354491)
+
+        assertEquals(1, comments.size)
+        assertEquals(2305L, comments.single().id)
+        assertEquals(4396L, comments.single().parentCommentId)
+    }
+
+    @Test
     fun createBookAndChapterCommentsUseWebsiteMutationBodies() = runBlocking {
         server.enqueue(MockResponse().setHeader("content-type", "application/json").setBody("""{"success":true,"message":"book ok"}"""))
         server.enqueue(MockResponse().setHeader("content-type", "application/json").setBody("""{"success":true,"message":"chapter ok"}"""))
@@ -3399,18 +3684,24 @@ class NovalPieApiTest {
         server.enqueue(
             MockResponse()
                 .setHeader("content-type", "application/json")
-                .setBody("""{"success":true,"message":"ok"}""")
+                .setBody(
+                    """{"success":true,"message":"ok","reply":{"id":502,"post_id":91,"parent_comment_id":501,"author_name":"seeking","reply_to_name":"Comment User","content":"回复正文"}}"""
+                )
         )
 
         val result = api.createForumComment(
             postId = 91,
             content = "回复正文",
             parentCommentId = 501,
-            replyToName = "Comment User"
+            replyToName = "Comment User",
+            clientRequestId = "request-501",
         )
 
         assertTrue(result.success)
         assertEquals("ok", result.message)
+        assertEquals(502L, result.reply?.id)
+        assertEquals(501L, result.reply?.parentCommentId)
+        assertEquals("Comment User", result.reply?.replyToName)
         val request = server.takeRequest()
         assertEquals("POST", request.method)
         assertEquals("/api/posts/91/comments", request.requestUrl?.encodedPath)
@@ -3418,6 +3709,102 @@ class NovalPieApiTest {
         assertTrue(body.contains("\"content\":\"回复正文\""))
         assertTrue(body.contains("\"comment_id\":501"))
         assertTrue(body.contains("\"reply_to_name\":\"Comment User\""))
+        assertTrue(body.contains("\"client_request_id\":\"request-501\""))
+    }
+
+    @Test
+    fun createForumNestedReplyPostsThreadRootIdAndDirectReplyName() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody("""{"success":true,"message":"nested ok"}"""),
+        )
+
+        val result = api.createForumComment(
+            postId = 91,
+            // The website composer passes the visible thread root here even when the selected
+            // reply is nested; the direct target is carried independently below.
+            parentCommentId = 700,
+            content = "回复嵌套回复",
+            replyToName = "nested",
+            clientRequestId = "request-nested-702",
+        )
+
+        assertTrue(result.success)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/posts/91/comments", request.requestUrl?.encodedPath)
+        val body = JSONObject(request.body.readUtf8())
+        assertEquals(700L, body.getLong("comment_id"))
+        assertEquals("nested", body.getString("reply_to_name"))
+        assertEquals("request-nested-702", body.getString("client_request_id"))
+    }
+
+    @Test
+    fun createdReplyUsesSourceCommentIdAsThreadParentWhenResponseIsFlat() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """{"success":true,"reply":{"id":2306,"comment_id":4396,"author_name":"seeking","content":"新回复"}}"""
+                )
+        )
+
+        val result = api.createCommentReply(commentId = 4396, content = "新回复", replyToName = "原作者")
+
+        assertEquals(2306L, result.reply?.id)
+        assertEquals(4396L, result.reply?.parentCommentId)
+        assertEquals(
+            "/api/comments/4396/replies",
+            server.takeRequest().requestUrl?.encodedPath,
+        )
+    }
+
+    @Test
+    fun forumCommentInteractionsUseSourceNestedReplyEndpoints() = runBlocking {
+        repeat(4) {
+            server.enqueue(
+                MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody("""{"success":true}"""),
+            )
+        }
+
+        api.toggleForumCommentLike(postId = 91, parentCommentId = 501)
+        api.toggleForumCommentLike(postId = 91, parentCommentId = 501, replyId = 502)
+        api.reactToForumComment(
+            postId = 91,
+            parentCommentId = 501,
+            replyId = 502,
+            reactionType = "emoji:heart",
+        )
+        api.reactToForumComment(
+            postId = 91,
+            parentCommentId = 501,
+            reactionType = "award",
+            awardPoints = 10,
+        )
+
+        assertEquals(
+            "/api/posts/91/comments/501/likes",
+            server.takeRequest().requestUrl?.encodedPath,
+        )
+        assertEquals(
+            "/api/posts/91/comments/501/replies/502/likes",
+            server.takeRequest().requestUrl?.encodedPath,
+        )
+        val replyReaction = server.takeRequest()
+        assertEquals(
+            "/api/posts/91/comments/501/replies/502/reactions",
+            replyReaction.requestUrl?.encodedPath,
+        )
+        assertTrue(replyReaction.body.readUtf8().contains("\"reaction_type\":\"emoji:heart\""))
+        val rootReaction = server.takeRequest()
+        assertEquals(
+            "/api/posts/91/comments/501/reactions",
+            rootReaction.requestUrl?.encodedPath,
+        )
+        assertTrue(rootReaction.body.readUtf8().contains("\"award_points\":10"))
     }
 
     @Test

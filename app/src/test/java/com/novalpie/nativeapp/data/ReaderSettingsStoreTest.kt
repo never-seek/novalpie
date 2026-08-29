@@ -87,6 +87,17 @@ class ReaderSettingsStoreTest {
     }
 
     @Test
+    fun volumeKeyPagingDefaultsOnAndReadsAnExplicitDisabledPreference() {
+        val store = ReaderSettingsStore(context)
+
+        assertTrue(store.load().volumeKeyPageTurn)
+
+        store.save(ReaderSettingsValues(volumeKeyPageTurn = false))
+
+        assertFalse(store.load().volumeKeyPageTurn)
+    }
+
+    @Test
     fun explicitlySavedReaderSizeSurvivesAStoreReload() {
         ReaderSettingsStore(context).saveFontSizeSp(18)
 

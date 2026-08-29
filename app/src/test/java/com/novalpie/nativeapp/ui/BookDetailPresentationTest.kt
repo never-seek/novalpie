@@ -3,6 +3,7 @@ package com.novalpie.nativeapp.ui
 import com.novalpie.nativeapp.model.ChapterComment
 import com.novalpie.nativeapp.model.BookEditPermissions
 import com.novalpie.nativeapp.model.Chapter
+import com.novalpie.nativeapp.model.ForumActionResult
 import com.novalpie.nativeapp.model.NovelCard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -45,6 +46,51 @@ class BookDetailPresentationTest {
         assertEquals("未收藏", bookDetailFavoriteLabel(isFavorited = false))
         assertEquals("收藏同步中", bookDetailFavoriteLoadingLabel())
         assertEquals("收藏状态不可用", bookDetailFavoriteUnavailableLabel())
+    }
+
+    @Test
+    fun authorAndTagSearchTargetsMirrorTheWebsiteDetailLinks() {
+        assertEquals(
+            BookDetailSearchTarget(keyword = "诺亚方舟", scope = "author"),
+            bookDetailAuthorSearchTarget("  诺亚方舟  "),
+        )
+        assertEquals(
+            BookDetailSearchTarget(requiredTags = listOf("奇幻")),
+            bookDetailTagSearchTarget("奇幻"),
+        )
+        assertEquals(null, bookDetailAuthorSearchTarget("   "))
+        assertEquals(null, bookDetailTagSearchTarget(""))
+    }
+
+    @Test
+    fun detailSearchTargetReplacesOnlyIncompatibleSearchFilters() {
+        val existing = SearchOptions(
+            sortBy = "updated_at",
+            adultFilter = "adult_only",
+            source = "upload",
+            requiredTags = listOf("旧标签"),
+            blockedTags = listOf("排除标签"),
+        )
+
+        assertEquals(
+            existing.copy(
+                scope = "author",
+                requiredTags = emptyList(),
+                blockedTags = emptyList(),
+            ),
+            bookDetailSearchOptions(
+                existing,
+                BookDetailSearchTarget(keyword = "诺亚方舟", scope = "author"),
+            ),
+        )
+        assertEquals(
+            existing.copy(
+                scope = "all",
+                requiredTags = listOf("奇幻"),
+                blockedTags = emptyList(),
+            ),
+            bookDetailSearchOptions(existing, BookDetailSearchTarget(requiredTags = listOf("奇幻"))),
+        )
     }
 
     @Test
@@ -211,5 +257,122 @@ class BookDetailPresentationTest {
         assertEquals(listOf(829L, 1214L), threads[0].replies.map(ChapterComment::id))
         assertEquals(57600L, threads[1].comment.id)
         assertEquals("2 条书评 · 2 条回复", chapterCommentThreadSummary(threads, rootLabel = "书评"))
+    }
+
+    @Test
+    fun bookAndChapterCommentReferencesUseTheSharedRichContentParser() {
+        val comments = listOf(
+            ChapterComment(
+                id = 1,
+                content = "前文 [bookid:350192|tags,bio]",
+            ),
+            ChapterComment(
+                id = 2,
+                content = "[fold:更多][bookid:359136][/fold]",
+            ),
+            ChapterComment(
+                id = 3,
+                content = "[bookid:354491]",
+            ),
+        )
+
+        assertEquals(listOf(350192L, 359136L, 354491L), chapterCommentBookReferenceIds(comments))
+    }
+
+    @Test
+    fun chapterNestedReplySubmissionUsesThreadRootIdForSourceReplyEndpoint() {
+        val root = ChapterComment(id = 4925, authorName = "Root User", content = "root")
+        val reply = ChapterComment(
+            id = 829,
+            parentCommentId = root.id,
+            authorName = "Reply User",
+            content = "reply",
+        )
+        val nestedReply = ChapterComment(
+            id = 1214,
+            parentCommentId = reply.id,
+            authorName = "Nested User",
+            content = "nested reply",
+        )
+
+        assertEquals(
+            root.id,
+            chapterCommentReplySubmissionCommentId(nestedReply, listOf(root, reply, nestedReply)),
+        )
+    }
+
+    @Test
+    fun chapterReplySubmissionFallsBackToTheKnownParentWhenAncestorsAreOutsidePage() {
+        val nestedReply = ChapterComment(
+            id = 1214,
+            parentCommentId = 829,
+            authorName = "Nested User",
+            content = "nested reply",
+        )
+
+        assertEquals(
+            nestedReply.parentCommentId,
+            chapterCommentReplySubmissionCommentId(nestedReply),
+        )
+    }
+
+    @Test
+    fun nestedBookCommentInteractionsUseThreadRootAndReplyIds() {
+        val root = ChapterComment(id = 4925, content = "root")
+        val reply = ChapterComment(id = 829, parentCommentId = 4925, content = "reply")
+        val nested = ChapterComment(id = 1214, parentCommentId = 829, content = "nested")
+
+        assertEquals(
+            ChapterCommentActionTarget(parentCommentId = 4925, replyId = 1214),
+            chapterCommentActionTarget(nested, listOf(root, reply, nested)),
+        )
+        assertEquals(
+            ChapterCommentActionTarget(parentCommentId = 829, replyId = 1214),
+            chapterCommentActionTarget(nested),
+        )
+    }
+
+    @Test
+    fun rejectedBookReplyKeepsDraftAndReplyTargetForRetry() {
+        val state = BookDetailState(
+            bookId = 354491,
+            commentDraft = "@Reply User retry",
+            replyingToCommentId = 4925,
+            replyingToName = "Reply User",
+            actionLoading = true,
+        )
+
+        val next = bookCommentAfterSubmission(
+            state,
+            Result.success(ForumActionResult(success = false, message = "评论接口拒绝")),
+        )
+
+        assertEquals("@Reply User retry", next.commentDraft)
+        assertEquals(4925L, next.replyingToCommentId)
+        assertEquals("Reply User", next.replyingToName)
+        assertFalse(next.actionLoading)
+        assertEquals("评论接口拒绝", next.actionMessage)
+    }
+
+    @Test
+    fun failedBookReplyKeepsDraftAndReplyTargetForRetry() {
+        val state = BookDetailState(
+            bookId = 354491,
+            commentDraft = "@Reply User retry",
+            replyingToCommentId = 4925,
+            replyingToName = "Reply User",
+            actionLoading = true,
+        )
+
+        val next = bookCommentAfterSubmission(
+            state,
+            Result.failure(IllegalStateException("network")),
+        )
+
+        assertEquals("@Reply User retry", next.commentDraft)
+        assertEquals(4925L, next.replyingToCommentId)
+        assertEquals("Reply User", next.replyingToName)
+        assertFalse(next.actionLoading)
+        assertEquals("评论提交失败：network", next.actionMessage)
     }
 }

@@ -35,6 +35,11 @@ internal fun UserProfileDetailScreen(
     state: UserProfileDetailState,
     hasAuthToken: Boolean,
     onRetry: () -> Unit,
+    onRetryActivities: () -> Unit,
+    onRetryBooks: () -> Unit,
+    onRetryCheckinStats: () -> Unit,
+    onRetryCheckinRecords: () -> Unit,
+    onRetryCheckinSettings: () -> Unit,
     onTabSelected: (UserProfileTab) -> Unit,
     onActivityFilterSelected: (ProfileActivityFilter) -> Unit,
     onOpenActivity: (UserActivity) -> Unit,
@@ -42,7 +47,7 @@ internal fun UserProfileDetailScreen(
     onMessageUser: (Long, String?) -> Unit,
     onOpenLogin: () -> Unit
 ) {
-    val profile = (state.profile as? LoadResult.Success)?.value
+    val spoilerPreference = LocalForumSpoilerPreference.current
     val stats = (state.checkinStats as? LoadResult.Success)?.value
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -80,7 +85,7 @@ internal fun UserProfileDetailScreen(
             }
         }
 
-        if (profile != null) {
+        if (shouldRenderPublicProfilePanels(state)) {
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(UserProfileTab.values()) { tab ->
@@ -95,17 +100,31 @@ internal fun UserProfileDetailScreen(
 
             when (state.selectedTab) {
                 UserProfileTab.Checkin -> {
-                    val settings = (state.checkinSettings as? LoadResult.Success)?.value
+                    val settingsResult = state.checkinSettings
+                    val settings = (settingsResult as? LoadResult.Success)?.value
                     if (settings?.showCheckin == false) {
                         item { PublicProfileStatusCard("该用户未公开签到记录") }
                     } else {
+                        if (settingsResult is LoadResult.Error) {
+                            item {
+                                PublicProfileRetryCard(
+                                    message = settingsResult.message,
+                                    retryLabel = "重试签到设置",
+                                    onRetry = onRetryCheckinSettings,
+                                )
+                            }
+                        }
                         item {
                             ElevatedCard(modifier = Modifier.fillMaxWidth()) {
                                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text("签到", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                     when (val value = state.checkinStats) {
                                         LoadResult.Idle, LoadResult.Loading -> Text("正在加载签到统计")
-                                        is LoadResult.Error -> Text(value.message, style = MaterialTheme.typography.bodySmall)
+                                        is LoadResult.Error -> PublicProfileInlineRetry(
+                                            message = value.message,
+                                            retryLabel = "重试签到统计",
+                                            onRetry = onRetryCheckinStats,
+                                        )
                                         is LoadResult.Success -> {
                                             Text("累计 ${value.value.totalDays} 天 · ${value.value.totalPoints} 积分")
                                             Text("当前连续 ${value.value.currentStreak} 天 · 最长 ${value.value.maxStreak} 天")
@@ -114,12 +133,23 @@ internal fun UserProfileDetailScreen(
                                 }
                             }
                         }
-                        item { PublicCheckinRecords(state.checkinRecords) }
+                        item {
+                            PublicCheckinRecords(
+                                records = state.checkinRecords,
+                                onRetry = onRetryCheckinRecords,
+                            )
+                        }
                     }
                 }
 
                 UserProfileTab.Activities -> when (val value = state.activities) {
                     LoadResult.Idle, LoadResult.Loading -> {
+                        item {
+                            ForumSpoilerToggle(
+                                hideSpoilers = spoilerPreference.hideSpoilers,
+                                onHideSpoilersChange = spoilerPreference.onChange,
+                            )
+                        }
                         item {
                             UserProfileActivityFilterRail(
                                 selected = state.activityFilter,
@@ -130,14 +160,32 @@ internal fun UserProfileDetailScreen(
                     }
                     is LoadResult.Error -> {
                         item {
+                            ForumSpoilerToggle(
+                                hideSpoilers = spoilerPreference.hideSpoilers,
+                                onHideSpoilersChange = spoilerPreference.onChange,
+                            )
+                        }
+                        item {
                             UserProfileActivityFilterRail(
                                 selected = state.activityFilter,
                                 onSelected = onActivityFilterSelected,
                             )
                         }
-                        item { PublicProfileStatusCard(value.message) }
+                        item {
+                            PublicProfileRetryCard(
+                                message = value.message,
+                                retryLabel = "重试动态",
+                                onRetry = onRetryActivities,
+                            )
+                        }
                     }
                     is LoadResult.Success -> {
+                        item {
+                            ForumSpoilerToggle(
+                                hideSpoilers = spoilerPreference.hideSpoilers,
+                                onHideSpoilersChange = spoilerPreference.onChange,
+                            )
+                        }
                         item {
                             UserProfileActivityFilterRail(
                                 selected = state.activityFilter,
@@ -160,7 +208,13 @@ internal fun UserProfileDetailScreen(
 
                 UserProfileTab.Books -> when (val value = state.books) {
                     LoadResult.Idle, LoadResult.Loading -> item { PublicProfileStatusCard("正在加载用户作品") }
-                    is LoadResult.Error -> item { PublicProfileStatusCard(value.message) }
+                    is LoadResult.Error -> item {
+                        PublicProfileRetryCard(
+                            message = value.message,
+                            retryLabel = "重试作品",
+                            onRetry = onRetryBooks,
+                        )
+                    }
                     is LoadResult.Success -> {
                         if (value.value.isEmpty()) item { PublicProfileStatusCard("暂无上传作品") }
                         items(value.value.chunked(2)) { rowBooks ->
@@ -262,13 +316,20 @@ private fun UserProfileActivityFilterRail(
 }
 
 @Composable
-private fun PublicCheckinRecords(records: LoadResult<List<UserCheckinRecord>>) {
+private fun PublicCheckinRecords(
+    records: LoadResult<List<UserCheckinRecord>>,
+    onRetry: () -> Unit,
+) {
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("本年签到记录", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             when (records) {
                 LoadResult.Idle, LoadResult.Loading -> Text("正在加载签到记录")
-                is LoadResult.Error -> Text(records.message, style = MaterialTheme.typography.bodySmall)
+                is LoadResult.Error -> PublicProfileInlineRetry(
+                    message = records.message,
+                    retryLabel = "重试签到记录",
+                    onRetry = onRetry,
+                )
                 is LoadResult.Success -> {
                     if (records.value.isEmpty()) Text("暂无签到记录")
                     records.value.takeLast(30).reversed().forEach { record ->
@@ -287,6 +348,32 @@ private fun PublicCheckinRecords(records: LoadResult<List<UserCheckinRecord>>) {
 private fun PublicProfileStatusCard(message: String) {
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Text(message, modifier = Modifier.padding(18.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun PublicProfileRetryCard(
+    message: String,
+    retryLabel: String,
+    onRetry: () -> Unit,
+) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedButton(onClick = onRetry) { Text(retryLabel) }
+        }
+    }
+}
+
+@Composable
+private fun PublicProfileInlineRetry(
+    message: String,
+    retryLabel: String,
+    onRetry: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(message, style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = onRetry) { Text(retryLabel) }
     }
 }
 

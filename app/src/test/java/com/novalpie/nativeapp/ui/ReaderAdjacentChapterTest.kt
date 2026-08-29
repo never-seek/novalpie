@@ -2,7 +2,9 @@ package com.novalpie.nativeapp.ui
 
 import com.novalpie.nativeapp.model.Chapter
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReaderAdjacentChapterTest {
@@ -83,6 +85,17 @@ class ReaderAdjacentChapterTest {
     }
 
     @Test
+    fun nonEmptyCatalogCanExplicitlyConfirmThatArestoredChapterIsStale() {
+        assertFalse(readerCatalogConfirmsStaleChapter(currentChapterId = 10L, chapters = emptyList()))
+        assertFalse(readerCatalogConfirmsStaleChapter(currentChapterId = 20L, chapters = chapters))
+        assertTrue(readerCatalogConfirmsStaleChapter(currentChapterId = 99L, chapters = chapters))
+        assertEquals(
+            "当前章节已不在这本书的目录中，请从目录重新选择章节",
+            READER_STALE_CHAPTER_MESSAGE,
+        )
+    }
+
+    @Test
     fun pageTurnReturnsToTheEndOfThePreviousChapterButStartsOtherChapterOpensAtTop() {
         assertEquals(
             ReaderChapterEntryPosition.End,
@@ -99,5 +112,73 @@ class ReaderAdjacentChapterTest {
         assertEquals(0, readerChapterEntryScrollIndex(ReaderChapterEntryPosition.Start, itemCount = 7))
         assertEquals(6, readerChapterEntryScrollIndex(ReaderChapterEntryPosition.End, itemCount = 7))
         assertEquals(0, readerChapterEntryScrollIndex(ReaderChapterEntryPosition.End, itemCount = 0))
+    }
+
+    @Test
+    fun boundaryNavigationIsOneShotWhileTheReaderRouteIsChanging() {
+        assertTrue(readerBoundaryNavigationCanStart(inProgress = false, target = ReaderPageBoundaryTarget.PreviousChapter))
+        assertFalse(readerBoundaryNavigationCanStart(inProgress = true, target = ReaderPageBoundaryTarget.PreviousChapter))
+        assertFalse(readerBoundaryNavigationCanStart(inProgress = false, target = ReaderPageBoundaryTarget.None))
+    }
+
+    @Test
+    fun boundaryNavigationDoesNotReplayTheSamePhysicalGestureAfterRouteChange() {
+        val gestureId = 41L
+
+        assertTrue(
+            readerPageTurnGestureCanStart(
+                inProgress = false,
+                target = ReaderPageBoundaryTarget.PreviousChapter,
+                gestureId = gestureId,
+                lastHandledGestureId = null,
+            )
+        )
+        // Recomposition has changed the chapter, but the release belongs to the same gesture.
+        assertFalse(
+            readerPageTurnGestureCanStart(
+                inProgress = false,
+                target = ReaderPageBoundaryTarget.PreviousChapter,
+                gestureId = gestureId,
+                lastHandledGestureId = gestureId,
+            )
+        )
+        // A later physical gesture must still be able to navigate.
+        assertTrue(
+            readerPageTurnGestureCanStart(
+                inProgress = false,
+                target = ReaderPageBoundaryTarget.PreviousChapter,
+                gestureId = gestureId + 1,
+                lastHandledGestureId = gestureId,
+            )
+        )
+    }
+
+    @Test
+    fun aFreshGestureCanNavigateAgainAfterThePreviousChapterHasLoaded() {
+        assertTrue(
+            readerPageTurnGestureCanStart(
+                inProgress = false,
+                target = ReaderPageBoundaryTarget.PreviousChapter,
+                gestureId = 42L,
+                lastHandledGestureId = 41L,
+            )
+        )
+    }
+
+    @Test
+    fun adjacentBoundaryRequestUsesTheCurrentlyVisibleChapterNotThePreviousRoute() {
+        val currentChapter = readerAdjacentBoundaryRequest(
+            currentChapterId = 20L,
+            chapters = chapters,
+            target = ReaderPageBoundaryTarget.PreviousChapter,
+        )
+        val afterRouteReplacement = readerAdjacentBoundaryRequest(
+            currentChapterId = 10L,
+            chapters = chapters,
+            target = ReaderPageBoundaryTarget.NextChapter,
+        )
+
+        assertEquals(10L, currentChapter?.targetChapterId)
+        assertEquals(20L, afterRouteReplacement?.targetChapterId)
     }
 }

@@ -48,3 +48,17 @@ internal fun readerCatalogIsIncomplete(
     currentChapterId: Long,
     chapters: List<Chapter>,
 ): Boolean = chapters.isEmpty() || chapters.none { it.id == currentChapterId }
+
+/**
+ * A non-empty successful catalogue is authoritative for the current work.  If it does not contain
+ * the requested chapter, the route is stale (usually a restored session or an old deep link), not
+ * an end-of-book signal.  Empty catalogues remain "incomplete" because they can be a transient
+ * source response and must not invalidate an otherwise readable cached chapter.
+ */
+internal fun readerCatalogConfirmsStaleChapter(
+    currentChapterId: Long,
+    chapters: List<Chapter>,
+): Boolean = chapters.isNotEmpty() && chapters.none { it.id == currentChapterId }
+
+internal const val READER_STALE_CHAPTER_MESSAGE =
+    "当前章节已不在这本书的目录中，请从目录重新选择章节"

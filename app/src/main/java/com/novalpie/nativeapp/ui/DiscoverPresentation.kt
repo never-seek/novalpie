@@ -182,6 +182,23 @@ internal fun discoverFilterGroups(options: SearchOptions): List<DiscoverFilterGr
     )
 )
 
+/**
+ * The website treats AI as a search mode plus a forced relevance/descending sort state. Keep the
+ * displayed controls in sync with the transport mapping in [NovalPieApi], instead of showing a
+ * stale sort choice while the request is already sorted by relevance.
+ */
+internal fun searchOptionsAfterMatchTypeChange(
+    options: SearchOptions,
+    value: String,
+): SearchOptions {
+    val isAi = value.equals("ai", ignoreCase = true)
+    return options.copy(
+        matchType = value,
+        sortBy = if (isAi) "relevance" else options.sortBy,
+        sortOrder = if (isAi) "desc" else options.sortOrder,
+    )
+}
+
 /** The source search keeps the content-rating selector in the Rules rail. */
 internal fun sourcePrimarySearchFilterGroups(options: SearchOptions): List<DiscoverFilterGroup> {
     val groups = discoverFilterGroups(options)

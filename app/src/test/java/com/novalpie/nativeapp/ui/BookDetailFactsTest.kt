@@ -7,6 +7,55 @@ import org.junit.Test
 
 class BookDetailFactsTest {
     @Test
+    fun detailMetadataSplitsHeroAndIntroductionWithoutRepeatingHeroFacts() {
+        val book = NovelCard(
+            id = 354491,
+            title = "Native Book",
+            author = "Author Name",
+            platform = "upload",
+            status = "连载中",
+            wordCount = 1234567,
+            updatedAt = "2026-07-02 08:30:00",
+            createdAt = "2026-06-30 08:30:00",
+            guarantorName = "Guarantor",
+            guaranteedAt = "2026-07-01 08:30:00",
+            uploaderName = "Uploader",
+            isAdult = true,
+            allowDownload = true,
+        )
+
+        assertEquals(
+            listOf("状态: 连载中", "来源: 上传", "字数: 1,234,567"),
+            bookDetailHeroFacts(book),
+        )
+        assertEquals(
+            listOf(
+                "更新: 2026-07-02 08:30:00",
+                "上架: 2026-06-30 08:30:00",
+                "担保人: Guarantor (2026-07-01 08:30:00)",
+                "上传者: Uploader",
+                "成人内容",
+                "允许下载",
+            ),
+            bookDetailIntroductionFacts(book),
+        )
+    }
+
+    @Test
+    fun detailTagsTrimAndDeduplicateWithoutTruncatingTheWebsiteSet() {
+        assertEquals(
+            listOf("奇幻", "冒险", "超长标签"),
+            bookDetailDisplayTags(
+                NovelCard(
+                    id = 354491,
+                    title = "Native Book",
+                    tags = listOf(" 奇幻 ", "冒险", "奇幻", "", "超长标签"),
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun bookDetailFactsKeepSourceMetadataSeparateFromCounterRailsInCleanChinese() {
         val book = NovelCard(
             id = 354491,

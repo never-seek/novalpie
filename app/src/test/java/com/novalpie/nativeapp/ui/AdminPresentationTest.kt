@@ -10,6 +10,13 @@ import org.junit.Test
 
 class AdminPresentationTest {
     @Test
+    fun adminOnlyToolsAreHiddenForOrdinaryAccounts() {
+        assertTrue(toolsEntries(isAdmin = true).any { it.adminOnly })
+        assertTrue(toolsEntries(isAdmin = false).none { it.adminOnly })
+        assertTrue(toolsEntries(isAdmin = false).none { it.path.startsWith("/admin") })
+    }
+
+    @Test
     fun adminReviewFiltersMatchWebsiteReviewControls() {
         assertEquals(
             listOf("" to "全部", "upload" to "上传", "delete" to "删除"),

@@ -34,6 +34,15 @@ internal fun readerRailActionSpecs(): List<ReaderRailActionSpec> = listOf(
     ReaderRailActionSpec(ReaderRailActionId.Navigation, "导航"),
 )
 
+/**
+ * Controls that are disabled in reader settings must not occupy a visible rail slot. Keeping the
+ * filtering here gives both rail implementations the same source-of-truth behavior.
+ */
+internal fun readerVisibleRailActionSpecs(showTts: Boolean): List<ReaderRailActionSpec> =
+    readerRailActionSpecs().filter { spec ->
+        spec.id != ReaderRailActionId.Tts || showTts
+    }
+
 internal fun readerRailActionEnabled(
     id: ReaderRailActionId,
     hasPrevious: Boolean,

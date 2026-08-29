@@ -49,6 +49,13 @@ class NovalPieImageLoadingTest {
                         factory?.javaClass?.name.orEmpty().contains("GifDecoder")
                 }
             )
+            val decoderNames = decoderFactories.map { it?.javaClass?.name.orEmpty() }
+            val gifIndex = decoderNames.indexOfFirst { it.contains("GifDecoder") }
+            val platformIndex = decoderNames.indexOfFirst { it.contains("ImageDecoderDecoder") }
+            assertTrue(
+                "GIFs should use the lower-memory MovieDrawable before the platform animated decoder.",
+                gifIndex >= 0 && (platformIndex < 0 || gifIndex < platformIndex),
+            )
         } finally {
             imageLoader.shutdown()
         }

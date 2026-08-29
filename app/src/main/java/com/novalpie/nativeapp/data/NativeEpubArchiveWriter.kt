@@ -162,7 +162,12 @@ internal fun cleanupNativeEpubTempFiles(directory: File): Int {
     val files = directory.listFiles().orEmpty()
     var deleted = 0
     files.forEach { file ->
-        if (file.isFile && (file.name.startsWith("novalpie-asset-") ||
+        if (file.isDirectory && nativeEpubWorkDirectoryNameRegex.matches(file.name)) {
+            // EPUB jobs live in a per-run directory under filesDir. A force-stop can leave an
+            // entire staged-image tree behind, so remove only directories with our generated
+            // bookId-timestamp-nanotime name; unrelated app directories remain untouched.
+            if (file.deleteRecursively()) deleted++
+        } else if (file.isFile && (file.name.startsWith("novalpie-asset-") ||
                 file.name.startsWith("novalpie-epub-")) && file.delete()
         ) {
             deleted++
@@ -170,6 +175,8 @@ internal fun cleanupNativeEpubTempFiles(directory: File): Int {
     }
     return deleted
 }
+
+private val nativeEpubWorkDirectoryNameRegex = Regex("""\d+-\d+-\d+""")
 
 private fun detectNativeEpubMediaType(declared: String?, header: ByteArray): String? {
     val normalized = declared
@@ -214,10 +221,11 @@ private fun detectNativeEpubMediaType(declared: String?, header: ByteArray): Str
 }
 
 /** Copies an asset once while calculating the exact metadata required by a STORE ZIP entry. */
-internal fun stageNativeEpubFile(
+internal suspend fun stageNativeEpubFile(
     input: InputStream,
     mediaType: String?,
     destination: File,
+    awaitIfPaused: suspend () -> Unit = {},
 ): NativeEpubStagedFile {
     val crc = CRC32()
     var size = 0L
@@ -234,6 +242,7 @@ internal fun stageNativeEpubFile(
             FileOutputStream(temporary).buffered().use { output ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
             while (true) {
+                awaitIfPaused()
                 val read = source.read(buffer)
                 if (read < 0) break
                 if (read == 0) continue
@@ -397,6 +406,7 @@ object NativeEpubArchiveWriter {
         imageConcurrency: Int = DEFAULT_IMAGE_CONCURRENCY,
         stagingDirectory: File? = null,
         stagedAssetCacheMaxBytes: Long = DEFAULT_STAGED_ASSET_CACHE_MAX_BYTES,
+        awaitIfPaused: suspend () -> Unit = {},
         onProgress: (NativeEpubExportProgress) -> Unit = {},
     ) {
         require(metadata.title.isNotBlank()) { "书名不能为空" }
@@ -415,6 +425,7 @@ object NativeEpubArchiveWriter {
 
         try {
             ZipOutputStream(output.buffered()).use { zip ->
+                awaitIfPaused()
                 writeStoredText(zip, "mimetype", EPUB_MIMETYPE)
                 writeText(zip, "META-INF/container.xml", containerXml())
 
@@ -422,6 +433,7 @@ object NativeEpubArchiveWriter {
                     ?.let(::normalizeAssetUrl)
                     ?.takeIf(String::isNotBlank)
                     ?.let { coverUrl ->
+                        awaitIfPaused()
                         stagedAssets.trim(protectedKeys = setOf(coverUrl))
                         val staged = stageAsset(
                             stagedAssets = stagedAssets,
@@ -429,11 +441,13 @@ object NativeEpubArchiveWriter {
                             openAsset = openAsset,
                             protectedKeys = setOf(coverUrl),
                             stagingDirectory = stagingDirectory,
+                            awaitIfPaused = awaitIfPaused,
                         )
                         val record = writeStagedImage(
                             zip = zip,
                             staged = staged,
                             path = "images/cover.${imageExtension(staged.mediaType, coverUrl)}",
+                            awaitIfPaused = awaitIfPaused,
                         )
                         stagedAssets.trim()
                         record
@@ -456,6 +470,7 @@ object NativeEpubArchiveWriter {
                 fun failedImageCount(): Int = failedImages
 
                 suspend fun flushChapter(title: String, body: String) {
+                    awaitIfPaused()
                     val chapterIndex = chapters.size + 1
                     val chapterTitle = title.ifBlank { "第${chapterIndex}章" }
                     val renderedBody = renderBody(
@@ -466,6 +481,7 @@ object NativeEpubArchiveWriter {
                         openAsset = openAsset,
                         imageConcurrency = effectiveImageConcurrency,
                         stagingDirectory = stagingDirectory,
+                        awaitIfPaused = awaitIfPaused,
                         nextImageNumber = { nextImageNumber++ },
                         onImageResult = { url, succeeded ->
                             if (succeeded) completedImages++ else failedImages++
@@ -501,6 +517,7 @@ object NativeEpubArchiveWriter {
                     var hasWrittenChapter = false
                     var lastChapterNumber: Int? = null
                     while (true) {
+                        awaitIfPaused()
                         val rawLine = reader.readLine() ?: break
                         val line = if (currentTitle.isEmpty() && currentBody.isEmpty()) {
                             rawLine.removePrefix("\uFEFF")
@@ -544,6 +561,7 @@ object NativeEpubArchiveWriter {
                 writeText(zip, "OEBPS/Styles/style.css", stylesheet())
                 writeText(zip, "OEBPS/nav.xhtml", navigationXhtml(metadata.title, chapters))
                 writeText(zip, "OEBPS/content.opf", packageXml(metadata, chapters, images, coverRecord))
+                awaitIfPaused()
                 onProgress(
                     NativeEpubExportProgress(
                         totalChapters = chapters.size,
@@ -567,6 +585,7 @@ object NativeEpubArchiveWriter {
         openAsset: suspend (String) -> NativeEpubAsset,
         imageConcurrency: Int,
         stagingDirectory: File?,
+        awaitIfPaused: suspend () -> Unit,
         nextImageNumber: () -> Int,
         onImageResult: (url: String, succeeded: Boolean) -> Unit,
     ): String {
@@ -582,11 +601,13 @@ object NativeEpubArchiveWriter {
             openAsset = openAsset,
             imageConcurrency = imageConcurrency,
             stagingDirectory = stagingDirectory,
+            awaitIfPaused = awaitIfPaused,
         )
 
         val rendered = StringBuilder()
         var cursor = 0
         for (match in matches) {
+            awaitIfPaused()
             rendered.append(escapeXml(rawBody.substring(cursor, match.range.first)))
             val url = match.url
             // A failed first staging attempt must be retried for this occurrence, just as the
@@ -599,11 +620,13 @@ object NativeEpubArchiveWriter {
                     openAsset = openAsset,
                     protectedKeys = matches.map(ImageMatch::url).toSet(),
                     stagingDirectory = stagingDirectory,
+                    awaitIfPaused = awaitIfPaused,
                 )
             val record = writeStagedImage(
                 zip = zip,
                 staged = staged,
                 path = "images/image-${nextImageNumber()}.${imageExtension(staged.mediaType, url)}",
+                awaitIfPaused = awaitIfPaused,
             )
             imageRecords += record
             val index = imageRecords.lastIndex
@@ -636,6 +659,7 @@ object NativeEpubArchiveWriter {
         openAsset: suspend (String) -> NativeEpubAsset,
         imageConcurrency: Int,
         stagingDirectory: File?,
+        awaitIfPaused: suspend () -> Unit,
     ): Map<String, StagedAsset> {
         val uniqueUrls = urls.distinct()
         if (uniqueUrls.isEmpty()) return emptyMap()
@@ -650,6 +674,7 @@ object NativeEpubArchiveWriter {
                     while (true) {
                         val index = nextIndex.getAndIncrement()
                         if (index >= uniqueUrls.size) break
+                        awaitIfPaused()
                         val url = uniqueUrls[index]
                         results[index] = stageAsset(
                             stagedAssets = stagedAssets,
@@ -657,6 +682,7 @@ object NativeEpubArchiveWriter {
                             openAsset = openAsset,
                             protectedKeys = protectedKeys,
                             stagingDirectory = stagingDirectory,
+                            awaitIfPaused = awaitIfPaused,
                         )
                     }
                 }
@@ -684,6 +710,7 @@ object NativeEpubArchiveWriter {
         openAsset: suspend (String) -> NativeEpubAsset,
         protectedKeys: Set<String>,
         stagingDirectory: File?,
+        awaitIfPaused: suspend () -> Unit,
     ): StagedAsset {
         // Share only successful bytes. The website retries each descriptor independently; caching
         // a transient failure would turn one bad request into missing images for every later
@@ -696,7 +723,8 @@ object NativeEpubArchiveWriter {
                 crc = staged.crc,
             )
         }
-        val staged = stageAssetUncached(url, openAsset, stagingDirectory)
+        awaitIfPaused()
+        val staged = stageAssetUncached(url, openAsset, stagingDirectory, awaitIfPaused)
         if (staged.file != null) {
             stagedAssets.put(
                 key = url,
@@ -716,9 +744,11 @@ object NativeEpubArchiveWriter {
         url: String,
         openAsset: suspend (String) -> NativeEpubAsset,
         stagingDirectory: File?,
+        awaitIfPaused: suspend () -> Unit,
     ): StagedAsset {
         var lastFailure: Throwable? = null
         repeat(IMAGE_OPEN_MAX_ATTEMPTS) { attempt ->
+            awaitIfPaused()
             var temporary: File? = null
             try {
                 val asset = openAsset(url)
@@ -729,7 +759,9 @@ object NativeEpubArchiveWriter {
                     input = asset.input,
                     mediaType = asset.mediaType,
                     destination = destination,
+                    awaitIfPaused = awaitIfPaused,
                 )
+                awaitIfPaused()
                 val copiedBytes = staged.size
                 val mediaType = staged.mediaType
                 if (copiedBytes <= 0L) throw IllegalStateException("图片内容为空")
@@ -749,6 +781,7 @@ object NativeEpubArchiveWriter {
                 temporary?.delete()
                 lastFailure = failure
                 if (attempt + 1 < IMAGE_OPEN_MAX_ATTEMPTS) {
+                    awaitIfPaused()
                     delay(IMAGE_RETRY_DELAY_MILLIS)
                 }
             }
@@ -760,14 +793,16 @@ object NativeEpubArchiveWriter {
         )
     }
 
-    private fun writeStagedImage(
+    private suspend fun writeStagedImage(
         zip: ZipOutputStream,
         staged: StagedAsset,
         path: String,
+        awaitIfPaused: suspend () -> Unit,
     ): ImageRecord {
         if (staged.file == null) {
             return ImageRecord(path = null, mediaType = null, error = staged.error)
         }
+        awaitIfPaused()
         val entry = ZipEntry("OEBPS/$path").apply {
             method = ZipEntry.STORED
             this.size = staged.size
@@ -780,6 +815,7 @@ object NativeEpubArchiveWriter {
             staged.file.inputStream().buffered().use { input ->
                 val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                 while (true) {
+                    awaitIfPaused()
                     val read = input.read(buffer)
                     if (read < 0) break
                     if (read > 0) {

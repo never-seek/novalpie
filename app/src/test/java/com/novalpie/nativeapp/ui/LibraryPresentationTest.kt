@@ -47,6 +47,13 @@ class LibraryPresentationTest {
     }
 
     @Test
+    fun collectionCountUsesSourceTotalInsteadOfCurrentPaginationWindow() {
+        assertEquals(86, collectionFavoriteCount(sourceTotal = 86, loadedCount = 20))
+        assertEquals(0, collectionFavoriteCount(sourceTotal = 0, loadedCount = 20))
+        assertEquals(20, collectionFavoriteCount(sourceTotal = null, loadedCount = 20))
+    }
+
+    @Test
     fun libraryShelfSectionTitlesStayCompact() {
         assertEquals("继续阅读", libraryContinueTitle(hasProgress = true))
         assertEquals("阅读记录", libraryContinueTitle(hasProgress = false))
@@ -292,7 +299,7 @@ class LibraryPresentationTest {
                 chapterCount = 130,
             ),
         )
-        val updated = compactFavoriteBookCardPresentation(
+        val ambiguous = compactFavoriteBookCardPresentation(
             FavoriteEntry(
                 book = NovelCard(id = 10, title = "Updated", author = "Author", tags = listOf("tag")),
                 lastChapter = 130,
@@ -307,8 +314,8 @@ class LibraryPresentationTest {
         assertEquals("Author", unread.author)
         assertEquals("0/130", unread.progressLabel)
         assertEquals(null, unread.updateLabel)
-        assertEquals("130/131", updated.progressLabel)
-        assertEquals("更新 1 章", updated.updateLabel)
+        assertEquals("130/131", ambiguous.progressLabel)
+        assertEquals(null, ambiguous.updateLabel)
         assertEquals("Uploaded", uploaded.title)
         assertEquals("Uploader", uploaded.author)
         assertEquals(null, uploaded.progressLabel)
@@ -335,7 +342,7 @@ class LibraryPresentationTest {
     }
 
     @Test
-    fun compactLibraryCardShowsAnUpdateAfterACompletedLocalBookGetsOneNewChapter() {
+    fun compactLibraryCardShowsAnUpdateOnlyAfterTheAppObservedTheOldCatalogueWasCompleted() {
         val card = compactFavoriteBookCardPresentation(
             entry = FavoriteEntry(
                 book = NovelCard(id = 10, title = "Updated", author = "Author"),
@@ -346,11 +353,50 @@ class LibraryPresentationTest {
                 bookId = 10,
                 chapterId = 9130,
                 chapterNumber = 130,
+                chapterCountAtLastRead = 130,
             ),
         )
 
         assertEquals("130/131", card.progressLabel)
         assertEquals("更新 1 章", card.updateLabel)
+    }
+
+    @Test
+    fun compactLibraryCardDoesNotLabelAnOrdinaryPausedChapterAsAnUpdate() {
+        val card = compactFavoriteBookCardPresentation(
+            entry = FavoriteEntry(
+                book = NovelCard(id = 10, title = "Paused", author = "Author"),
+                chapterCount = 131,
+            ),
+            localProgress = ReaderProgress(
+                bookId = 10,
+                chapterId = 9130,
+                chapterNumber = 130,
+                chapterCountAtLastRead = 131,
+            ),
+        )
+
+        assertEquals("130/131", card.progressLabel)
+        assertEquals(null, card.updateLabel)
+    }
+
+    @Test
+    fun compactLibraryCardReportsEveryNewChapterSinceTheCompletedCatalogue() {
+        val card = compactFavoriteBookCardPresentation(
+            entry = FavoriteEntry(
+                book = NovelCard(id = 10, title = "Updated", author = "Author"),
+                chapterCount = 133,
+            ),
+            localProgress = ReaderProgress(
+                bookId = 10,
+                chapterId = 9130,
+                chapterNumber = 130,
+                chapterCountAtLastRead = 130,
+            ),
+        )
+
+        assertEquals("130/133", card.progressLabel)
+        assertEquals("更新 3 章", card.updateLabel)
     }
 
     @Test

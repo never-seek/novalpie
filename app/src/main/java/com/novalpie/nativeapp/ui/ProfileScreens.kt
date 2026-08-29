@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
 import coil.compose.SubcomposeAsyncImageContent
 import com.novalpie.nativeapp.data.novalPieStaticImageRequest
+import com.novalpie.nativeapp.data.parseDownloadImageConcurrency
 import com.novalpie.nativeapp.model.LoadResult
 import com.novalpie.nativeapp.model.NovelCard
 import com.novalpie.nativeapp.model.UserActivity
@@ -93,6 +94,8 @@ internal fun ProfileScreen(
     bookQuery: String,
     onBookQueryChange: (String) -> Unit,
     onBookGridColumnsChange: (Int) -> Unit,
+    downloadImageConcurrency: Int,
+    onDownloadImageConcurrencyChange: (Int) -> Unit,
     onNameChange: (String) -> Unit,
     onBioChange: (String) -> Unit,
     onShowCheckinChange: (Boolean) -> Unit,
@@ -110,6 +113,7 @@ internal fun ProfileScreen(
     onPurchaseShopItem: (ShopItem) -> Unit,
     onEquipInventoryItem: (UserInventoryItem) -> Unit,
 ) {
+    val spoilerPreference = LocalForumSpoilerPreference.current
     val checkinStats = (state.checkinStats as? LoadResult.Success)?.value
     val profileWidthDp = LocalConfiguration.current.screenWidthDp
     var confirmCheckin by remember { mutableStateOf(false) }
@@ -224,6 +228,12 @@ internal fun ProfileScreen(
                             )
                         }
                         item {
+                            ProfileDownloadSettingsCard(
+                                imageConcurrency = downloadImageConcurrency,
+                                onImageConcurrencyChange = onDownloadImageConcurrencyChange,
+                            )
+                        }
+                        item {
                             ProfileEditCard(
                                 expanded = profileEditorExpanded,
                                 onExpandedChange = { profileEditorExpanded = it },
@@ -266,6 +276,12 @@ internal fun ProfileScreen(
                     }
 
                     ProfileTab.Activities -> {
+                        item {
+                            ForumSpoilerToggle(
+                                hideSpoilers = spoilerPreference.hideSpoilers,
+                                onHideSpoilersChange = spoilerPreference.onChange,
+                            )
+                        }
                         item {
                             ProfileActivityFilterRail(
                                 selected = state.activityFilter,
@@ -1351,6 +1367,89 @@ private fun ProfileSettingsCard(
             Text("阅读偏好、网络连接与网页登录入口", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) { Text("进入应用设置") }
             if (!hasAuthToken) Button(onClick = onOpenLogin, modifier = Modifier.fillMaxWidth()) { Text("登录 NovalPie") }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun ProfileDownloadSettingsCard(
+    imageConcurrency: Int,
+    onImageConcurrencyChange: (Int) -> Unit,
+) {
+    var customText by remember(imageConcurrency) { mutableStateOf(imageConcurrency.toString()) }
+    var customError by remember { mutableStateOf(false) }
+    val presets = listOf(2, 4, 8, 12, 16)
+
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("下载并发", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                Text("${imageConcurrency} 路", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            }
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                presets.forEach { preset ->
+                    FilterChip(
+                        selected = imageConcurrency == preset,
+                        onClick = {
+                            customError = false
+                            customText = preset.toString()
+                            onImageConcurrencyChange(preset)
+                        },
+                        label = { Text("${preset} 路") },
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedTextField(
+                    value = customText,
+                    onValueChange = {
+                        customText = it.filter(Char::isDigit).take(3)
+                        customError = false
+                    },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    label = { Text("自定义") },
+                    suffix = { Text("路") },
+                    isError = customError,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+                Button(
+                    onClick = {
+                        val parsed = parseDownloadImageConcurrency(customText)
+                        if (parsed == null) {
+                            customError = true
+                        } else {
+                            customError = false
+                            customText = parsed.toString()
+                            onImageConcurrencyChange(parsed)
+                        }
+                    },
+                    modifier = Modifier.height(56.dp),
+                ) { Text("应用") }
+            }
+            if (customError) {
+                Text(
+                    "请输入正整数",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
         }
     }
 }

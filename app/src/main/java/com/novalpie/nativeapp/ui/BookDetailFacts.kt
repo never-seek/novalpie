@@ -10,6 +10,45 @@ internal data class BookDetailStatistic(
 )
 
 /**
+ * Metadata shown beside the cover follows the mobile website's first-glance hierarchy: status,
+ * source and word count are useful before the user starts reading.  Author is kept as a separate
+ * link in the hero, so it is intentionally not repeated in this list.
+ */
+internal fun bookDetailHeroFacts(book: NovelCard): List<String> = buildList {
+    book.status?.trim()?.takeIf { it.isNotBlank() }?.let { add("状态: $it") }
+    novelPlatformLabel(book.platform)?.let { add("来源: $it") }
+    book.wordCount?.let { add("字数: ${NumberFormat.getIntegerInstance(Locale.US).format(it)}") }
+}
+
+/**
+ * The synopsis panel contains only secondary metadata.  Hero facts and tags are rendered once
+ * above, preventing a long tag set from doubling the detail page height on small phones.
+ */
+internal fun bookDetailIntroductionFacts(book: NovelCard): List<String> = buildList {
+    book.updatedAt?.trim()?.takeIf { it.isNotBlank() }?.let { add("更新: $it") }
+    book.createdAt?.trim()?.takeIf { it.isNotBlank() }?.let { add("上架: $it") }
+    book.guarantorName?.trim()?.takeIf { it.isNotBlank() }?.let { guarantor ->
+        val guaranteedAt = book.guaranteedAt?.trim()?.takeIf { it.isNotBlank() }
+        add(if (guaranteedAt == null) "担保人: $guarantor" else "担保人: $guarantor ($guaranteedAt)")
+    }
+    book.uploaderName?.trim()?.takeIf { it.isNotBlank() }?.let { add("上传者: $it") }
+    if (book.isAdult == true) add("成人内容")
+    when (book.allowDownload) {
+        true -> add("允许下载")
+        false -> add("禁止下载")
+        null -> Unit
+    }
+}
+
+/** Keep every source tag visible while removing payload whitespace and accidental duplicates. */
+internal fun bookDetailDisplayTags(book: NovelCard): List<String> = book.tags
+    .asSequence()
+    .map(String::trim)
+    .filter(String::isNotBlank)
+    .distinct()
+    .toList()
+
+/**
  * Metadata belongs beside the source description. Counters are presented separately in the
  * source-style statistics rail so the same values are not repeated as a wall of chips.
  */

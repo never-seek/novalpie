@@ -11,6 +11,7 @@ data class PersistedFavoritesSettings(
     val gridColumns: Int = DEFAULT_GRID_COLUMNS,
     val displayMode: String = "default",
     val selectedDisplayGroupId: Long? = null,
+    /** Pagination is session state: every cold start begins from the first source page. */
     val currentPage: Int = 1,
     val sortField: String = "created_at",
     val sortOrder: String = "desc",
@@ -35,7 +36,9 @@ class FavoritesSettingsStore(context: Context) {
             gridColumns = normalizeGridColumns(prefs.getInt(KEY_GRID_COLUMNS, DEFAULT_GRID_COLUMNS)),
             displayMode = prefs.getString(KEY_DISPLAY_MODE, null).orEmpty().takeIf { it in DISPLAY_MODES } ?: "default",
             selectedDisplayGroupId = prefs.getLongOrNull(KEY_SELECTED_DISPLAY_GROUP_ID)?.takeIf { it > 0L },
-            currentPage = prefs.getInt(KEY_CURRENT_PAGE, 1).coerceIn(1, MAX_CACHED_PAGE),
+            // Do not resurrect a half-loaded old page after Android recreates the process.  It made
+            // the shelf look as if books had disappeared until a folder/filter tap reset page 1.
+            currentPage = 1,
             sortField = prefs.getString(KEY_SORT_FIELD, null).orEmpty().takeIf { it in SORT_FIELDS } ?: "created_at",
             sortOrder = prefs.getString(KEY_SORT_ORDER, null).orEmpty().takeIf { it in SORT_ORDERS } ?: "desc",
             searchQuery = if (cacheMode == FavoritesCacheMode.All) {
@@ -61,7 +64,9 @@ class FavoritesSettingsStore(context: Context) {
             .putInt(KEY_GRID_COLUMNS, normalizeGridColumns(settings.gridColumns))
             .putString(KEY_DISPLAY_MODE, settings.displayMode.takeIf { it in DISPLAY_MODES } ?: "default")
             .putNullableLong(KEY_SELECTED_DISPLAY_GROUP_ID, settings.selectedDisplayGroupId?.takeIf { it > 0L })
-            .putInt(KEY_CURRENT_PAGE, settings.currentPage.coerceIn(1, MAX_CACHED_PAGE))
+            // Remove legacy persisted pagination rather than carrying a stale page into the next
+            // launch. Layout, group, sorting and cache preferences remain persistent.
+            .remove(KEY_CURRENT_PAGE)
             .putString(KEY_SORT_FIELD, settings.sortField.takeIf { it in SORT_FIELDS } ?: "created_at")
             .putString(KEY_SORT_ORDER, settings.sortOrder.takeIf { it in SORT_ORDERS } ?: "desc")
         if (settings.cacheMode == FavoritesCacheMode.All) {
@@ -109,7 +114,6 @@ class FavoritesSettingsStore(context: Context) {
         private const val KEY_SORT_ORDER = "sort_order"
         private const val KEY_SEARCH_QUERY = "search_query"
 
-        private const val MAX_CACHED_PAGE = 10_000
         private const val MAX_SEARCH_QUERY_LENGTH = 500
 
         private val TABS = setOf("favorites", "history")

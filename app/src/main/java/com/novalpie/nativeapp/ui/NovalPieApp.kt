@@ -1,7 +1,11 @@
 package com.novalpie.nativeapp.ui
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import java.util.concurrent.atomic.AtomicBoolean
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -10,7 +14,10 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -167,9 +174,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -178,6 +187,7 @@ import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -241,12 +251,58 @@ import kotlinx.coroutines.launch
 private const val FORUM_LINK_ANNOTATION = "forum_link"
 private const val FORUM_SPOILER_ANNOTATION = "forum_spoiler"
 private val LocalReaderAccent = compositionLocalOf { Color(0xFF2563EB) }
-// One display preference must govern every native surface that renders forum-style content.
-private val LocalForumHideSpoilers = compositionLocalOf { true }
+// One display preference must govern every native surface that renders forum-style content. Keeping
+// the callback here avoids threading a new pair of parameters through the very large root route
+// lambda, which can otherwise exceed the JVM's generated-method size limit for Compose.
+internal data class ForumSpoilerPreference(
+    val hideSpoilers: Boolean,
+    val onChange: (Boolean) -> Unit,
+)
+
+internal val LocalForumSpoilerPreference = compositionLocalOf {
+    ForumSpoilerPreference(
+        hideSpoilers = true,
+        onChange = {},
+    )
+}
 private const val SOURCE_SEARCH_SUBMISSION_SETTLE_MILLIS = 96L
+private const val MAX_FORUM_FOLD_DEPTH = 8
 // A short debounce avoids wasting bandwidth while a fling is still moving, without leaving the
 // next row blank for the old 650 ms after the user stops scrolling.
 private const val SEARCH_COVER_PRELOAD_SETTLE_MILLIS = 160L
+
+/**
+ * Forum content can contain links to both native NovalPie routes and arbitrary external sites.
+ * Native routes stay inside the app; external links are delegated to Android so a broken in-app
+ * WebView cannot turn a valid hyperlink into a blank page.
+ */
+private fun openForumRichLink(
+    context: Context,
+    viewModel: NovalPieViewModel,
+    rawLink: String,
+) {
+    val link = rawLink.trim()
+    val uri = runCatching { Uri.parse(link) }.getOrNull()
+    val scheme = uri?.scheme?.lowercase()
+    if (uri == null || scheme !in setOf("http", "https")) {
+        Toast.makeText(context, "链接格式不受支持", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val host = uri.host.orEmpty()
+    if (host.equals("novalpie.cc", ignoreCase = true) ||
+        host.equals("www.novalpie.cc", ignoreCase = true)
+    ) {
+        viewModel.openDeepLink(link)
+        return
+    }
+
+    runCatching {
+        context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+    }.onFailure {
+        Toast.makeText(context, "没有可打开此链接的浏览器", Toast.LENGTH_SHORT).show()
+    }
+}
 
 /** Restore a route's grid position only when that route returns; regular scrolling stays local. */
 @Composable
@@ -316,10 +372,11 @@ private fun rememberRestoredListState(
 @Composable
 fun NovalPieApp(
     startUri: String? = null,
-    onStartUriHandled: () -> Unit = {},
+    onStartUriHandled: (String) -> Unit = {},
     viewModel: NovalPieViewModel = viewModel(),
 ) {
     val route = viewModel.currentRoute
+    val context = LocalContext.current
 
     LaunchedEffect(route is AppRoute.Reader) {
         if (route !is AppRoute.Reader) viewModel.updateReaderFullscreen(false)
@@ -328,18 +385,15 @@ fun NovalPieApp(
     // The deep link is consumed once and then cleared by the host activity. Keying the effect on
     // a URI that outlived the navigation meant a rotation re-ran openDeepLink and yanked the user
     // back to the linked book/chapter.
-    LaunchedEffect(startUri) {
-        if (!startUri.isNullOrBlank()) {
-            viewModel.openDeepLink(startUri)
-            onStartUriHandled()
+    val pendingStartUri = startUri?.takeIf(String::isNotBlank)
+    LaunchedEffect(pendingStartUri) {
+        pendingStartUri?.let { uri ->
+            viewModel.openDeepLink(uri)
+            onStartUriHandled(uri)
         }
     }
 
-    val canNavigateBack = route !is AppRoute.Forum &&
-        route !is AppRoute.Home &&
-        route !is AppRoute.Search &&
-        route !is AppRoute.Tools &&
-        route !is AppRoute.Profile
+    val canNavigateBack = viewModel.canNavigateBack
     val navigateBack: () -> Unit = {
         if (route == AppRoute.AuthCaptcha) viewModel.cancelAuthCaptcha() else viewModel.goBack()
     }
@@ -351,7 +405,14 @@ fun NovalPieApp(
     NovalPieTheme(darkTheme = resolvedDarkTheme) {
     CompositionLocalProvider(
         LocalChineseVariant provides viewModel.chineseVariant,
-        LocalForumHideSpoilers provides forumContentHideSpoilers(),
+        // A full-screen original-image dialog must stop animated thumbnails underneath it. On
+        // MuMu, obscured AnimatedImageDrawable instances can continue invalidating the render
+        // thread and turn an otherwise harmless long press into a frame storm.
+        LocalImagePreviewActive provides viewModel.imagePreviewState.title.isNotBlank(),
+        LocalForumSpoilerPreference provides ForumSpoilerPreference(
+            hideSpoilers = forumContentHideSpoilers(viewModel.forumState.hideSpoilers),
+            onChange = viewModel::updateForumHideSpoilers,
+        ),
     ) {
     val activeReaderPalette = if (route is AppRoute.Reader) {
         readerPalette(viewModel.readerUiOptions)
@@ -473,6 +534,7 @@ fun NovalPieApp(
                     onOpenBook = viewModel::openBook,
                     onCreatePost = viewModel::openForumCreate,
                     onOpenUser = viewModel::openUserProfile,
+                    onOpenLink = { link -> openForumRichLink(context, viewModel, link) },
                     onListScrollPositionChange = viewModel::saveForumScrollPosition
                 )
 
@@ -483,37 +545,7 @@ fun NovalPieApp(
                     onOpenLogin = viewModel::openLoginFallback
                 )
 
-                is AppRoute.ForumPostDetail -> ForumPostDetailScreen(
-                    state = viewModel.forumPostDetailState,
-                    hasAuthToken = !viewModel.authToken.isNullOrBlank(),
-                    onBack = viewModel::goBack,
-                    onRetry = { viewModel.loadForumPostDetail(route.postId) },
-                    onDraftChange = viewModel::updateForumCommentDraft,
-                    onSubmitComment = viewModel::submitForumComment,
-                    onReplyComment = viewModel::replyToForumComment,
-                    onCancelReply = viewModel::cancelForumReply,
-                    onToggleCommentReplies = viewModel::toggleForumCommentReplies,
-                    onLike = viewModel::likeForumPost,
-                    onDislike = viewModel::dislikeForumPost,
-                    onEmoji = viewModel::emojiForumPost,
-                    onAward = viewModel::awardForumPost,
-                    onCommentLike = viewModel::likeForumComment,
-                    onCommentDislike = viewModel::dislikeForumComment,
-                    onCommentEmoji = viewModel::emojiForumComment,
-                    onCommentAward = viewModel::awardForumComment,
-                    onOpenUser = viewModel::openUserProfile,
-                    onOpenLogin = viewModel::openLoginFallback,
-                    onOpenLink = { link ->
-                        if (link.startsWith("https://novalpie.cc/", ignoreCase = true) ||
-                            link.startsWith("http://novalpie.cc/", ignoreCase = true)
-                        ) {
-                            viewModel.openDeepLink(link)
-                        } else {
-                            viewModel.openWebFallback(link)
-                        }
-                    },
-                    onOpenWeb = { viewModel.openWebFallback("https://novalpie.cc/forum/${route.postId}") }
-                )
+                is AppRoute.ForumPostDetail -> ForumPostDetailRoute(route = route, viewModel = viewModel)
 
                 AppRoute.Home -> HomeScreen(
                     state = viewModel.homeState,
@@ -594,7 +626,7 @@ fun NovalPieApp(
 
                 AppRoute.Tools -> ToolsScreen(
                     state = viewModel.toolsState,
-                    user = viewModel.homeState.user,
+                    user = viewModel.toolsUserProfile(),
                     hasAuthToken = !viewModel.authToken.isNullOrBlank(),
                     appThemeMode = viewModel.appThemeMode,
                     chineseVariant = viewModel.chineseVariant,
@@ -832,6 +864,8 @@ fun NovalPieApp(
                       bookQuery = viewModel.profileState.bookQuery,
                       onBookQueryChange = viewModel::updateProfileBookQuery,
                       onBookGridColumnsChange = viewModel::selectProfileBooksGridColumns,
+                    downloadImageConcurrency = viewModel.profileState.downloadImageConcurrency,
+                    onDownloadImageConcurrencyChange = viewModel::updateDownloadImageConcurrency,
                     onNameChange = viewModel::updateProfileName,
                     onBioChange = viewModel::updateProfileBio,
                     onShowCheckinChange = viewModel::updateProfileShowCheckin,
@@ -850,17 +884,7 @@ fun NovalPieApp(
                     onEquipInventoryItem = viewModel::toggleCurrentUserEquipment
                 )
 
-                is AppRoute.UserProfileDetail -> UserProfileDetailScreen(
-                    state = viewModel.userProfileDetailState,
-                    hasAuthToken = !viewModel.authToken.isNullOrBlank(),
-                    onRetry = { viewModel.loadUserProfile(route.userId) },
-                    onTabSelected = viewModel::selectUserProfileTab,
-                    onActivityFilterSelected = viewModel::selectUserProfileActivityFilter,
-                    onOpenActivity = viewModel::openUserActivity,
-                    onOpenBook = viewModel::openBook,
-                    onMessageUser = viewModel::openMessageConversation,
-                    onOpenLogin = viewModel::openLoginFallback
-                )
+                is AppRoute.UserProfileDetail -> UserProfileDetailRoute(route = route, viewModel = viewModel)
 
                 AppRoute.Settings -> SettingsScreen(
                     user = viewModel.profileState.profile,
@@ -887,10 +911,10 @@ fun NovalPieApp(
                 )
 
                 is AppRoute.BookDetail -> BookDetailScreen(
-                    state = viewModel.bookDetailState,
-                    nativeEpubDownloadState = viewModel.nativeEpubDownloadState,
-                    hasAuthToken = !viewModel.authToken.isNullOrBlank(),
-                    readerProgress = viewModel.bookDetailState.readerProgress,
+                     state = viewModel.bookDetailState,
+                     nativeEpubDownloadState = viewModel.nativeEpubDownloadState,
+                     hasAuthToken = !viewModel.authToken.isNullOrBlank(),
+                     readerProgress = viewModel.bookDetailState.readerProgress,
                     catalogQuery = viewModel.bookCatalogQuery,
                     onCatalogQueryChange = viewModel::updateBookCatalogQuery,
                     onRetry = { viewModel.loadBookDetail(route.bookId) },
@@ -907,20 +931,17 @@ fun NovalPieApp(
                     onCommentLike = viewModel::likeBookComment,
                     onCommentDislike = viewModel::dislikeBookComment,
                     onCommentEmoji = viewModel::emojiBookComment,
-                    onCommentAward = viewModel::awardBookComment,
-                    onOpenUser = viewModel::openUserProfile,
-                    onOpenLink = { link ->
-                        if (link.startsWith("https://novalpie.cc/", ignoreCase = true) ||
-                            link.startsWith("http://novalpie.cc/", ignoreCase = true)
-                        ) {
-                            viewModel.openDeepLink(link)
-                        } else {
-                            viewModel.openWebFallback(link)
-                        }
-                    },
+                     onCommentAward = viewModel::awardBookComment,
+                     onOpenUser = viewModel::openUserProfile,
+                    onOpenLink = { link -> openForumRichLink(context, viewModel, link) },
                     onDownloadEpub = { viewModel.downloadBookEpub(route.bookId) },
-                    onDownloadTxt = { viewModel.downloadBookTxt(route.bookId) },
+                     onDownloadTxt = { viewModel.downloadBookTxt(route.bookId) },
+                      onToggleDownloadPause = { viewModel.toggleNativeBookDownloadPause(route.bookId) },
+                     onCancelDownload = { viewModel.cancelNativeBookDownload(route.bookId) },
+                    onRetryDownload = { viewModel.retryNativeBookDownload(route.bookId) },
                     onPreviewBookCover = viewModel::previewBookCover,
+                    onSearchAuthor = viewModel::openBookDetailAuthorSearch,
+                    onSearchTag = viewModel::openBookDetailTagSearch,
                     onOpenWeb = { viewModel.openWebFallback("https://novalpie.cc/book/${route.bookId}") }
                 )
 
@@ -1001,12 +1022,70 @@ fun NovalPieApp(
     }
 }
 
+/** Keeps the forum detail callback graph out of the root route lambda's JVM method. */
+@Composable
+private fun ForumPostDetailRoute(
+    route: AppRoute.ForumPostDetail,
+    viewModel: NovalPieViewModel,
+) {
+    val context = LocalContext.current
+    ForumPostDetailScreen(
+        state = viewModel.forumPostDetailState,
+        hasAuthToken = !viewModel.authToken.isNullOrBlank(),
+        onBack = viewModel::goBack,
+        onRetryPost = viewModel::retryForumPostBody,
+        onRetryComments = viewModel::retryForumPostComments,
+        onDraftChange = viewModel::updateForumCommentDraft,
+        onSubmitComment = viewModel::submitForumComment,
+        onReplyComment = viewModel::replyToForumComment,
+        onCancelReply = viewModel::cancelForumReply,
+        onToggleCommentReplies = viewModel::toggleForumCommentReplies,
+        onLike = viewModel::likeForumPost,
+        onDislike = viewModel::dislikeForumPost,
+        onEmoji = viewModel::emojiForumPost,
+        onAward = viewModel::awardForumPost,
+        onCommentLike = viewModel::likeForumComment,
+        onCommentDislike = viewModel::dislikeForumComment,
+        onCommentEmoji = viewModel::emojiForumComment,
+        onCommentAward = viewModel::awardForumComment,
+        onOpenUser = viewModel::openUserProfile,
+        onOpenLogin = viewModel::openLoginFallback,
+        onOpenLink = { link -> openForumRichLink(context, viewModel, link) },
+        onOpenWeb = { viewModel.openWebFallback("https://novalpie.cc/forum/${route.postId}") },
+    )
+}
+
+/** Keeps independent public-profile retry callbacks out of the root route lambda. */
+@Composable
+private fun UserProfileDetailRoute(
+    route: AppRoute.UserProfileDetail,
+    viewModel: NovalPieViewModel,
+) {
+    UserProfileDetailScreen(
+        state = viewModel.userProfileDetailState,
+        hasAuthToken = !viewModel.authToken.isNullOrBlank(),
+        onRetry = { viewModel.loadUserProfile(route.userId) },
+        onRetryActivities = viewModel::retryUserProfileActivities,
+        onRetryBooks = viewModel::retryUserProfileBooks,
+        onRetryCheckinStats = viewModel::retryUserProfileCheckinStats,
+        onRetryCheckinRecords = viewModel::retryUserProfileCheckinRecords,
+        onRetryCheckinSettings = viewModel::retryUserProfileCheckinSettings,
+        onTabSelected = viewModel::selectUserProfileTab,
+        onActivityFilterSelected = viewModel::selectUserProfileActivityFilter,
+        onOpenActivity = viewModel::openUserActivity,
+        onOpenBook = viewModel::openBook,
+        onMessageUser = viewModel::openMessageConversation,
+        onOpenLogin = viewModel::openLoginFallback,
+    )
+}
+
 /** Isolates the reader's large callback surface from the root Scaffold content lambda. */
 @Composable
 private fun ReaderRoute(
     route: AppRoute.Reader,
     viewModel: NovalPieViewModel,
 ) {
+    val context = LocalContext.current
     ReaderScreen(
         state = viewModel.readerState,
         options = viewModel.readerUiOptions,
@@ -1046,18 +1125,9 @@ private fun ReaderRoute(
         onCommentLike = viewModel::likeReaderComment,
         onCommentDislike = viewModel::dislikeReaderComment,
         onCommentEmoji = viewModel::emojiReaderComment,
-        onCommentAward = viewModel::awardReaderComment,
-        onOpenUser = viewModel::openUserProfile,
-        onOpenLink = { link ->
-            if (
-                link.startsWith("https://novalpie.cc/", ignoreCase = true) ||
-                link.startsWith("http://novalpie.cc/", ignoreCase = true)
-            ) {
-                viewModel.openDeepLink(link)
-            } else {
-                viewModel.openWebFallback(link)
-            }
-        },
+         onCommentAward = viewModel::awardReaderComment,
+         onOpenUser = viewModel::openUserProfile,
+         onOpenLink = { link -> openForumRichLink(context, viewModel, link) },
         onOpenWeb = { chapterId ->
             viewModel.openWebFallback("https://novalpie.cc/book/${route.bookId}/$chapterId")
         },
@@ -1092,6 +1162,7 @@ private fun ForumScreen(
     onOpenBook: (Long) -> Unit,
     onCreatePost: () -> Unit,
     onOpenUser: (Long) -> Unit,
+    onOpenLink: (String) -> Unit,
     onListScrollPositionChange: (Int, Int) -> Unit
 ) {
     val availableWidthDp = LocalConfiguration.current.screenWidthDp
@@ -1111,6 +1182,7 @@ private fun ForumScreen(
             onOpenBook = onOpenBook,
             onCreatePost = onCreatePost,
             onOpenUser = onOpenUser,
+            onOpenLink = onOpenLink,
             onListScrollPositionChange = onListScrollPositionChange,
         )
         return
@@ -1157,13 +1229,14 @@ private fun ForumScreen(
                     onSelect = onCategorySelected
                 )
             }
-            if (state.selectedType == "review") {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    ForumSpoilerToggle(
-                        hideSpoilers = state.hideSpoilers,
-                        onHideSpoilersChange = onHideSpoilersChange
-                    )
-                }
+            // All forum categories can contain inline spoilers. The review endpoint additionally
+            // uses this value as a request filter, while discussion/feedback content is unmasked
+            // locally by the shared rich-text renderer.
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                ForumSpoilerToggle(
+                    hideSpoilers = state.hideSpoilers,
+                    onHideSpoilersChange = onHideSpoilersChange
+                )
             }
             when (val posts = state.posts) {
                 // Skeletons reserve the footprint of the live source cards while the request is in flight.
@@ -1198,6 +1271,8 @@ private fun ForumScreen(
                     onOpenPost = onOpenPost,
                     onOpenBook = onOpenBook,
                     onOpenUser = onOpenUser,
+                    onOpenLink = onOpenLink,
+                    isScrollInProgress = { forumGridState.isScrollInProgress },
                     compact = state.selectedType == "review",
                     hideSpoilers = forumFeedHideSpoilers(
                         type = state.selectedType,
@@ -1268,6 +1343,7 @@ private fun ForumListScreen(
     onOpenBook: (Long) -> Unit,
     onCreatePost: () -> Unit,
     onOpenUser: (Long) -> Unit,
+    onOpenLink: (String) -> Unit,
     onListScrollPositionChange: (Int, Int) -> Unit,
 ) {
     val feedItems = when (val posts = state.posts) {
@@ -1308,13 +1384,11 @@ private fun ForumListScreen(
                     onSelect = onCategorySelected,
                 )
             }
-            if (state.selectedType == "review") {
-                item {
-                    ForumSpoilerToggle(
-                        hideSpoilers = state.hideSpoilers,
-                        onHideSpoilersChange = onHideSpoilersChange,
-                    )
-                }
+            item {
+                ForumSpoilerToggle(
+                    hideSpoilers = state.hideSpoilers,
+                    onHideSpoilersChange = onHideSpoilersChange,
+                )
             }
             when (val posts = state.posts) {
                 LoadResult.Loading -> items(3) { NpBookRowSkeleton() }
@@ -1348,6 +1422,8 @@ private fun ForumListScreen(
                     onOpenPost = onOpenPost,
                     onOpenBook = onOpenBook,
                     onOpenUser = onOpenUser,
+                    onOpenLink = onOpenLink,
+                    isScrollInProgress = { forumListState.isScrollInProgress },
                     compact = state.selectedType == "review",
                     hideSpoilers = forumFeedHideSpoilers(
                         type = state.selectedType,
@@ -1441,12 +1517,13 @@ private fun ForumCategorySelector(
 }
 
 @Composable
-private fun ForumSpoilerToggle(
+internal fun ForumSpoilerToggle(
     hideSpoilers: Boolean,
-    onHideSpoilersChange: (Boolean) -> Unit
+    onHideSpoilersChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .heightIn(min = NovalPieSize.minTouchTarget),
         verticalAlignment = Alignment.CenterVertically,
@@ -1472,6 +1549,8 @@ private fun ForumFeedRow(
     onOpenPost: (Long) -> Unit,
     onOpenBook: (Long) -> Unit,
     onOpenUser: (Long) -> Unit,
+    onOpenLink: (String) -> Unit = {},
+    isScrollInProgress: () -> Boolean = { false },
     compact: Boolean = false,
     hideSpoilers: Boolean = true,
 ) {
@@ -1532,7 +1611,15 @@ private fun ForumFeedRow(
                         .fillMaxWidth()
                         .forumCardTap(
                             enabled = destination !is ForumFeedDestination.None,
-                            onTap = openDestination,
+                            onTap = {
+                                if (forumNavigationTapEnabled(
+                                        destinationAvailable = destination !is ForumFeedDestination.None,
+                                        isScrollInProgress = isScrollInProgress(),
+                                    )
+                                ) {
+                                    openDestination()
+                                }
+                            },
                         ),
                     horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
                     verticalAlignment = Alignment.CenterVertically
@@ -1563,8 +1650,8 @@ private fun ForumFeedRow(
                                 horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs),
                                 verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xxs)
                             ) {
-                                if (item.pinned) ForumStatusBadge(label = "缃《", color = Color(0xFFF97316))
-                                if (item.featured) ForumStatusBadge(label = "绮惧崕", color = Color(0xFFEAB308))
+                                if (item.pinned) ForumStatusBadge(label = "置顶", color = Color(0xFFF97316))
+                                if (item.featured) ForumStatusBadge(label = "精华", color = Color(0xFFEAB308))
                             }
                         }
                     }
@@ -1572,11 +1659,19 @@ private fun ForumFeedRow(
             } else {
             Row(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .forumCardTap(
-                        enabled = destination !is ForumFeedDestination.None,
-                        onTap = openDestination,
-                    ),
+                        .fillMaxWidth()
+                        .forumCardTap(
+                            enabled = destination !is ForumFeedDestination.None,
+                            onTap = {
+                                if (forumNavigationTapEnabled(
+                                        destinationAvailable = destination !is ForumFeedDestination.None,
+                                        isScrollInProgress = isScrollInProgress(),
+                                    )
+                                ) {
+                                    openDestination()
+                                }
+                            },
+                        ),
                 horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
                 verticalAlignment = Alignment.Top
             ) {
@@ -1601,6 +1696,7 @@ private fun ForumFeedRow(
                     hideSpoilers = hideSpoilers,
                     revealedSpoilerIndexes = revealedSpoilerIndexes,
                     onOpenCard = openDestination,
+                    onOpenLink = onOpenLink,
                     onRevealSpoiler = { spoilerIndex ->
                         revealedSpoilerIndexes = forumRevealSpoiler(
                             hideSpoilers = hideSpoilers,
@@ -1795,7 +1891,8 @@ private fun ForumPostDetailScreen(
     state: ForumPostDetailState,
     hasAuthToken: Boolean,
     onBack: () -> Unit,
-    onRetry: () -> Unit,
+    onRetryPost: () -> Unit,
+    onRetryComments: () -> Unit,
     onDraftChange: (String) -> Unit,
     onSubmitComment: () -> Unit,
     onReplyComment: (ForumComment) -> Unit,
@@ -1805,16 +1902,27 @@ private fun ForumPostDetailScreen(
     onDislike: () -> Unit,
     onEmoji: () -> Unit,
     onAward: () -> Unit,
-    onCommentLike: (Long) -> Unit,
-    onCommentDislike: (Long) -> Unit,
-    onCommentEmoji: (Long) -> Unit,
-    onCommentAward: (Long) -> Unit,
+    onCommentLike: (ForumComment) -> Unit,
+    onCommentDislike: (ForumComment) -> Unit,
+    onCommentEmoji: (ForumComment) -> Unit,
+    onCommentAward: (ForumComment) -> Unit,
     onOpenUser: (Long) -> Unit,
     onOpenLogin: () -> Unit,
     onOpenLink: (String) -> Unit,
     onOpenWeb: () -> Unit
 ) {
+    val spoilerPreference = LocalForumSpoilerPreference.current
+    val listState = rememberLazyListState()
+    val isScrollInProgress: () -> Boolean = { listState.isScrollInProgress }
+    LaunchedEffect(state.replyingToCommentId) {
+        forumPostDetailComposerScrollIndex(state.replyingToCommentId)?.let { index ->
+            // The composer is always the fourth logical item (back link, detail, section title,
+            // composer), even while either network result is still loading.
+            listState.animateScrollToItem(index)
+        }
+    }
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -1823,7 +1931,7 @@ private fun ForumPostDetailScreen(
         when (val detail = state.detail) {
             LoadResult.Idle, LoadResult.Loading -> item { LoadingBlock("正在打开帖子") }
             is LoadResult.Error -> item {
-                ErrorBlock(message = detail.message, retryLabel = "重试帖子", onRetry = onRetry)
+                ErrorBlock(message = detail.message, retryLabel = "重试帖子", onRetry = onRetryPost)
             }
             is LoadResult.Success -> {
                 item {
@@ -1835,6 +1943,7 @@ private fun ForumPostDetailScreen(
                         onEmoji = onEmoji,
                         onAward = onAward,
                         onOpenUser = onOpenUser,
+                        isScrollInProgress = isScrollInProgress,
                         onOpenLink = onOpenLink,
                         onOpenWeb = onOpenWeb
                     )
@@ -1843,7 +1952,13 @@ private fun ForumPostDetailScreen(
         }
 
         item {
-            Text("评论", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs)) {
+                Text("评论", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                ForumSpoilerToggle(
+                    hideSpoilers = spoilerPreference.hideSpoilers,
+                    onHideSpoilersChange = spoilerPreference.onChange,
+                )
+            }
         }
         item {
             if (hasAuthToken) {
@@ -1862,7 +1977,13 @@ private fun ForumPostDetailScreen(
         }
         when (val comments = state.comments) {
             LoadResult.Idle, LoadResult.Loading -> item { LoadingBlock("正在同步评论") }
-            is LoadResult.Error -> item { ErrorBlock(message = comments.message, retryLabel = "重试评论", onRetry = onRetry) }
+            is LoadResult.Error -> item {
+                ErrorBlock(
+                    message = comments.message,
+                    retryLabel = "重试评论",
+                    onRetry = onRetryComments,
+                )
+            }
             is LoadResult.Success -> {
                 if (comments.value.isEmpty()) {
                     item { StatusText("还没有评论") }
@@ -1885,6 +2006,7 @@ private fun ForumPostDetailScreen(
                             onAward = onCommentAward,
                             onReply = onReplyComment,
                             onOpenUser = onOpenUser,
+                            isScrollInProgress = isScrollInProgress,
                             expanded = state.expandedCommentIds.contains(thread.comment.id),
                             onToggleReplies = { onToggleCommentReplies(thread.comment.id) },
                             onOpenLink = onOpenLink
@@ -1906,6 +2028,7 @@ private fun ForumPostHeader(
     onEmoji: () -> Unit,
     onAward: () -> Unit,
     onOpenUser: (Long) -> Unit,
+    isScrollInProgress: () -> Boolean,
     onOpenLink: (String) -> Unit,
     onOpenWeb: () -> Unit
 ) {
@@ -1923,7 +2046,15 @@ private fun ForumPostHeader(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(enabled = post.authorId != null) { post.authorId?.let(onOpenUser) },
+                    .clickable(enabled = post.authorId != null) {
+                        if (forumNavigationTapEnabled(
+                                destinationAvailable = post.authorId != null,
+                                isScrollInProgress = isScrollInProgress(),
+                            )
+                        ) {
+                            post.authorId?.let(onOpenUser)
+                        }
+                    },
                 horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -2086,6 +2217,7 @@ internal fun ForumFeedExcerpt(
     revealedSpoilerIndexes: Set<Int>,
     onOpenCard: () -> Unit,
     onRevealSpoiler: (Int) -> Unit,
+    onOpenLink: (String) -> Unit = {},
     semanticDescription: String = "内容摘要",
 ) {
     val paragraphCache = remember { ForumRichParagraphCache() }
@@ -2103,24 +2235,64 @@ internal fun ForumFeedExcerpt(
                         is ForumTextSegment.Bold -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
                             append(segment.value)
                         }
-                    is ForumTextSegment.Link -> withStyle(
-                        SpanStyle(
-                            color = linkColor,
+                    is ForumTextSegment.Italic -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                        append(segment.value)
+                    }
+                    is ForumTextSegment.Underline -> withStyle(
+                        SpanStyle(textDecoration = TextDecoration.Underline)
+                    ) {
+                        append(segment.value)
+                    }
+                    is ForumTextSegment.Strikethrough -> withStyle(
+                        SpanStyle(textDecoration = TextDecoration.LineThrough)
+                    ) {
+                        append(segment.value)
+                    }
+                    is ForumTextSegment.InlineCode -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) {
+                        append(segment.value)
+                    }
+                    is ForumTextSegment.CodeBlock -> withStyle(
+                        SpanStyle(fontFamily = FontFamily.Monospace)
+                    ) {
+                        append(segment.value)
+                    }
+                    is ForumTextSegment.Link -> {
+                        pushStringAnnotation(tag = FORUM_LINK_ANNOTATION, annotation = segment.url)
+                        withStyle(
+                            SpanStyle(
+                                color = linkColor,
                                 textDecoration = TextDecoration.Underline,
                             )
                         ) {
                             append(segment.label)
                         }
+                        pop()
+                    }
                     is ForumTextSegment.Image -> append(
                         segment.alt.takeIf(String::isNotBlank)?.let { "[图片：$it]" } ?: "[图片]"
                     )
-                    is ForumTextSegment.BookReference -> withStyle(
-                        SpanStyle(
-                            color = linkColor,
+                    is ForumTextSegment.BookReference -> {
+                        pushStringAnnotation(
+                            tag = FORUM_LINK_ANNOTATION,
+                            annotation = "https://novalpie.cc/book/${segment.bookId}",
+                        )
+                        withStyle(
+                            SpanStyle(
+                                color = linkColor,
                                 textDecoration = TextDecoration.Underline,
                             )
                         ) {
                             append("《书籍 #${segment.bookId}》")
+                        }
+                        pop()
+                    }
+                        is ForumTextSegment.Fold -> withStyle(
+                            SpanStyle(
+                                color = linkColor,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        ) {
+                            append("折叠：${segment.title}")
                         }
                         is ForumTextSegment.Spoiler -> {
                             val currentSpoilerIndex = spoilerIndex++
@@ -2161,7 +2333,11 @@ internal fun ForumFeedExcerpt(
             ) {
                 onRevealSpoiler(spoilerIndex)
             } else {
-                onOpenCard()
+                forumStringAnnotationAtOffset(
+                    text = annotated,
+                    tag = FORUM_LINK_ANNOTATION,
+                    offset = offset,
+                )?.let(onOpenLink) ?: onOpenCard()
             }
         },
     )
@@ -2175,8 +2351,9 @@ internal fun ForumRichExcerpt(
     maxLines: Int,
     onOpenContent: () -> Unit,
     semanticDescription: String,
+    onOpenLink: (String) -> Unit = {},
 ) {
-    val hideSpoilers = LocalForumHideSpoilers.current
+    val hideSpoilers = LocalForumSpoilerPreference.current.hideSpoilers
     var revealedSpoilerIndexes by remember(content, hideSpoilers) {
         mutableStateOf(emptySet<Int>())
     }
@@ -2187,6 +2364,7 @@ internal fun ForumRichExcerpt(
         hideSpoilers = hideSpoilers,
         revealedSpoilerIndexes = revealedSpoilerIndexes,
         onOpenCard = onOpenContent,
+        onOpenLink = onOpenLink,
         onRevealSpoiler = { spoilerIndex ->
             revealedSpoilerIndexes = forumRevealSpoiler(
                 hideSpoilers = hideSpoilers,
@@ -2205,7 +2383,8 @@ private fun ForumRichContent(
     onOpenLink: (String) -> Unit,
     bookReferences: Map<Long, LoadResult<NovelCard>> = emptyMap(),
     emptyLabel: String,
-    hideSpoilers: Boolean = LocalForumHideSpoilers.current,
+    hideSpoilers: Boolean = LocalForumSpoilerPreference.current.hideSpoilers,
+    foldDepth: Int = 0,
 ) {
     val paragraphCache = remember { ForumRichParagraphCache() }
     val paragraphs = paragraphCache.get(content)
@@ -2220,14 +2399,27 @@ private fun ForumRichContent(
             paragraphs.forEach { paragraph ->
                 val paragraphSpoilerOffset = spoilerOffset
                 spoilerOffset += paragraph.segments.count { it is ForumTextSegment.Spoiler }
-                val bookReferenceId = paragraph.bookReferenceId
+                val bookReference = paragraph.bookReference
                 val image = paragraph.image
-                if (bookReferenceId != null) {
+                val fold = paragraph.fold
+                val codeBlock = paragraph.codeBlock
+                if (fold != null) {
+                    ForumFoldBlock(
+                        fold = fold,
+                        style = style,
+                        onOpenLink = onOpenLink,
+                        bookReferences = bookReferences,
+                        hideSpoilers = hideSpoilers,
+                        foldDepth = foldDepth,
+                    )
+                } else if (codeBlock != null) {
+                    ForumCodeBlock(codeBlock = codeBlock, style = style)
+                } else if (bookReference != null) {
                     ForumEmbeddedBookCard(
-                        bookId = bookReferenceId,
-                        bookState = bookReferences[bookReferenceId],
+                        reference = bookReference,
+                        bookState = bookReferences[bookReference.bookId],
                         onOpen = {
-                            onOpenLink("https://novalpie.cc/book/$bookReferenceId")
+                            onOpenLink("https://novalpie.cc/book/${bookReference.bookId}")
                         },
                     )
                 } else if (image != null) {
@@ -2254,16 +2446,109 @@ private fun ForumRichContent(
     }
 }
 
+@Composable
+private fun ForumFoldBlock(
+    fold: ForumTextSegment.Fold,
+    style: TextStyle,
+    onOpenLink: (String) -> Unit,
+    bookReferences: Map<Long, LoadResult<NovelCard>>,
+    hideSpoilers: Boolean,
+    foldDepth: Int,
+) {
+    var expanded by remember(fold) { mutableStateOf(false) }
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = "折叠内容：${fold.title}" },
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        ),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = NovalPieSpacing.md, vertical = NovalPieSpacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
+            ) {
+                Icon(
+                    imageVector = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = fold.title,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = if (expanded) "收起" else "展开",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            if (expanded) {
+                if (foldDepth >= MAX_FORUM_FOLD_DEPTH) {
+                    Text(
+                        // Rendering the raw payload here leaked `[fold:...]`/`[/fold]` when a
+                        // server response contained excessive nesting. Stop at a safe boundary;
+                        // ordinary folds remain fully parsed and actionable below this depth.
+                        text = forumFoldDepthFallbackLabel(fold.title),
+                        modifier = Modifier.padding(NovalPieSpacing.md),
+                        style = style,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    ForumRichContent(
+                        content = fold.content,
+                        style = style,
+                        onOpenLink = onOpenLink,
+                        bookReferences = bookReferences,
+                        emptyLabel = "折叠内容为空",
+                        hideSpoilers = hideSpoilers,
+                        foldDepth = foldDepth + 1,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ForumCodeBlock(
+    codeBlock: ForumTextSegment.CodeBlock,
+    style: TextStyle,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(NovalPieRadius.sm),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+    ) {
+        SelectionContainer {
+            Text(
+                text = codeBlock.value,
+                modifier = Modifier.padding(NovalPieSpacing.md),
+                style = style.copy(fontFamily = FontFamily.Monospace),
+                softWrap = true,
+            )
+        }
+    }
+}
+
 /**
  * Native counterpart of the website's [bookid:...] embed. Its loading state is supplied by the
  * view model, so a LazyColumn recompose cannot repeat the detail request for the same marker.
  */
 @Composable
 private fun ForumEmbeddedBookCard(
-    bookId: Long,
+    reference: ForumTextSegment.BookReference,
     bookState: LoadResult<NovelCard>?,
     onOpen: () -> Unit,
 ) {
+    val bookId = reference.bookId
     val book = (bookState as? LoadResult.Success)?.value
     ElevatedCard(
         modifier = Modifier
@@ -2271,18 +2556,23 @@ private fun ForumEmbeddedBookCard(
             .semantics {
                 contentDescription = book?.let { "打开关联书籍 ${it.title}" } ?: "打开关联书籍 #$bookId"
             }
-            .clickable(onClick = onOpen),
+            .forumCardTap(
+                enabled = true,
+                semanticLabel = "打开关联书籍",
+                onTap = onOpen,
+            ),
         shape = RoundedCornerShape(NovalPieRadius.md),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.46f),
         ),
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = NovalPieElevation.none),
     ) {
-        Row(
+        Column {
+            Row(
             modifier = Modifier.padding(NovalPieSpacing.sm),
             horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
             verticalAlignment = Alignment.CenterVertically,
-        ) {
+            ) {
             if (book != null) {
                 BookCover(
                     title = book.title,
@@ -2325,7 +2615,8 @@ private fun ForumEmbeddedBookCard(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    book.tags.take(3).filter(String::isNotBlank).takeIf { it.isNotEmpty() }?.let { tags ->
+                    if (reference.showTags) {
+                        book.tags.take(3).filter(String::isNotBlank).takeIf { it.isNotEmpty() }?.let { tags ->
                         Text(
                             text = tags.joinToString(" · "),
                             style = MaterialTheme.typography.labelSmall,
@@ -2333,6 +2624,7 @@ private fun ForumEmbeddedBookCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                    }
                     }
                 }
                 Icon(
@@ -2368,6 +2660,23 @@ private fun ForumEmbeddedBookCard(
                     )
                 }
             }
+            }
+            if (reference.showBio) {
+                book?.description?.trim()?.takeIf(String::isNotBlank)?.let { description ->
+                    Text(
+                        text = description,
+                        modifier = Modifier.padding(
+                            start = NovalPieSpacing.sm,
+                            end = NovalPieSpacing.sm,
+                            bottom = NovalPieSpacing.sm,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }
@@ -2383,15 +2692,28 @@ private fun ForumEmbeddedImage(image: ForumTextSegment.Image) {
     val context = LocalContext.current
     val touchSlop = LocalViewConfiguration.current.touchSlop
     val title = image.alt.takeIf(String::isNotBlank) ?: "论坛图片"
-    val imageRequest = remember(image.url, context) {
-        ImageRequest.Builder(context)
-            .data(image.url)
-            .size(2048, 2048)
-            .precision(Precision.INEXACT)
-            .crossfade(true)
-            .build()
-    }
     var previewVisible by remember(image.url) { mutableStateOf(false) }
+    val imagePreviewActive = LocalImagePreviewActive.current || previewVisible
+    val imageRequest = remember(image.url, context, imagePreviewActive) {
+        if (imagePreviewActive) {
+            // The dialog owns the original image. Keep the obscured inline copy as a bounded
+            // first frame so an animated forum image cannot keep the render thread busy beneath
+            // the dialog.
+            novalPieStaticImageRequest(
+                context = context,
+                url = image.url,
+                widthPx = 1024,
+                heightPx = 1024,
+            )
+        } else {
+            ImageRequest.Builder(context)
+                .data(image.url)
+                .size(2048, 2048)
+                .precision(Precision.INEXACT)
+                .crossfade(true)
+                .build()
+        }
+    }
 
     Surface(
         modifier = Modifier
@@ -2454,21 +2776,21 @@ private fun ForumEmbeddedImage(image: ForumTextSegment.Image) {
  * Keep navigation on the explicit title/cover row. Inline text and author controls own their own
  * pointer stream, while the list remains free to consume vertical movement.
  */
-@OptIn(ExperimentalFoundationApi::class)
+@Composable
 internal fun Modifier.forumCardTap(
     enabled: Boolean,
+    semanticLabel: String = "打开帖子",
     onTap: () -> Unit,
 ): Modifier {
     if (!enabled) return this
     return this
         .semantics {
-            onClick(label = "打开帖子", action = { onTap(); true })
+            onClick(label = semanticLabel, action = { onTap(); true })
         }
-        .combinedClickable(
-            onClick = onTap,
-            // A stationary long press is an inspection/selection gesture, not card navigation.
-            onLongClick = {},
-        )
+        // Compose's built-in clickable cancels the click once the parent LazyColumn claims a
+        // drag. This keeps a stationary tap usable while removing the fragile custom pointer loop
+        // that could hold PointerEventDispatcher during a long or busy scroll.
+        .clickable(onClick = onTap)
 }
 
 @Composable
@@ -2497,6 +2819,27 @@ private fun ForumRichParagraphText(
                 when (segment) {
                     is ForumTextSegment.Plain -> append(segment.value)
                     is ForumTextSegment.Bold -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                        append(segment.value)
+                    }
+                    is ForumTextSegment.Italic -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                        append(segment.value)
+                    }
+                    is ForumTextSegment.Underline -> withStyle(
+                        SpanStyle(textDecoration = TextDecoration.Underline)
+                    ) {
+                        append(segment.value)
+                    }
+                    is ForumTextSegment.Strikethrough -> withStyle(
+                        SpanStyle(textDecoration = TextDecoration.LineThrough)
+                    ) {
+                        append(segment.value)
+                    }
+                    is ForumTextSegment.InlineCode -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) {
+                        append(segment.value)
+                    }
+                    is ForumTextSegment.CodeBlock -> withStyle(
+                        SpanStyle(fontFamily = FontFamily.Monospace)
+                    ) {
                         append(segment.value)
                     }
                     is ForumTextSegment.Link -> {
@@ -2530,6 +2873,14 @@ private fun ForumRichParagraphText(
                             append("《书籍 #${segment.bookId}》")
                         }
                         pop()
+                    }
+                    is ForumTextSegment.Fold -> withStyle(
+                        SpanStyle(
+                            color = linkColor,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    ) {
+                        append("折叠：${segment.title}")
                     }
                     is ForumTextSegment.Spoiler -> {
                         val currentSpoilerIndex = spoilerIndex++
@@ -2641,13 +2992,11 @@ private fun ForumCommentComposer(
                 TextButton(onClick = onCancelReply) { Text("取消") }
             }
         }
-        OutlinedTextField(
-            value = draft,
-            onValueChange = onDraftChange,
-            modifier = Modifier.fillMaxWidth(),
-            minLines = 2,
+        ForumMarkdownCommentField(
+            draft = draft,
+            onDraftChange = onDraftChange,
+            enabled = !loading,
             shape = MaterialTheme.shapes.medium,
-            label = { Text("写评论") }
         )
         Row(
             horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
@@ -2685,13 +3034,11 @@ private fun InlineCommentComposer(
                 TextButton(onClick = onCancelReply) { Text("取消") }
             }
         }
-        OutlinedTextField(
-            value = draft,
-            onValueChange = onDraftChange,
-            modifier = Modifier.fillMaxWidth(),
-            minLines = 2,
+        ForumMarkdownCommentField(
+            draft = draft,
+            onDraftChange = onDraftChange,
+            enabled = !loading,
             shape = RoundedCornerShape(12.dp),
-            label = { Text("写评论") }
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(enabled = !loading && draft.isNotBlank(), onClick = onSubmit) {
@@ -2704,16 +3051,82 @@ private fun InlineCommentComposer(
     }
 }
 
+/**
+ * Native comment composers expose the same formatting vocabulary as the source Markdown editor.
+ * The local [TextFieldValue] preserves a user selection while the view model keeps only the text
+ * draft, avoiding a selection reset after each Compose recomposition.
+ */
+@Composable
+private fun ForumMarkdownCommentField(
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    enabled: Boolean,
+    shape: androidx.compose.ui.graphics.Shape,
+) {
+    var fieldValue by remember {
+        mutableStateOf(TextFieldValue(draft, selection = TextRange(draft.length)))
+    }
+    LaunchedEffect(draft) {
+        if (draft != fieldValue.text) {
+            fieldValue = TextFieldValue(draft, selection = TextRange(draft.length))
+        }
+    }
+    val toolbarScroll = rememberScrollState()
+    Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(toolbarScroll),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            ForumCommentMarkupAction.entries.forEach { action ->
+                TextButton(
+                    onClick = {
+                        val edit = forumCommentMarkupEdit(
+                            text = fieldValue.text,
+                            selectionStart = fieldValue.selection.start,
+                            selectionEnd = fieldValue.selection.end,
+                            action = action,
+                        )
+                        fieldValue = TextFieldValue(
+                            text = edit.text,
+                            selection = TextRange(edit.selectionStart, edit.selectionEnd),
+                        )
+                        onDraftChange(edit.text)
+                    },
+                    enabled = enabled,
+                    modifier = Modifier.height(34.dp),
+                ) {
+                    Text(action.label, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+        OutlinedTextField(
+            value = fieldValue,
+            onValueChange = { next ->
+                fieldValue = next
+                onDraftChange(next.text)
+            },
+            enabled = enabled,
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 2,
+            shape = shape,
+            label = { Text("写评论") },
+        )
+    }
+}
+
 @Composable
 private fun ForumCommentThreadBlock(
     thread: ForumCommentThread,
     bookReferences: Map<Long, LoadResult<NovelCard>>,
-    onLike: (Long) -> Unit,
-    onDislike: (Long) -> Unit,
-    onEmoji: (Long) -> Unit,
-    onAward: (Long) -> Unit,
+    onLike: (ForumComment) -> Unit,
+    onDislike: (ForumComment) -> Unit,
+    onEmoji: (ForumComment) -> Unit,
+    onAward: (ForumComment) -> Unit,
     onReply: (ForumComment) -> Unit,
     onOpenUser: (Long) -> Unit,
+    isScrollInProgress: () -> Boolean,
     expanded: Boolean,
     onToggleReplies: () -> Unit,
     onOpenLink: (String) -> Unit
@@ -2722,12 +3135,13 @@ private fun ForumCommentThreadBlock(
         ForumCommentRow(
             comment = thread.comment,
             bookReferences = bookReferences,
-            onLike = { onLike(thread.comment.id) },
-            onDislike = { onDislike(thread.comment.id) },
-            onEmoji = { onEmoji(thread.comment.id) },
-            onAward = { onAward(thread.comment.id) },
+            onLike = { onLike(thread.comment) },
+            onDislike = { onDislike(thread.comment) },
+            onEmoji = { onEmoji(thread.comment) },
+            onAward = { onAward(thread.comment) },
             onReply = { onReply(thread.comment) },
             onOpenUser = onOpenUser,
+            isScrollInProgress = isScrollInProgress,
             onOpenLink = onOpenLink
         )
         if (thread.replies.isNotEmpty()) {
@@ -2752,12 +3166,13 @@ private fun ForumCommentThreadBlock(
                         ForumCommentRow(
                             comment = reply,
                             bookReferences = bookReferences,
-                            onLike = { onLike(reply.id) },
-                            onDislike = { onDislike(reply.id) },
-                            onEmoji = { onEmoji(reply.id) },
-                            onAward = { onAward(reply.id) },
+                            onLike = { onLike(reply) },
+                            onDislike = { onDislike(reply) },
+                            onEmoji = { onEmoji(reply) },
+                            onAward = { onAward(reply) },
                             onReply = { onReply(reply) },
                             onOpenUser = onOpenUser,
+                            isScrollInProgress = isScrollInProgress,
                             onOpenLink = onOpenLink
                         )
                     }
@@ -2778,6 +3193,7 @@ private fun ForumCommentRow(
     onAward: () -> Unit,
     onReply: () -> Unit,
     onOpenUser: (Long) -> Unit,
+    isScrollInProgress: () -> Boolean,
     onOpenLink: (String) -> Unit
 ) {
     Surface(
@@ -2803,7 +3219,15 @@ private fun ForumCommentRow(
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .clickable(enabled = comment.authorId != null) { comment.authorId?.let(onOpenUser) },
+                        .clickable(enabled = comment.authorId != null) {
+                            if (forumNavigationTapEnabled(
+                                    destinationAvailable = comment.authorId != null,
+                                    isScrollInProgress = isScrollInProgress(),
+                                )
+                            ) {
+                                comment.authorId?.let(onOpenUser)
+                            }
+                        },
                     verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xxs)
                 ) {
                     Text(
@@ -2953,7 +3377,10 @@ private fun HomeScreen(
             LibraryOverviewBlock(
                 overview = libraryOverview(
                     hasAuthToken = hasAuthToken,
-                    favoriteCount = (state.favoriteEntries as? LoadResult.Success)?.value?.size ?: 0,
+                    favoriteCount = collectionFavoriteCount(
+                        sourceTotal = state.favoriteTotal,
+                        loadedCount = (state.favoriteEntries as? LoadResult.Success)?.value?.size ?: 0,
+                    ),
                     groupCount = (state.groups as? LoadResult.Success)?.value?.size ?: 0,
                     recentCount = (state.history as? LoadResult.Success)?.value?.size ?: 0,
                     pageCount = state.favoritesPage,
@@ -3021,6 +3448,7 @@ private fun HomeScreen(
                     entries = visibleEntries,
                     localProgresses = recentReaderProgresses,
                 )
+                val localProgressByBookId = recentReaderProgresses.associateBy(ReaderProgress::bookId)
                 val visibleGroupFolders: List<FavoriteGroup> = if (
                     shouldShowFavoriteGroupFolders(state.options, state.selectedFavoriteGroupId)
                 ) {
@@ -3101,7 +3529,10 @@ private fun HomeScreen(
                                     }
                                     CompactLibraryBookCardItem(
                                         book = entry.book,
-                                        presentation = compactFavoriteBookCardPresentation(entry),
+                                        presentation = compactFavoriteBookCardPresentation(
+                                            entry = entry,
+                                            localProgress = localProgressByBookId[entry.book.id],
+                                        ),
                                         modifier = Modifier.weight(1f),
                                         gridCoverHeight = collectionGridCoverHeight,
                                         previewPolicy = CoverPreviewPolicy.Disabled,
@@ -3132,6 +3563,7 @@ private fun HomeScreen(
                             }
                             FavoriteListRow(
                                 entry = entry,
+                                localProgress = localProgressByBookId[entry.book.id],
                                 selected = isSelected,
                                 selecting = state.selectionMode,
                                 onClick = onEntryClick,
@@ -5319,7 +5751,12 @@ private fun BookDetailScreen(
     onOpenLink: (String) -> Unit,
     onDownloadEpub: () -> Unit,
     onDownloadTxt: () -> Unit,
+    onToggleDownloadPause: () -> Unit,
+    onCancelDownload: () -> Unit,
+    onRetryDownload: () -> Unit,
     onPreviewBookCover: (NovelCard) -> Unit,
+    onSearchAuthor: (String) -> Unit,
+    onSearchTag: (String) -> Unit,
     onOpenWeb: () -> Unit
 ) {
     val sectionTitles = bookDetailSectionTitles()
@@ -5373,6 +5810,8 @@ private fun BookDetailScreen(
                         favoriteStatus = state.favoriteStatus,
                         progress = progressForBook,
                         onPreviewCover = { onPreviewBookCover(book.value) },
+                        onSearchAuthor = onSearchAuthor,
+                        onSearchTag = onSearchTag,
                     )
                 }
             }
@@ -5488,6 +5927,7 @@ private fun BookDetailScreen(
                     title = sectionTitles.getOrElse(3) { "书评" },
                     state = state,
                     comments = state.comments,
+                    bookReferences = state.bookReferences,
                     onRetry = onRetry,
                     onDraftChange = onCommentDraftChange,
                     onSubmit = onSubmitComment,
@@ -5528,6 +5968,9 @@ private fun BookDetailScreen(
                 onAppendChapters = onAppendChapters,
                 onDownloadEpub = onDownloadEpub,
                 onDownloadTxt = onDownloadTxt,
+                onToggleDownloadPause = onToggleDownloadPause,
+                onCancelDownload = onCancelDownload,
+                onRetryDownload = onRetryDownload,
                 onOpenWeb = onOpenWeb,
             )
         }
@@ -5592,9 +6035,23 @@ private fun ReaderScreen(
             readableContent?.let { listOf(ReaderChapterContent(state.chapterId, it.title, it)) }.orEmpty()
         }
     }
+    // Keep the viewport observer alive while the infinite-scroll window grows.  Restarting it on
+    // every append can lose the one layout transition where the first item changes from chapter N
+    // to chapter N+1, leaving the footer stuck on the route's opening chapter.
+    val latestChapterContents by rememberUpdatedState(chapterContents)
+    val latestVisibleChapterChanged by rememberUpdatedState(onVisibleChapterChanged)
+    // The route remains anchored to the opening chapter during continuous scroll, while the
+    // footer follows the article that actually occupies the viewport.
+    var visibleReaderChapterId by remember(state.bookId, state.chapterId) {
+        mutableStateOf<Long?>(state.chapterId.takeIf { it > 0L })
+    }
     val readerEndSentinelKey = remember(chapterContents) {
         readerBodyEndSentinelKey(chapterContents)
     }
+    // The reader's parent gesture recognizer runs in the initial pointer pass so ordinary selected
+    // article text can still toggle chrome. Comment controls live inside that same LazyColumn;
+    // retain their in-flight press until the parent has observed the release.
+    val inlineCommentInteractionActive = remember { AtomicBoolean(false) }
     // Do not make the next append depend on one visibility transition. A catalog refresh or an
     // in-flight append can replace the observer at exactly the chapter boundary. A newly appended
     // chapter gets a new sentinel key and therefore a fresh boundary flag.
@@ -5626,6 +6083,9 @@ private fun ReaderScreen(
     androidx.compose.runtime.DisposableEffect(ttsController) {
         onDispose { ttsController.shutdown() }
     }
+    LaunchedEffect(options.showTts) {
+        if (!options.showTts) ttsController.stop()
+    }
 
     // D11. The reader is the app's one fully immersive route -- globalProductTopBarVisible excludes
     // it and the bottom NavigationBar only shows on tab roots -- and toolbarsVisible starts false.
@@ -5651,10 +6111,12 @@ private fun ReaderScreen(
         readerNavigationVisible.value = false
         toolbarsVisible.value = false
         radialMenuVisible.value = false
+        inlineCommentInteractionActive.set(false)
         lastReaderChromeTapUptime = 0L
         lastReaderChromeTapXFraction = -1f
         lastReaderChromeTapYFraction = -1f
         continuousBoundaryReached.value = false
+        visibleReaderChapterId = state.chapterId.takeIf { it > 0L }
         pendingChapterEntryPosition = state.entryPosition
         listState.scrollToItem(0)
     }
@@ -5684,16 +6146,27 @@ private fun ReaderScreen(
 
     // Infinite scrolling appends bodies without replacing the route. Save a chapter only after
     // one of its article items becomes visible, never merely because it was prefetched.
-    LaunchedEffect(listState, chapterContents) {
+    LaunchedEffect(listState) {
         snapshotFlow {
-            readerFirstVisibleChapterId(
-                listState.layoutInfo.visibleItemsInfo.map { item -> item.key },
+            // firstVisibleItemIndex/offset are observable state even when LazyColumn reuses an
+            // existing layout-info object.  Include them in the observation so crossing from one
+            // body group to the next cannot be missed during an append/re-measure race.
+            Triple(
+                readerFirstVisibleChapterId(
+                    listState.layoutInfo.visibleItemsInfo
+                        .sortedBy { item -> item.index }
+                        .map { item -> item.key },
+                ),
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
             )
-        }.collect { visibleChapterId ->
-            if (visibleChapterId != null) {
-                onVisibleChapterChanged(
+        }.collect { observation ->
+            val visibleChapterId = observation.first
+            if (visibleChapterId != null && visibleReaderChapterId != visibleChapterId) {
+                visibleReaderChapterId = visibleChapterId
+                latestVisibleChapterChanged(
                     visibleChapterId,
-                    chapterContents.firstOrNull { it.chapterId == visibleChapterId }?.title,
+                    latestChapterContents.firstOrNull { it.chapterId == visibleChapterId }?.title,
                 )
             }
         }
@@ -5814,6 +6287,8 @@ private fun ReaderScreen(
     val simulatedPageCoverVisible = remember { mutableStateOf(false) }
     var readerViewportWidthPx by remember { mutableFloatStateOf(0f) }
     var pageTurnInProgress by remember { mutableStateOf(false) }
+    var activeReaderGestureId by remember { mutableLongStateOf(0L) }
+    var lastHandledReaderGestureId by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(state.bookId, state.chapterId) {
         simulatedPageCoverVisible.value = false
@@ -5822,27 +6297,17 @@ private fun ReaderScreen(
     }
 
     fun openReaderPageBoundary(target: ReaderPageBoundaryTarget) {
-        val adjacent = adjacentReaderChapters(state.chapterId, chapters)
-        when (target) {
-            ReaderPageBoundaryTarget.PreviousChapter -> adjacent.previous?.let {
-                onOpenReaderAtPosition(
-                    state.bookId,
-                    it.id,
-                    readerChapterEntryPositionForPageBoundary(target),
-                )
-            }
-            ReaderPageBoundaryTarget.NextChapter -> adjacent.next?.let {
-                onOpenReaderAtPosition(
-                    state.bookId,
-                    it.id,
-                    readerChapterEntryPositionForPageBoundary(target),
-                )
-            }
-            ReaderPageBoundaryTarget.None -> Unit
+        val request = readerAdjacentBoundaryRequest(state.chapterId, chapters, target)
+        request?.let {
+            onOpenReaderAtPosition(
+                state.bookId,
+                it.targetChapterId,
+                readerChapterEntryPositionForPageBoundary(target),
+            )
         }
     }
 
-    fun turnReaderPage(direction: Int) {
+    fun turnReaderPage(direction: Int, gestureId: Long? = null) {
         if (pageTurnInProgress) return
         val adjacent = adjacentReaderChapters(state.chapterId, chapters)
         val alreadyAtBoundary = if (direction < 0) !listState.canScrollBackward else !listState.canScrollForward
@@ -5853,10 +6318,25 @@ private fun ReaderScreen(
             hasNext = adjacent.next != null,
         )
         if (immediateTarget != ReaderPageBoundaryTarget.None) {
+            val canStart = gestureId?.let {
+                readerPageTurnGestureCanStart(
+                    inProgress = pageTurnInProgress,
+                    target = immediateTarget,
+                    gestureId = it,
+                    lastHandledGestureId = lastHandledReaderGestureId,
+                )
+            } ?: readerBoundaryNavigationCanStart(pageTurnInProgress, immediateTarget)
+            if (!canStart) return
+            // Boundary navigation replaces the route immediately. Keep the same in-flight guard
+            // used by animated turns so an unconsumed release cannot be replayed by the newly
+            // composed chapter and skip over multiple adjacent chapters.
+            pageTurnInProgress = true
+            if (gestureId != null) lastHandledReaderGestureId = gestureId
             openReaderPageBoundary(immediateTarget)
             return
         }
         pageTurnInProgress = true
+        if (gestureId != null) lastHandledReaderGestureId = gestureId
         val viewport = (listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset)
             .toFloat()
             .coerceAtLeast(320f)
@@ -5904,7 +6384,7 @@ private fun ReaderScreen(
                         reachedBoundary = reachedBoundary,
                         hasPrevious = adjacent.previous != null,
                         hasNext = adjacent.next != null,
-                    )
+                    ),
                 )
             } finally {
                 simulatedPageCoverVisible.value = false
@@ -5923,7 +6403,7 @@ private fun ReaderScreen(
         turnReaderPage(direction)
     }
     val readerVolumeKeyHost = context as? MainActivity
-    val volumeKeyPagingEnabled = hasReadableBody
+    val volumeKeyPagingEnabled = hasReadableBody && options.volumeKeyPageTurn
     DisposableEffect(readerVolumeKeyHost, volumeKeyPagingEnabled, state.bookId, state.chapterId, chapters) {
         readerVolumeKeyHost?.setReaderVolumeKeyHandler(
             if (volumeKeyPagingEnabled) {
@@ -5979,7 +6459,12 @@ private fun ReaderScreen(
         )
     }
 
-    fun performReaderTap(xFraction: Float, yFraction: Float, uptimeMillis: Long) {
+    fun performReaderTap(
+        xFraction: Float,
+        yFraction: Float,
+        uptimeMillis: Long,
+        gestureId: Long,
+    ) {
         val sameTapTarget = readerChromeTapTargetsOverlap(
             previousXFraction = lastReaderChromeTapXFraction,
             previousYFraction = lastReaderChromeTapYFraction,
@@ -6012,8 +6497,8 @@ private fun ReaderScreen(
         when (readerTapActionAt(options.tapAreas.ifEmpty { defaultReaderTapAreas() }, xFraction)) {
             // Side zones are page-turn controls only in page mode. In continuous reading they must
             // not turn a slightly off-center scroll stop into a surprise jump through the chapter.
-            "pagePrev" -> if (pageTurnEnabled) turnReaderPage(-1)
-            "pageNext" -> if (pageTurnEnabled) turnReaderPage(1)
+            "pagePrev" -> if (pageTurnEnabled) turnReaderPage(-1, gestureId)
+            "pageNext" -> if (pageTurnEnabled) turnReaderPage(1, gestureId)
             "catalog" -> catalogVisible.value = true
             "sidebar" -> {
                 toolbarsVisible.value = true
@@ -6023,6 +6508,23 @@ private fun ReaderScreen(
             }
             else -> Unit
         }
+    }
+
+    // The pointerInput coroutine intentionally survives visual recomposition so it does not
+    // interrupt a drag.  It must therefore resolve the body-tap callback at release time rather
+    // than retaining a lambda that closed over a previous ReaderState/chapter route.
+    val currentReaderTapHandler = rememberUpdatedState<(Float, Float, Long, Long) -> Unit> {
+            xFraction,
+            yFraction,
+            uptimeMillis,
+            gestureId,
+        ->
+        performReaderTap(
+            xFraction = xFraction,
+            yFraction = yFraction,
+            uptimeMillis = uptimeMillis,
+            gestureId = gestureId,
+        )
     }
 
     fun toggleTts() {
@@ -6099,6 +6601,7 @@ private fun ReaderScreen(
                     awaitPointerEventScope {
                         var active = false
                         var moved = false
+                        var pageZoneGesture = false
                         var downPosition = Offset.Zero
                         var downTime = 0L
                         while (true) {
@@ -6106,10 +6609,22 @@ private fun ReaderScreen(
                             val change = event.changes.firstOrNull() ?: continue
                             if (change.pressed && !active) {
                                 active = true
+                                activeReaderGestureId += 1L
                                 moved = false
                                 downPosition = change.position
                                 downTime = change.uptimeMillis
+                                val downFraction = (change.position.x / size.width).coerceIn(0f, 1f)
+                                pageZoneGesture = readerPageModeTapShouldInterceptChild(
+                                    pageTurnEnabled = pageTurnEnabled,
+                                    controlsVisible = toolbarsVisible.value,
+                                    action = readerTapActionAt(
+                                        options.tapAreas.ifEmpty { defaultReaderTapAreas() },
+                                        downFraction,
+                                    ),
+                                )
+                                if (pageZoneGesture) change.consume()
                             } else if (change.pressed && active) {
+                                if (pageZoneGesture) change.consume()
                                 if (readerTapExceedsTouchSlop(
                                         distancePx = (change.position - downPosition).getDistance(),
                                         touchSlopPx = readerTouchSlop,
@@ -6126,6 +6641,7 @@ private fun ReaderScreen(
                                     options.tapAreas.ifEmpty { defaultReaderTapAreas() },
                                     fraction,
                                 )
+                                if (pageZoneGesture) change.consume()
                                 val isShortBodyTap = readerBodyTapIsEligible(
                                     moved = moved || readerTapExceedsTouchSlop(
                                         distancePx = (position - downPosition).getDistance(),
@@ -6139,15 +6655,28 @@ private fun ReaderScreen(
                                     options.radialMenuOpenMode == "longPress" &&
                                     action == "sidebar" &&
                                     duration >= 500L
-                                if ((isShortBodyTap || opensRadialMenu) && (action != null || toolbarsVisible.value)) {
+                                val readerGestureEligible = isShortBodyTap || opensRadialMenu
+                                if (
+                                    readerBodyTapCanHandle(
+                                        isShortBodyTap = readerGestureEligible,
+                                        inlineInteractionInProgress = inlineCommentInteractionActive.get(),
+                                    ) &&
+                                    (action != null || toolbarsVisible.value)
+                                ) {
                                     if (opensRadialMenu) {
                                         radialMenuVisible.value = true
                                         toolbarsVisible.value = false
                                     } else {
-                                        performReaderTap(fraction, verticalFraction, change.uptimeMillis)
+                                        currentReaderTapHandler.value(
+                                            fraction,
+                                            verticalFraction,
+                                            change.uptimeMillis,
+                                            activeReaderGestureId,
+                                        )
                                     }
                                 }
                                 active = false
+                                pageZoneGesture = false
                             }
                         }
                     }
@@ -6165,16 +6694,14 @@ private fun ReaderScreen(
                         message = content.message,
                         retryLabel = retryActionLabel("正文"),
                         onRetry = onRetry,
-                        secondaryLabel = "网页正文",
-                        onSecondary = { onOpenWeb(state.chapterId) }
                     ) }
                     is LoadResult.Success -> readerBodyItems(
                         contents = chapterContents,
                         options = options,
-                        highlightedText = ttsHighlightText,
-                        chapterCommentStates = state.chapterCommentStates,
-                        fallbackCommentState = state,
-                        onRetryChapterComments = onRetryChapterComments,
+                    highlightedText = ttsHighlightText,
+                    chapterCommentStates = state.chapterCommentStates,
+                    fallbackCommentState = state,
+                    onRetryChapterComments = onRetryChapterComments,
                         onDraftChange = onCommentDraftChange,
                         onSubmit = onSubmitComment,
                         onReply = onReplyComment,
@@ -6187,6 +6714,7 @@ private fun ReaderScreen(
                         onOpenLink = onOpenLink,
                         onOpenWeb = onOpenWeb,
                         onPreviewImage = onPreviewImage,
+                        inlineCommentInteractionActive = inlineCommentInteractionActive,
                     )
             }
             if (hasReadableBody && continuousScrollEnabled) {
@@ -6310,11 +6838,6 @@ private fun ReaderScreen(
                     toolbarsVisible.value = false
                     onBack()
                 },
-                onOpenWeb = {
-                    closeReaderSidePanel()
-                    toolbarsVisible.value = false
-                    onOpenWeb(state.chapterId)
-                },
                 onToggleFavorite = onToggleFavorite,
                 onDismiss = ::closeReaderSidePanel,
                 modifier = readerSidePanelModifier,
@@ -6391,7 +6914,10 @@ private fun ReaderScreen(
         }
 
         androidx.compose.animation.AnimatedVisibility(
-            visible = ttsController.state != ReaderTtsState.Stopped && !sidePanelVisible,
+            visible = readerTtsFeedbackVisible(
+                showTts = options.showTts,
+                state = ttsController.state,
+            ) && !sidePanelVisible,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(
@@ -6424,6 +6950,7 @@ private fun ReaderScreen(
             ReaderStatusBar(
                 state = state,
                 chapters = chapters,
+                visibleChapterId = visibleReaderChapterId,
                 options = options,
                 chromeLayout = chromeLayout,
             )
@@ -6676,7 +7203,6 @@ private fun ReaderNavigationPanel(
     favoriteStatus: LoadResult<FavoriteStatus>,
     favoriteLoading: Boolean,
     onOpenBook: () -> Unit,
-    onOpenWeb: () -> Unit,
     onToggleFavorite: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
@@ -6685,7 +7211,7 @@ private fun ReaderNavigationPanel(
     val favoriteEnabled = favoriteStatus is LoadResult.Success && !favoriteLoading
     ReaderSidePanel(title = "导航", palette = palette, onDismiss = onDismiss, modifier = modifier) {
         Text(
-            "离开正文、打开网页正文和收藏操作集中在这里，避免工具栏里出现两个含义相同的网页返回键。",
+            "离开正文和收藏操作集中在这里。",
             style = MaterialTheme.typography.bodyMedium,
             color = palette.meta,
         )
@@ -6693,10 +7219,6 @@ private fun ReaderNavigationPanel(
             when (label) {
                 "书本页" -> Button(
                     onClick = onOpenBook,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text(label) }
-                "网页正文" -> OutlinedButton(
-                    onClick = onOpenWeb,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(label) }
                 else -> OutlinedButton(
@@ -6743,6 +7265,7 @@ private fun ReaderTopBar(
 private fun ReaderStatusBar(
     state: ReaderState,
     chapters: List<Chapter>,
+    visibleChapterId: Long?,
     options: ReaderUiOptions,
     chromeLayout: ReaderChromeLayout,
     modifier: Modifier = Modifier,
@@ -6757,7 +7280,8 @@ private fun ReaderStatusBar(
             clockLabel = currentClockLabel()
         }
     }
-    val bookProgress = readerBookProgressFraction(state.chapterId, chapters)
+    val statusChapterId = readerStatusChapterId(state.chapterId, visibleChapterId)
+    val bookProgress = readerBookProgressFraction(statusChapterId, chapters)
     val progressLabel = String.format(java.util.Locale.US, "%.2f%%", bookProgress * 100f)
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -6779,7 +7303,7 @@ private fun ReaderStatusBar(
                 color = palette.sidebarText.copy(alpha = 0.72f),
             )
             Text(
-                text = readerChapterProgressLabel(state.chapterId, chapters),
+                text = readerChapterProgressLabel(statusChapterId, chapters),
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.labelSmall,
                 color = palette.sidebarText.copy(alpha = 0.72f),
@@ -6814,6 +7338,8 @@ private fun ReaderStatusBar(
 private fun ReaderChapterCommentsSection(
     chapterId: Long,
     commentState: ReaderChapterCommentState,
+    bookReferences: Map<Long, LoadResult<NovelCard>> = commentState.bookReferences,
+    inlineCommentInteractionActive: AtomicBoolean,
     onRetry: () -> Unit,
     onDraftChange: (String) -> Unit,
     onSubmit: () -> Unit,
@@ -6827,13 +7353,21 @@ private fun ReaderChapterCommentsSection(
     onOpenLink: (String) -> Unit,
     onOpenWeb: () -> Unit,
 ) {
+    val spoilerPreference = LocalForumSpoilerPreference.current
     val comments = commentState.comments
     var expandedThreadIds by remember(chapterId) { mutableStateOf(emptySet<Long>()) }
-    Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)) {
+    Column(
+        modifier = Modifier.readerInlineCommentInteractionGuard(inlineCommentInteractionActive),
+        verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
+    ) {
         NpSectionHeader(
             title = chapterCommentsSectionTitle(),
             actionLabel = chapterCommentsFallbackLabel(),
             onAction = onOpenWeb
+        )
+        ForumSpoilerToggle(
+            hideSpoilers = spoilerPreference.hideSpoilers,
+            onHideSpoilersChange = spoilerPreference.onChange,
         )
         InlineCommentComposer(
             draft = commentState.draft,
@@ -6866,6 +7400,7 @@ private fun ReaderChapterCommentsSection(
                         threads.forEach { thread ->
                             ChapterCommentThreadBlock(
                                 thread = thread,
+                                bookReferences = bookReferences,
                                 expanded = expandedThreadIds.contains(thread.comment.id),
                                 onToggleReplies = {
                                     val next = expandedThreadIds.toMutableSet()
@@ -7007,18 +7542,19 @@ private fun ReaderActionRailLegacy(
                 onClick = onToggleReadingMode,
                 modifier = Modifier.weight(1f),
             )
-            ReaderRailAction(
-                icon = Icons.Filled.RecordVoiceOver,
-                label = when (ttsState) {
-                    ReaderTtsState.Speaking -> "停止"
-                    ReaderTtsState.Loading -> "准备中"
-                    ReaderTtsState.Error -> "听书异常"
-                    ReaderTtsState.Stopped -> labels[8]
-                },
-                enabled = options.showTts,
-                onClick = onToggleTts,
-                modifier = Modifier.weight(1f),
-            )
+            if (options.showTts) {
+                ReaderRailAction(
+                    icon = Icons.Filled.RecordVoiceOver,
+                    label = when (ttsState) {
+                        ReaderTtsState.Speaking -> "停止"
+                        ReaderTtsState.Loading -> "准备中"
+                        ReaderTtsState.Error -> "听书异常"
+                        ReaderTtsState.Stopped -> labels[8]
+                    },
+                    onClick = onToggleTts,
+                    modifier = Modifier.weight(1f),
+                )
+            }
             ReaderRailAction(
                 icon = if (fullscreen) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
                 label = if (fullscreen) "退出全屏" else labels[9],
@@ -7084,7 +7620,7 @@ private fun ReaderActionRailV2(
                     .padding(vertical = NovalPieSpacing.xs),
                 verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xxs),
             ) {
-                readerRailActionSpecs().forEach { spec ->
+                readerVisibleRailActionSpecs(showTts = options.showTts).forEach { spec ->
                     val icon = when (spec.id) {
                         ReaderRailActionId.Close -> Icons.Filled.Close
                         ReaderRailActionId.Help -> Icons.Filled.HelpOutline
@@ -7478,7 +8014,7 @@ private fun formatReaderOptionDecimal(value: Float): String {
 @Composable
 private fun ToolsScreen(
     state: ToolsState,
-    user: LoadResult<UserProfile>,
+    user: UserProfile?,
     hasAuthToken: Boolean,
     appThemeMode: AppThemeMode,
     chineseVariant: com.novalpie.nativeapp.model.ChineseVariant,
@@ -7490,8 +8026,7 @@ private fun ToolsScreen(
     onOpenMessage: (SiteMessage) -> Unit,
     onOpenRoute: (String) -> Unit
 ) {
-    val profile = (user as? LoadResult.Success)?.value
-    val isAdmin = isAdminProfile(profile)
+    val isAdmin = isAdminProfile(user)
     val entries = toolsEntries(isAdmin)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -8906,10 +9441,14 @@ private fun BookDetailHero(
     favoriteStatus: LoadResult<FavoriteStatus>,
     progress: ReaderProgress?,
     onPreviewCover: () -> Unit,
+    onSearchAuthor: (String) -> Unit,
+    onSearchTag: (String) -> Unit,
 ) {
     // Detail still renders the source's outer/card layer. The inner layer is reserved for an
     // explicit stationary long press, matching the website's full-screen image viewer.
     val displayCoverUrl = novelThumbnailCoverUrl(book)
+    val heroFacts = bookDetailHeroFacts(book)
+    val displayTags = bookDetailDisplayTags(book)
     val coverWidth = NovalPieSize.coverWidthHero
     NpCard {
         Row(horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.md)) {
@@ -8935,11 +9474,31 @@ private fun BookDetailHero(
                 novelOriginalTitleLabel(book)?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                book.author?.takeIf { it.isNotBlank() }?.let {
-                    Text("作者 · $it", style = MaterialTheme.typography.bodyMedium)
+                book.author?.takeIf { it.isNotBlank() }?.let { author ->
+                    Text(
+                        text = "作者 · $author",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(NovalPieRadius.xs))
+                            .clickable { onSearchAuthor(author) }
+                        .padding(vertical = NovalPieSpacing.xxs),
+                    )
                 }
-                book.status?.takeIf { it.isNotBlank() }?.let {
-                    Text("状态 · $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (heroFacts.isNotEmpty()) {
+                    NpChipRow(
+                        horizontalSpacing = NovalPieSpacing.xs,
+                        verticalSpacing = NovalPieSpacing.xxs,
+                    ) {
+                        heroFacts.forEach { fact ->
+                            val tone = when {
+                                fact.startsWith("状态:") -> NpChipTone.Status
+                                fact.startsWith("来源:") -> NpChipTone.Source
+                                else -> NpChipTone.Neutral
+                            }
+                            NpChip(label = fact, tone = tone)
+                        }
+                    }
                 }
                 BookDetailFavoriteChip(favoriteStatus)
                 progress?.chapterTitle?.takeIf { it.isNotBlank() }?.let {
@@ -8947,9 +9506,15 @@ private fun BookDetailHero(
                 }
             }
         }
-        if (book.tags.isNotEmpty()) {
+        if (displayTags.isNotEmpty()) {
             NpChipRow {
-                book.tags.forEach { tag -> NpChip(label = tag, tone = NpChipTone.Tag) }
+                displayTags.forEach { tag ->
+                    NpChip(
+                        label = tag,
+                        tone = NpChipTone.Tag,
+                        onClick = { onSearchTag(tag) },
+                    )
+                }
             }
         }
     }
@@ -9023,6 +9588,7 @@ private fun BookDetailIntroduction(
     onManageChapters: () -> Unit,
     onAppendChapters: () -> Unit,
 ) {
+    val introductionFacts = bookDetailIntroductionFacts(book)
     NpCard {
         Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.md)) {
             Text(
@@ -9031,22 +9597,15 @@ private fun BookDetailIntroduction(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.semantics { heading() },
             )
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs),
-                verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs),
-            ) {
-                bookDetailFacts(book).forEach { fact ->
-                    NpChip(label = fact, tone = NpChipTone.Neutral)
-                }
-            }
-            if (book.tags.isNotEmpty()) {
+            if (introductionFacts.isNotEmpty()) {
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs),
                     verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs),
                 ) {
-                    book.tags.forEach { tag -> NpChip(label = tag, tone = NpChipTone.Tag) }
+                    introductionFacts.forEach { fact ->
+                        NpChip(label = fact, tone = NpChipTone.Neutral)
+                    }
                 }
             }
             Text(
@@ -9117,10 +9676,14 @@ private fun BookDetailBottomActionBar(
     onAppendChapters: () -> Unit,
     onDownloadEpub: () -> Unit,
     onDownloadTxt: () -> Unit,
+    onToggleDownloadPause: () -> Unit,
+    onCancelDownload: () -> Unit,
+    onRetryDownload: () -> Unit,
     onOpenWeb: () -> Unit,
 ) {
     val context = LocalContext.current
     val isFavorited = (favoriteStatus as? LoadResult.Success)?.value?.isFavorited
+    val downloadStateForBook = nativeEpubDownloadState.takeIf { it.bookId == bookId }
     var menuExpanded by remember(bookId) { mutableStateOf(false) }
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -9129,22 +9692,49 @@ private fun BookDetailBottomActionBar(
         shadowElevation = 4.dp,
     ) {
         Column {
-            if (nativeEpubDownloadState.busy && nativeEpubDownloadState.bookId == bookId) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            if (downloadStateForBook?.busy == true) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = NovalPieSpacing.screenHorizontal,
+                            end = NovalPieSpacing.xs,
+                            top = NovalPieSpacing.xs,
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    LinearProgressIndicator(modifier = Modifier.weight(1f))
+                    TextButton(
+                        onClick = onToggleDownloadPause,
+                    ) {
+                        Text(if (downloadStateForBook.paused) "继续" else "暂停")
+                    }
+                    TextButton(onClick = onCancelDownload) { Text("取消") }
+                }
             }
-            if (nativeEpubDownloadState.message != null && nativeEpubDownloadState.bookId == bookId) {
+            if (downloadStateForBook?.message != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = NovalPieSpacing.screenHorizontal,
+                            end = NovalPieSpacing.xs,
+                            top = NovalPieSpacing.xs,
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                 Text(
-                    text = nativeEpubDownloadState.message.orEmpty(),
+                    text = downloadStateForBook.message.orEmpty(),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(
-                        start = NovalPieSpacing.screenHorizontal,
-                        end = NovalPieSpacing.screenHorizontal,
-                        top = NovalPieSpacing.xs,
-                    ),
+                    modifier = Modifier.weight(1f),
                 )
+                if (!downloadStateForBook.busy && downloadStateForBook.canRetry) {
+                    TextButton(onClick = onRetryDownload) { Text("重试") }
+                }
+                }
             }
             Row(
                 modifier = Modifier
@@ -9515,6 +10105,7 @@ private fun BookCommentsSection(
     title: String,
     state: BookDetailState,
     comments: LoadResult<List<ChapterComment>>,
+    bookReferences: Map<Long, LoadResult<NovelCard>>,
     onRetry: () -> Unit,
     onDraftChange: (String) -> Unit,
     onSubmit: () -> Unit,
@@ -9528,6 +10119,7 @@ private fun BookCommentsSection(
     onOpenLink: (String) -> Unit,
     onOpenWeb: () -> Unit
 ) {
+    val spoilerPreference = LocalForumSpoilerPreference.current
     // A long composition box used to occupy the first screen of the \"书评\" tab, so existing
     // reviews looked missing until the user scrolled past it. Keep writing available, but lead
     // with the source reviews and reveal the editor deliberately.
@@ -9572,6 +10164,10 @@ private fun BookCommentsSection(
                 modifier = Modifier.semantics { contentDescription = bookCommentsFallbackLabel() }
             ) { Text("网页") }
         }
+        ForumSpoilerToggle(
+            hideSpoilers = spoilerPreference.hideSpoilers,
+            onHideSpoilersChange = spoilerPreference.onChange,
+        )
         if (composerVisible) {
             ForumCommentComposer(
                 draft = state.commentDraft,
@@ -9600,6 +10196,7 @@ private fun BookCommentsSection(
                         threads.forEach { thread ->
                             ChapterCommentThreadBlock(
                                 thread = thread,
+                                bookReferences = bookReferences,
                                 expanded = expandedThreadIds.contains(thread.comment.id),
                                 onToggleReplies = {
                                     val next = expandedThreadIds.toMutableSet()
@@ -9633,6 +10230,7 @@ private fun BookCommentsSection(
 @Composable
 private fun ChapterCommentCard(
     comment: ChapterComment,
+    bookReferences: Map<Long, LoadResult<NovelCard>> = emptyMap(),
     onLike: () -> Unit,
     onDislike: () -> Unit,
     onEmoji: () -> Unit,
@@ -9697,6 +10295,7 @@ private fun ChapterCommentCard(
             content = comment.content,
             style = MaterialTheme.typography.bodyMedium,
             onOpenLink = onOpenLink,
+            bookReferences = bookReferences,
             emptyLabel = "评论内容暂时为空",
         )
         ForumLinkPreviewRows(links, onOpenLink)
@@ -9714,6 +10313,7 @@ private fun ChapterCommentCard(
 @Composable
 private fun ChapterCommentThreadBlock(
     thread: ChapterCommentThread,
+    bookReferences: Map<Long, LoadResult<NovelCard>> = emptyMap(),
     expanded: Boolean,
     onToggleReplies: () -> Unit,
     onLike: (ChapterComment) -> Unit,
@@ -9728,6 +10328,7 @@ private fun ChapterCommentThreadBlock(
     Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs)) {
         ChapterCommentCard(
             comment = thread.comment,
+            bookReferences = bookReferences,
             onLike = { onLike(thread.comment) },
             onDislike = { onDislike(thread.comment) },
             onEmoji = { onEmoji(thread.comment) },
@@ -9758,6 +10359,7 @@ private fun ChapterCommentThreadBlock(
                     ) {
                         ChapterCommentCard(
                             comment = reply,
+                            bookReferences = bookReferences,
                             onLike = { onLike(reply) },
                             onDislike = { onDislike(reply) },
                             onEmoji = { onEmoji(reply) },
@@ -9825,12 +10427,15 @@ internal fun BookCover(
     val shape = RoundedCornerShape(6.dp)
     val fallbackText = bookCoverFallbackText(title)
     var previewVisible by remember(previewUrl) { mutableStateOf(false) }
-    var coverFailed by remember(coverUrl) { mutableStateOf(false) }
+    val imagePreviewActive = LocalImagePreviewActive.current || previewVisible
+    var coverFailed by remember(coverUrl, requestSize, staticImage, imagePreviewActive) {
+        mutableStateOf(false)
+    }
     val context = LocalContext.current
-    val imageRequest = remember(coverUrl, context, requestSize, staticImage) {
+    val imageRequest = remember(coverUrl, context, requestSize, staticImage, imagePreviewActive) {
         coverUrl?.takeIf { it.isNotBlank() }?.let { url ->
             val targetSize = requestSize ?: novalPieBookCoverTargetSize(null, null)
-            if (staticImage) {
+            if (staticImage || imagePreviewActive) {
                 novalPieStaticImageRequest(
                     context = context,
                     url = url,
@@ -9929,6 +10534,31 @@ private enum class StationaryLongPressOutcome {
 }
 
 /**
+ * Marks a pointer stream that begins inside an inline chapter-comment surface without consuming
+ * it. The reader's ancestor observes the initial pass before this modifier; by the matching up
+ * event this flag is already true, so the reader does not also toggle its chrome while the child
+ * action still receives its normal click.
+ */
+private fun Modifier.readerInlineCommentInteractionGuard(
+    active: AtomicBoolean,
+): Modifier = pointerInput(active) {
+    awaitEachGesture {
+        val firstEvent = awaitPointerEvent(PointerEventPass.Initial)
+        if (firstEvent.changes.none { it.pressed }) return@awaitEachGesture
+
+        active.set(true)
+        try {
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.isEmpty() || event.changes.none { it.pressed }) break
+            }
+        } finally {
+            active.set(false)
+        }
+    }
+}
+
+/**
  * Watches a still pointer without taking ownership of ordinary taps or scrolling. The parent
  * card remains the click target; only a stationary press held past the platform long-press
  * threshold opens the image preview.
@@ -9976,16 +10606,17 @@ private fun Modifier.longPressOnly(
             // produces no move event. Consume the eventual up so the ancestor card cannot also
             // perform its ordinary click after the preview opens.
             onLongPress()
-            while (true) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                if (event.changes.isEmpty() || event.changes.none { it.pressed }) {
-                    event.changes.forEach { it.consume() }
-                    break
-                }
+            // Do not leave an unbounded pointer-event loop behind if the dialog steals/cancels the
+            // stream or an emulator drops the final UP event. The normal path still consumes UP so
+            // the parent card cannot also navigate after opening the preview.
+            withTimeoutOrNull(LONG_PRESS_RELEASE_WAIT_TIMEOUT_MILLIS) {
+                waitForUpOrCancellation(pass = PointerEventPass.Initial)?.consume()
             }
         }
     }
 }
+
+private const val LONG_PRESS_RELEASE_WAIT_TIMEOUT_MILLIS = 15_000L
 
 @Composable
 private fun BookCoverLoadingFallback(value: String) {
@@ -10155,6 +10786,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readerBodyItems(
     onOpenLink: (String) -> Unit,
     onOpenWeb: (Long) -> Unit,
     onPreviewImage: (ReaderContentBlock.Image, String) -> Unit,
+    inlineCommentInteractionActive: AtomicBoolean,
 ) {
     val textLayout = readerTextLayout(options)
     var imageOrdinal = 0
@@ -10225,6 +10857,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readerBodyItems(
                     chapterId = chapter.chapterId,
                     commentState = chapterCommentStates[chapter.chapterId]
                         ?: readerChapterCommentState(fallbackCommentState, chapter.chapterId),
+                    bookReferences = (chapterCommentStates[chapter.chapterId]
+                        ?: readerChapterCommentState(fallbackCommentState, chapter.chapterId))
+                        .bookReferences,
                     onRetry = { onRetryChapterComments(chapter.chapterId) },
                     onDraftChange = { value -> onDraftChange(chapter.chapterId, value) },
                     onSubmit = { onSubmit(chapter.chapterId) },
@@ -10237,6 +10872,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readerBodyItems(
                     onOpenUser = onOpenUser,
                     onOpenLink = onOpenLink,
                     onOpenWeb = { onOpenWeb(chapter.chapterId) },
+                    inlineCommentInteractionActive = inlineCommentInteractionActive,
                 )
             }
         }
@@ -10419,6 +11055,28 @@ private fun ReaderIllustration(
 ) {
     val label = readerIllustrationLabel(image.alt, ordinal)
     val touchSlop = LocalViewConfiguration.current.touchSlop
+    val context = LocalContext.current
+    val imagePreviewActive = LocalImagePreviewActive.current
+    val imageRequest = remember(image.url, context, imagePreviewActive) {
+        if (imagePreviewActive) {
+            // Only the full-screen preview needs the original animated stream. The visible
+            // article is covered while it is open, so a bounded first frame avoids decoding the
+            // same animation in both windows at once.
+            novalPieStaticImageRequest(
+                context = context,
+                url = image.url,
+                widthPx = 1024,
+                heightPx = 1536,
+            )
+        } else {
+            ImageRequest.Builder(context)
+                .data(image.url)
+                .size(2048, 2048)
+                .precision(Precision.EXACT)
+                .crossfade(true)
+                .build()
+        }
+    }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -10430,12 +11088,7 @@ private fun ReaderIllustration(
     ) {
         Column {
             SubcomposeAsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(image.url)
-                    .size(2048, 2048)
-                    .precision(Precision.EXACT)
-                    .crossfade(true)
-                    .build(),
+                model = imageRequest,
                 contentDescription = readerIllustrationContentDescription(label),
                 modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 720.dp),
                 contentScale = ContentScale.Fit,

@@ -166,6 +166,31 @@ class NativeEpubArchiveWriterTest {
     }
 
     @Test
+    fun cleanupRemovesStaleNativeEpubWorkDirectoriesButKeepsUnrelatedDirectories() {
+        val root = File.createTempFile("novalpie-work-root-", ".dir").apply {
+            delete()
+            mkdirs()
+        }
+        val staleWork = File(root, "354491-123456789-987654321").apply {
+            mkdirs()
+            File(this, "novalpie-asset-stale.bin").writeBytes(byteArrayOf(1))
+        }
+        val unrelated = File(root, "keep-me").apply {
+            mkdirs()
+            File(this, "data.bin").writeBytes(byteArrayOf(2))
+        }
+
+        try {
+            assertEquals(1, cleanupNativeEpubTempFiles(root))
+            assertFalse(staleWork.exists())
+            assertTrue(unrelated.exists())
+            assertTrue(File(unrelated, "data.bin").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun stagedAssetCacheEvictsOnlyUnprotectedFilesAndDeletesThem() {
         fun staged(name: String, size: Long): NativeEpubStagedFile {
             val file = File.createTempFile("novalpie-cache-test-", name)
@@ -249,7 +274,7 @@ class NativeEpubArchiveWriterTest {
     }
 
     @Test
-    fun stagesOriginalBytesWithStoredMetadataInOneRead() {
+    fun stagesOriginalBytesWithStoredMetadataInOneRead() = runBlocking {
         val bytes = ByteArray(32_769) { index -> (index * 31).toByte() }
         val expectedCrc = CRC32().apply { update(bytes) }.value
         val destination = File.createTempFile("novalpie-stage-test-", ".asset")
@@ -271,7 +296,7 @@ class NativeEpubArchiveWriterTest {
     }
 
     @Test
-    fun doesNotExposePartiallyStagedFileBeforeCopyCompletes() {
+    fun doesNotExposePartiallyStagedFileBeforeCopyCompletes() = runBlocking {
         val bytes = ByteArray(64 * 1024) { index -> (index * 17).toByte() }
         val destination = File.createTempFile("novalpie-stage-atomic-test-", ".asset").apply {
             delete()

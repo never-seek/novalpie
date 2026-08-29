@@ -23,8 +23,8 @@ android {
         applicationId = "com.novalpie.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2026082401
-        versionName = "2.0.0-native-beta4"
+        versionCode = 2026082901
+        versionName = "2.0.0-native-beta5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -98,6 +98,17 @@ android {
             "/META-INF/LICENSE*",
         )
     }
+}
+
+// Robolectric downloads framework jars lazily at test runtime. Its default Maven
+// cache follows the user-profile junction on this machine, which is not writable
+// in the project sandbox. Keep the test-only cache alongside build outputs so
+// every Debug/Release unit-test process has a stable, project-local location.
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    systemProperty(
+        "maven.repo.local",
+        rootProject.layout.buildDirectory.dir("robolectric-m2").get().asFile.absolutePath,
+    )
 }
 
 dependencies {

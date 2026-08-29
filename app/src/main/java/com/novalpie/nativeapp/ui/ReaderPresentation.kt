@@ -6,12 +6,42 @@ import androidx.compose.ui.graphics.luminance
 import com.novalpie.nativeapp.data.ReaderSettingsStore
 import com.novalpie.nativeapp.model.Chapter
 import com.novalpie.nativeapp.model.ChapterComment
+import com.novalpie.nativeapp.model.ForumActionResult
 import com.novalpie.nativeapp.model.LoadResult
 import com.novalpie.nativeapp.model.ReaderChapterCacheState
 import com.novalpie.nativeapp.model.ReaderChapterContent
 import com.novalpie.nativeapp.model.ReaderContent
 import com.novalpie.nativeapp.model.ReaderTapArea
 import kotlin.math.abs
+
+/** Keep a chapter-comment composer retryable when the source rejects or loses a submission. */
+internal fun readerChapterCommentAfterSubmission(
+    state: ReaderChapterCommentState,
+    result: Result<ForumActionResult>,
+): ReaderChapterCommentState = result.fold(
+    onSuccess = { action ->
+        if (!action.success) {
+            state.copy(
+                actionLoading = false,
+                actionMessage = action.message ?: "章节评论提交失败",
+            )
+        } else {
+            state.copy(
+                draft = "",
+                replyingToCommentId = null,
+                replyingToName = null,
+                actionLoading = false,
+                actionMessage = action.message ?: "评论已提交",
+            )
+        }
+    },
+    onFailure = {
+        state.copy(
+            actionLoading = false,
+            actionMessage = "章节评论提交失败：${it.message ?: "未知错误"}",
+        )
+    },
+)
 
 /** The compact reader header shows the work title; chapter progress belongs in the footer. */
 internal fun readerTopBarTitle(bookTitle: String?): String =
@@ -62,9 +92,11 @@ internal fun readerVolumeKeyAction(
     action: Int,
     repeatCount: Int,
     readerActive: Boolean,
+    volumeKeyPagingEnabled: Boolean = true,
 ): ReaderVolumeKeyAction {
     if (
         !readerActive ||
+        !volumeKeyPagingEnabled ||
         (keyCode != KeyEvent.KEYCODE_VOLUME_UP && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN)
     ) {
         return ReaderVolumeKeyAction.Ignore
@@ -234,6 +266,15 @@ internal fun readerBodyTapIsEligible(
     longPressTimeoutMillis: Long,
 ): Boolean = !moved && durationMillis < longPressTimeoutMillis.coerceAtLeast(1L)
 
+/**
+ * Reader-wide chrome only owns ordinary article taps. Inline chapter-comment controls receive the
+ * same pointer stream, so their press must not also open or dismiss the reader rail.
+ */
+internal fun readerBodyTapCanHandle(
+    isShortBodyTap: Boolean,
+    inlineInteractionInProgress: Boolean,
+): Boolean = isShortBodyTap && !inlineInteractionInProgress
+
 /** A quick second tap at the same point should not immediately undo the toolbar opened by the first one. */
 internal fun readerShouldToggleChrome(
     lastToggleUptimeMillis: Long,
@@ -323,6 +364,18 @@ internal fun readerTapActionAt(areas: List<ReaderTapArea>, xFraction: Float): St
     }
 }
 
+/**
+ * In page mode the left/right rail is a page-turn surface, even when the article currently shows
+ * a clickable chapter-comment action beneath that rail. Consume that child gesture before it can
+ * open the WebView fallback or submit another comment by accident. Continuous reading and an
+ * already-open reader toolbar keep their ordinary child interactions.
+ */
+internal fun readerPageModeTapShouldInterceptChild(
+    pageTurnEnabled: Boolean,
+    controlsVisible: Boolean,
+    action: String?,
+): Boolean = pageTurnEnabled && !controlsVisible && action in setOf("pagePrev", "pageNext")
+
 internal fun readerPageAnimationDurationMs(effect: String): Int = when (effect) {
     "none" -> 0
     "cover" -> 280
@@ -353,11 +406,10 @@ internal fun readerToolbarLabels(): List<String> = readerActionRailLabels()
 internal fun readerReadingModeActionLabel(pageTurnMode: Boolean): String =
     if (pageTurnMode) "翻页" else "滑动"
 
-/** Navigation is where the native reader keeps its two non-duplicated escape routes. */
+/** Navigation keeps only native reader exits; broken webpage-body fallback is intentionally absent. */
 internal fun readerNavigationPanelLabels(showFavoriteAction: Boolean): List<String> =
     buildList {
         add("书本页")
-        add("网页正文")
         if (showFavoriteAction) add("收藏")
     }
 
@@ -379,6 +431,12 @@ internal fun readerTtsSystemSettingsLabel(): String = "系统设置"
 
 /** Android's public Settings class does not expose this legacy system route as a constant. */
 internal const val READER_TTS_SYSTEM_SETTINGS_ACTION = "com.android.settings.TTS_SETTINGS"
+
+/** The TTS feedback surface belongs to the same user-visible switch as the rail entry. */
+internal fun readerTtsFeedbackVisible(
+    showTts: Boolean,
+    state: ReaderTtsState,
+): Boolean = showTts && state != ReaderTtsState.Stopped
 
 /** Legacy presentation entry point now maps to the source-style vertical rail. */
 internal fun readerCompactToolbarLabels(fontSizeSp: Int, theme: String): List<String> =
@@ -496,10 +554,49 @@ internal fun readerChapterCommentState(
         ReaderChapterCommentState()
     }
 
+/**
+ * Mutates only one chapter's comment state. The continuous reader window, scroll anchor,
+ * loaded chapters and other chapter comment states remain untouched after a comment action.
+ */
+internal fun readerStateWithChapterCommentState(
+    state: ReaderState,
+    chapterId: Long,
+    transform: (ReaderChapterCommentState) -> ReaderChapterCommentState,
+): ReaderState {
+    if (chapterId <= 0L) return state
+    val current = readerChapterCommentState(state, chapterId)
+    return state.copy(
+        chapterCommentStates = state.chapterCommentStates + (chapterId to transform(current)),
+    )
+}
+
 internal enum class ReaderPageBoundaryTarget {
     None,
     PreviousChapter,
     NextChapter,
+}
+
+/** The concrete adjacent chapter selected from the reader's currently visible route. */
+internal data class ReaderAdjacentBoundaryRequest(
+    val sourceChapterId: Long,
+    val targetChapterId: Long,
+)
+
+internal fun readerAdjacentBoundaryRequest(
+    currentChapterId: Long,
+    chapters: List<Chapter>,
+    target: ReaderPageBoundaryTarget,
+): ReaderAdjacentBoundaryRequest? {
+    val adjacent = adjacentReaderChapters(currentChapterId, chapters)
+    val targetChapterId = when (target) {
+        ReaderPageBoundaryTarget.PreviousChapter -> adjacent.previous?.id
+        ReaderPageBoundaryTarget.NextChapter -> adjacent.next?.id
+        ReaderPageBoundaryTarget.None -> null
+    } ?: return null
+    return ReaderAdjacentBoundaryRequest(
+        sourceChapterId = currentChapterId,
+        targetChapterId = targetChapterId,
+    )
 }
 
 /** A page-boundary back step resumes the chapter at its terminal page; ordinary opens start at top. */
@@ -538,6 +635,24 @@ internal fun readerPageBoundaryTarget(
         else -> ReaderPageBoundaryTarget.None
     }
 }
+
+/** A boundary route replacement must be dispatched once per physical tap sequence. */
+internal fun readerBoundaryNavigationCanStart(
+    inProgress: Boolean,
+    target: ReaderPageBoundaryTarget,
+): Boolean = !inProgress && target != ReaderPageBoundaryTarget.None
+
+/**
+ * A route replacement can recompose the reader before the original pointer release has fully
+ * drained from Compose's input pipeline.  Keep the physical gesture identity in the gate so the
+ * replacement chapter cannot consume that same release as another page turn.
+ */
+internal fun readerPageTurnGestureCanStart(
+    inProgress: Boolean,
+    target: ReaderPageBoundaryTarget,
+    gestureId: Long,
+    lastHandledGestureId: Long?,
+): Boolean = readerBoundaryNavigationCanStart(inProgress, target) && gestureId != lastHandledGestureId
 
 internal fun readerContinuousScrollCanTrigger(
     continuousScrollEnabled: Boolean,
@@ -586,17 +701,29 @@ internal fun readerBodyEndSentinelKey(
     return "reader-body-end-sentinel-$last-${contents.size}"
 }
 
-/** Returns the first article chapter that is actually visible, never a comments or sentinel item. */
+/**
+ * Returns the chapter at the top of the reader viewport.  Inline comments belong to the chapter
+ * immediately above them, so they must keep that chapter's footer/progress label alive instead of
+ * making the reader fall back to the route's opening chapter between appended bodies.
+ */
 internal fun readerFirstVisibleChapterId(itemKeys: Iterable<Any?>): Long? =
-    itemKeys.firstNotNullOfOrNull { key -> readerChapterIdFromItemKey(key as? String) }
+    itemKeys.firstNotNullOfOrNull(::readerChapterIdFromItemKey)
 
-internal fun readerChapterIdFromItemKey(key: String?): Long? {
-    val value = key ?: return null
+/**
+ * A continuous reader keeps its navigation route anchored to the chapter that opened the window,
+ * but its footer must describe the article currently on screen after later chapters are appended.
+ */
+internal fun readerStatusChapterId(routeChapterId: Long, visibleChapterId: Long?): Long =
+    visibleChapterId?.takeIf { it > 0L } ?: routeChapterId
+
+internal fun readerChapterIdFromItemKey(key: Any?): Long? {
+    val value = key as? String ?: return null
     val prefix = listOf(
         "reader-title-",
         "reader-text-",
         "reader-image-",
         "reader-chapter-finish-",
+        "reader-chapter-comments-",
     ).firstOrNull(value::startsWith) ?: return null
     val remainder = value.removePrefix(prefix)
     return remainder.substringBefore('-').toLongOrNull()

@@ -1,6 +1,8 @@
 package com.novalpie.nativeapp.data
 
 import androidx.test.core.app.ApplicationProvider
+import com.novalpie.nativeapp.model.FavoriteEntry
+import com.novalpie.nativeapp.model.NovelCard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -86,11 +88,167 @@ class ReaderProgressStoreTest {
             chapterId = 1001,
             chapterTitle = "A-1",
             chapterNumber = 5,
+            chapterCountAtLastRead = 42,
         )
 
         val progress = store.load(bookId = 101)
 
         assertEquals(5, progress?.chapterNumber)
+        assertEquals(42, progress?.chapterCountAtLastRead)
         assertEquals(5, store.loadRecent(limit = 1).single().chapterNumber)
+        assertEquals(42, store.loadRecent(limit = 1).single().chapterCountAtLastRead)
+    }
+
+    @Test
+    fun doesNotCarryACompletedCatalogueBaselineToAnotherChapterWithoutAConfirmedDirectory() {
+        store.save(
+            bookId = 101,
+            chapterId = 1001,
+            chapterTitle = "A-1",
+            chapterNumber = 42,
+            chapterCountAtLastRead = 42,
+        )
+        store.save(
+            bookId = 101,
+            chapterId = 1002,
+            chapterTitle = "A-2",
+            chapterNumber = 43,
+        )
+
+        val progress = store.load(bookId = 101)
+
+        assertEquals(43, progress?.chapterNumber)
+        assertNull(progress?.chapterCountAtLastRead)
+    }
+
+    @Test
+    fun clearingOneBookKeepsOtherReadingProgress() {
+        store.save(101, 1001, "A-1", bookTitle = "A Book")
+        store.save(202, 2002, "B-2", bookTitle = "B Book")
+
+        store.clear(bookId = 202)
+
+        assertNull(store.load(bookId = 202))
+        assertEquals(1001L, store.load(bookId = 101)?.chapterId)
+        assertEquals(listOf(101L), store.loadRecent(limit = 5).map { it.bookId })
+    }
+
+    @Test
+    fun backfillsCompletedCatalogueForLegacyProgressWhenSourceAlsoReportsCompleted() {
+        store.save(
+            bookId = 101,
+            chapterId = 1001,
+            chapterTitle = "Final",
+            bookTitle = "Completed Book",
+            chapterNumber = 84,
+        )
+
+        val changed = store.backfillCompletedFavoriteCatalogues(
+            listOf(
+                FavoriteEntry(
+                    book = NovelCard(id = 101, title = "Completed Book"),
+                    lastChapter = 84,
+                    chapterCount = 84,
+                )
+            )
+        )
+
+        assertEquals(1, changed)
+        assertEquals(84, store.load(bookId = 101)?.chapterCountAtLastRead)
+    }
+
+    @Test
+    fun backfillsCompletedCatalogueWhenNativeReaderReachedTheEndAndSourceHasNoProgress() {
+        store.save(
+            bookId = 101,
+            chapterId = 1001,
+            chapterTitle = "Final",
+            bookTitle = "Completed Book",
+            chapterNumber = 84,
+        )
+
+        val changed = store.backfillCompletedFavoriteCatalogues(
+            listOf(
+                FavoriteEntry(
+                    book = NovelCard(id = 101, title = "Completed Book"),
+                    chapterCount = 84,
+                )
+            )
+        )
+
+        assertEquals(1, changed)
+        assertEquals(84, store.load(bookId = 101)?.chapterCountAtLastRead)
+    }
+
+    @Test
+    fun backfillsCompletedCatalogueWhenSourceUsesZeroForNoWebReadingProgress() {
+        store.save(
+            bookId = 101,
+            chapterId = 1001,
+            chapterTitle = "Final",
+            bookTitle = "Completed Book",
+            chapterNumber = 84,
+        )
+
+        val changed = store.backfillCompletedFavoriteCatalogues(
+            listOf(
+                FavoriteEntry(
+                    book = NovelCard(id = 101, title = "Completed Book"),
+                    lastChapter = 0,
+                    chapterCount = 84,
+                )
+            )
+        )
+
+        assertEquals(1, changed)
+        assertEquals(84, store.load(bookId = 101)?.chapterCountAtLastRead)
+    }
+
+    @Test
+    fun backfillsCatalogueWhenNativeReaderCompletedDespiteStaleEarlierWebProgress() {
+        store.save(
+            bookId = 101,
+            chapterId = 1001,
+            chapterTitle = "Final",
+            bookTitle = "Completed Book",
+            chapterNumber = 84,
+        )
+
+        val changed = store.backfillCompletedFavoriteCatalogues(
+            listOf(
+                FavoriteEntry(
+                    book = NovelCard(id = 101, title = "Completed Book"),
+                    lastChapter = 83,
+                    chapterCount = 84,
+                )
+            )
+        )
+
+        assertEquals(1, changed)
+        assertEquals(84, store.load(bookId = 101)?.chapterCountAtLastRead)
+    }
+
+    @Test
+    fun doesNotBackfillCatalogueForAnOrdinarilyPausedFavorite() {
+        store.save(
+            bookId = 101,
+            chapterId = 1001,
+            chapterTitle = "Paused",
+            bookTitle = "Paused Book",
+            chapterNumber = 83,
+        )
+
+        val changed = store.backfillCompletedFavoriteCatalogues(
+            listOf(
+                FavoriteEntry(
+                    book = NovelCard(id = 101, title = "Paused Book"),
+                    lastChapter = 83,
+                    chapterCount = 84,
+                )
+            )
+        )
+
+        assertEquals(0, changed)
+        assertNull(store.load(bookId = 101)?.chapterCountAtLastRead)
     }
 }

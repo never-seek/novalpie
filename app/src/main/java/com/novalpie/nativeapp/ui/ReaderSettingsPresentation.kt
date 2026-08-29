@@ -417,6 +417,14 @@ internal fun ReaderSettingsControls(
                 )
             }
         }
+        ReaderToggleRow("音量键翻页", options.volumeKeyPageTurn, textColor, metaColor) {
+            update { it.copy(volumeKeyPageTurn = !it.volumeKeyPageTurn) }
+        }
+        Text(
+            "关闭后，音量加减键会交还给 Android 系统调节媒体音量。",
+            style = MaterialTheme.typography.bodySmall,
+            color = metaColor,
+        )
         Text(
             "翻页效果${if (options.pageTurnMode) "" else "（开启翻页模式后生效）"}",
             style = MaterialTheme.typography.labelLarge,

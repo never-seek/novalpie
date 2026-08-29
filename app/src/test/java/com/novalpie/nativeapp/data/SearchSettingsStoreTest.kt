@@ -44,11 +44,13 @@ class SearchSettingsStoreTest {
     }
 
     @Test
-    fun defaultsMatchTheWebsiteMobileSearchContract() {
+    fun defaultsMatchTheWebsiteSearchContract() {
         val defaults = store.load()
 
+        assertEquals("favorite_count", defaults.sortBy)
+        assertEquals("desc", defaults.sortOrder)
         assertEquals("fuzzy_strict", defaults.matchType)
-        assertEquals("unrestricted", defaults.adultFilter)
+        assertEquals("all", defaults.adultFilter)
         assertEquals(emptyList<String>(), defaults.requiredTags)
         assertEquals(emptyList<String>(), defaults.blockedTags)
         assertEquals(false, defaults.advancedSyntaxEnabled)

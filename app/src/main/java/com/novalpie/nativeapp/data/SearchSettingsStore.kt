@@ -3,12 +3,12 @@ package com.novalpie.nativeapp.data
 import android.content.Context
 
 data class PersistedSearchSettings(
-    val sortBy: String = "relevance",
+    val sortBy: String = "favorite_count",
     val sortOrder: String = "desc",
     val scope: String = "all",
     val matchType: String = "fuzzy_strict",
-    /** The live mobile source initially requests `adult_filter=unrestricted`. */
-    val adultFilter: String = "unrestricted",
+    /** The live source starts with all content visible; users can narrow this explicitly. */
+    val adultFilter: String = "all",
     val source: String = "",
     val wordCountRange: String = "",
     val requiredTags: List<String> = emptyList(),

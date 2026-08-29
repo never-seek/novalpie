@@ -3,7 +3,37 @@ package com.novalpie.nativeapp.ui
 import com.novalpie.nativeapp.model.ChapterComment
 import com.novalpie.nativeapp.model.BookEditPermissions
 import com.novalpie.nativeapp.model.Chapter
+import com.novalpie.nativeapp.model.ForumActionResult
 import com.novalpie.nativeapp.model.NovelCard
+
+/** A source detail link opens native Discover without throwing away the detail Back stack. */
+internal data class BookDetailSearchTarget(
+    val keyword: String = "",
+    val scope: String = "all",
+    val requiredTags: List<String> = emptyList(),
+)
+
+/** Website author links are `/search?author=<name>`: keyword plus author-only scope. */
+internal fun bookDetailAuthorSearchTarget(author: String?): BookDetailSearchTarget? =
+    author?.trim()?.takeIf { it.isNotEmpty() }?.let { name ->
+        BookDetailSearchTarget(keyword = name, scope = "author")
+    }
+
+/** Website tag links are `/search?tags=<tag>`: an empty keyword plus one required tag. */
+internal fun bookDetailTagSearchTarget(tag: String?): BookDetailSearchTarget? =
+    tag?.trim()?.takeIf { it.isNotEmpty() }?.let { name ->
+        BookDetailSearchTarget(requiredTags = listOf(name))
+    }
+
+/** Retain the user's sort/content preferences while replacing only incompatible detail-link filters. */
+internal fun bookDetailSearchOptions(
+    existing: SearchOptions,
+    target: BookDetailSearchTarget,
+): SearchOptions = existing.copy(
+    scope = target.scope,
+    requiredTags = target.requiredTags,
+    blockedTags = emptyList(),
+)
 
 internal data class ChapterListPresentation(
     val numberLabel: String,
@@ -194,6 +224,82 @@ internal fun chapterCommentThreads(comments: List<ChapterComment>): List<Chapter
     }
 }
 
+/**
+ * Resolve the thread root used by the source book/chapter comment composer. The source sends the
+ * root id to `/comments/{rootId}/replies`; `reply_to_name` preserves the direct display target when
+ * the clicked item is a nested reply. If an ancestor is outside the current page, use the known
+ * parent id as the best root fallback.
+ */
+internal fun chapterCommentThreadRootId(
+    comment: ChapterComment,
+    availableComments: List<ChapterComment> = emptyList(),
+): Long {
+    val byId = availableComments.associateBy(ChapterComment::id)
+    val visited = mutableSetOf<Long>()
+    var current = comment
+    while (visited.add(current.id)) {
+        val parentId = current.parentCommentId ?: return current.id
+        val parent = byId[parentId] ?: return parentId
+        current = parent
+    }
+    return current.id
+}
+
+internal fun chapterCommentReplySubmissionCommentId(
+    comment: ChapterComment,
+    availableComments: List<ChapterComment> = emptyList(),
+): Long = chapterCommentThreadRootId(comment, availableComments)
+
+internal data class ChapterCommentActionTarget(
+    val parentCommentId: Long,
+    val replyId: Long? = null,
+)
+
+/** Resolve the root/reply pair used by book and chapter comment interaction endpoints. */
+internal fun chapterCommentActionTarget(
+    comment: ChapterComment,
+    availableComments: List<ChapterComment> = emptyList(),
+): ChapterCommentActionTarget {
+    val rootId = chapterCommentThreadRootId(comment, availableComments)
+    if (rootId == comment.id) return ChapterCommentActionTarget(parentCommentId = rootId)
+    return ChapterCommentActionTarget(
+        parentCommentId = rootId,
+        replyId = comment.id,
+    )
+}
+
+/**
+ * Apply a book-review mutation without erasing a failed composer. The source can return HTTP 200
+ * with `success=false`, so transport success alone must not clear the reply target.
+ */
+internal fun bookCommentAfterSubmission(
+    state: BookDetailState,
+    result: Result<ForumActionResult>,
+): BookDetailState = result.fold(
+    onSuccess = { action ->
+        if (!action.success) {
+            state.copy(
+                actionLoading = false,
+                actionMessage = action.message ?: "评论提交失败",
+            )
+        } else {
+            state.copy(
+                commentDraft = "",
+                replyingToCommentId = null,
+                replyingToName = null,
+                actionLoading = false,
+                actionMessage = action.message ?: "评论已提交",
+            )
+        }
+    },
+    onFailure = {
+        state.copy(
+            actionLoading = false,
+            actionMessage = "评论提交失败：${it.message ?: "未知错误"}",
+        )
+    },
+)
+
 internal fun chapterCommentThreadSummary(
     threads: List<ChapterCommentThread>,
     rootLabel: String,
@@ -201,6 +307,15 @@ internal fun chapterCommentThreadSummary(
     val replies = threads.sumOf { thread -> thread.replies.size }
     return "${threads.size} 条$rootLabel · $replies 条回复"
 }
+
+/**
+ * Book reviews and inline chapter comments use the same rich-content grammar as forum posts.
+ * Keeping marker extraction in one presentation helper prevents either screen from silently
+ * rendering a raw `[bookid:...]` marker when the source returns a shared comment payload.
+ */
+internal fun chapterCommentBookReferenceIds(
+    comments: Iterable<ChapterComment>,
+): List<Long> = forumBookReferenceIds(comments.map(ChapterComment::content))
 
 private fun chapterCommentRoot(
     comment: ChapterComment,

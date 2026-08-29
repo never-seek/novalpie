@@ -215,24 +215,6 @@ private fun syncAuthToken(
     authToken: String?,
     onAuthTokenCaptured: (String) -> Unit
 ) {
-    authToken?.takeIf { it.isNotBlank() }?.let { token ->
-        val quoted = JSONObject.quote(token)
-        webView.evaluateJavascript(
-            """
-            (function(){
-              try {
-                if (localStorage.getItem('auth_token') !== $quoted) {
-                  localStorage.setItem('auth_token', $quoted);
-                  if (location.pathname !== '/login') location.reload();
-                }
-              } catch (e) {}
-              return true;
-            })()
-            """.trimIndent(),
-            null
-        )
-    }
-
     webView.evaluateJavascript(
         """
         (function(){
@@ -249,11 +231,44 @@ private fun syncAuthToken(
         })()
         """.trimIndent()
     ) { raw ->
-        decodeJavascriptString(raw)
+        val existingWebToken = decodeJavascriptString(raw)
+            ?.trim()
             ?.takeIf { it.isNotBlank() }
-            ?.let(onAuthTokenCaptured)
+        if (existingWebToken != null) {
+            // The source WebView can hold a session created after the native bearer expired.
+            // Capture that source-of-truth value before considering a native-to-WebView seed;
+            // otherwise a stale bearer would overwrite the newly logged-in web session.
+            onAuthTokenCaptured(existingWebToken)
+            return@evaluateJavascript
+        }
+
+        val tokenToSeed = webFallbackTokenToSeed(
+            existingWebToken = existingWebToken,
+            nativeToken = authToken,
+        ) ?: return@evaluateJavascript
+        val quoted = JSONObject.quote(tokenToSeed)
+        webView.evaluateJavascript(
+            """
+            (function(){
+              try {
+                localStorage.setItem('auth_token', $quoted);
+                if (location.pathname !== '/login') location.reload();
+              } catch (e) {}
+              return true;
+            })()
+            """.trimIndent(),
+            null
+        )
     }
 }
+
+/** Seed a source WebView only when it has no usable session of its own. */
+internal fun webFallbackTokenToSeed(
+    existingWebToken: String?,
+    nativeToken: String?,
+): String? = nativeToken
+    ?.trim()
+    ?.takeIf { it.isNotBlank() && existingWebToken.isNullOrBlank() }
 
 private fun decodeJavascriptString(raw: String?): String? {
     val value = raw?.trim().orEmpty()

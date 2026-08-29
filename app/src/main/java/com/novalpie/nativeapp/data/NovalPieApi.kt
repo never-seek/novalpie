@@ -1,5 +1,7 @@
 package com.novalpie.nativeapp.data
 
+import android.os.SystemClock
+import android.util.Log
 import android.util.Base64
 import com.novalpie.nativeapp.model.Chapter
 import com.novalpie.nativeapp.model.ChapterComment
@@ -83,9 +85,11 @@ import com.novalpie.nativeapp.model.AuthActionResult
 import com.novalpie.nativeapp.model.AuthSession
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Job
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -259,11 +263,11 @@ class NovalPieApi(
         keyword: String,
         page: Int = 1,
         limit: Int = 20,
-        sortBy: String = "relevance",
+        sortBy: String = "favorite_count",
         sortOrder: String = "desc",
         scope: String = "all",
         matchType: String = "fuzzy_strict",
-        adultFilter: String = "unrestricted",
+        adultFilter: String = "all",
         source: String = "",
         minWordCount: Long? = null,
         maxWordCount: Long? = null,
@@ -305,11 +309,11 @@ class NovalPieApi(
         keyword: String,
         page: Int = 1,
         limit: Int = 20,
-        sortBy: String = "relevance",
+        sortBy: String = "favorite_count",
         sortOrder: String = "desc",
         scope: String = "all",
         matchType: String = "fuzzy_strict",
-        adultFilter: String = "unrestricted",
+        adultFilter: String = "all",
         source: String = "",
         minWordCount: Long? = null,
         maxWordCount: Long? = null,
@@ -323,15 +327,21 @@ class NovalPieApi(
         status: String? = null
     ): SearchPage =
         withContext(Dispatchers.IO) {
+            // The live search page represents AI as a transport flag layered on top of the
+            // strict fuzzy matcher. It also forces relevance/descending order while AI is active;
+            // sending the UI label `ai` as match_type makes the server treat the request as a
+            // different (and often empty) search mode.
+            val aiSearch = matchType.equals("ai", ignoreCase = true)
             val params = mutableMapOf(
                 "page" to page.toString(),
                 "limit" to limit.toString(),
-                "sort_by" to sortBy,
-                "sort_order" to sortOrder,
+                "sort_by" to if (aiSearch) "relevance" else sortBy,
+                "sort_order" to if (aiSearch) "desc" else sortOrder,
                 "scope" to scope,
-                "match_type" to matchType,
+                "match_type" to if (aiSearch) "fuzzy_strict" else matchType,
                 "adult_filter" to adultFilter
             )
+            if (aiSearch) params["ai_search"] = "1"
             keyword.trim().takeIf { it.isNotEmpty() }?.let { params["q"] = it }
             // The search UI calls this control "source", but the live website sends its
             // NovelPia/upload value as `platform`; `source` is ignored by `/api/search`.
@@ -544,8 +554,9 @@ class NovalPieApi(
     suspend fun userContentActivities(
         userId: Long,
         page: Int = 1,
-        limit: Int = 100
-    ): List<UserActivity> = userContentActivityFeed(userId, page, limit).activities
+        limit: Int = 100,
+        hideSpoilers: Boolean = true,
+    ): List<UserActivity> = userContentActivityFeed(userId, page, limit, hideSpoilers).activities
 
     /**
      * Preserves source pagination totals for profile counters while still isolating a transient
@@ -554,7 +565,8 @@ class NovalPieApi(
     suspend fun userContentActivityFeed(
         userId: Long,
         page: Int = 1,
-        limit: Int = 100
+        limit: Int = 100,
+        hideSpoilers: Boolean = true,
     ): UserContentActivityFeed = withContext(Dispatchers.IO) {
         require(userId > 0) { "userId must be positive" }
         val safePage = page.coerceAtLeast(1)
@@ -595,11 +607,11 @@ class NovalPieApi(
             }
             val reviews = async {
                 captureUserActivityFeed {
+                    val reviewParams = userFeedParams.toMutableMap().apply {
+                        if (hideSpoilers) put("hide_spoilers", "1")
+                    }
                     normalizeUserBookReviewActivityFeed(
-                        get(
-                            "/api/comments/book-reviews",
-                            userFeedParams + ("hide_spoilers" to "1")
-                        )
+                        get("/api/comments/book-reviews", reviewParams)
                     )
                 }
             }
@@ -1785,10 +1797,12 @@ class NovalPieApi(
         postId: Long,
         content: String,
         parentCommentId: Long? = null,
-        replyToName: String? = null
+        replyToName: String? = null,
+        clientRequestId: String = UUID.randomUUID().toString(),
     ): ForumActionResult = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("content", content)
+            .put("client_request_id", clientRequestId)
         parentCommentId?.let { body.put("comment_id", it) }
         replyToName?.takeIf { it.isNotBlank() }?.let { body.put("reply_to_name", it) }
         normalizeForumActionResult(post("/api/posts/$postId/comments", body))
@@ -1809,11 +1823,40 @@ class NovalPieApi(
         normalizeForumActionResult(post("/api/comments/$commentId/likes", JSONObject()))
     }
 
+    /** Source forum actions distinguish a root comment from one of its replies. */
+    suspend fun toggleForumCommentLike(
+        postId: Long,
+        parentCommentId: Long,
+        replyId: Long? = null,
+    ): ForumActionResult = withContext(Dispatchers.IO) {
+        val path = replyId?.let {
+            "/api/posts/$postId/comments/$parentCommentId/replies/$it/likes"
+        } ?: "/api/posts/$postId/comments/$parentCommentId/likes"
+        normalizeForumActionResult(post(path, JSONObject()))
+    }
+
     suspend fun reactToForumComment(commentId: Long, reactionType: String, awardPoints: Int? = null): ForumActionResult = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("reaction_type", reactionType)
         awardPoints?.let { body.put("award_points", it) }
         normalizeForumActionResult(post("/api/comments/$commentId/reactions", body))
+    }
+
+    /** Source forum reactions use the same root/reply path split as likes. */
+    suspend fun reactToForumComment(
+        postId: Long,
+        parentCommentId: Long,
+        replyId: Long? = null,
+        reactionType: String,
+        awardPoints: Int? = null,
+    ): ForumActionResult = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("reaction_type", reactionType)
+        awardPoints?.let { body.put("award_points", it) }
+        val path = replyId?.let {
+            "/api/posts/$postId/comments/$parentCommentId/replies/$it/reactions"
+        } ?: "/api/posts/$postId/comments/$parentCommentId/reactions"
+        normalizeForumActionResult(post(path, body))
     }
 
     suspend fun createBookComment(bookId: Long, content: String): ForumActionResult = withContext(Dispatchers.IO) {
@@ -1840,15 +1883,24 @@ class NovalPieApi(
         normalizeForumActionResult(post("/api/comments/$commentId/replies", body))
     }
 
-    suspend fun toggleCommentLike(commentId: Long): ForumActionResult = withContext(Dispatchers.IO) {
-        normalizeForumActionResult(post("/api/comments/$commentId/likes", JSONObject()))
+    suspend fun toggleCommentLike(commentId: Long, replyId: Long? = null): ForumActionResult = withContext(Dispatchers.IO) {
+        val path = replyId?.let { "/api/comments/$commentId/replies/$it/likes" }
+            ?: "/api/comments/$commentId/likes"
+        normalizeForumActionResult(post(path, JSONObject()))
     }
 
-    suspend fun reactToComment(commentId: Long, reactionType: String, awardPoints: Int? = null): ForumActionResult = withContext(Dispatchers.IO) {
+    suspend fun reactToComment(
+        commentId: Long,
+        reactionType: String,
+        awardPoints: Int? = null,
+        replyId: Long? = null,
+    ): ForumActionResult = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("reaction_type", reactionType)
         awardPoints?.let { body.put("award_points", it) }
-        normalizeForumActionResult(post("/api/comments/$commentId/reactions", body))
+        val path = replyId?.let { "/api/comments/$commentId/replies/$it/reactions" }
+            ?: "/api/comments/$commentId/reactions"
+        normalizeForumActionResult(post(path, body))
     }
 
     suspend fun reactToCommentReply(parentCommentId: Long, replyId: Long, reactionType: String, awardPoints: Int? = null): ForumActionResult = withContext(Dispatchers.IO) {
@@ -2503,7 +2555,12 @@ class NovalPieApi(
                         .delete(payload.toRequestBody("application/json; charset=utf-8".toMediaType()))
                 }
             }
-            else -> requestBuilder.get()
+            else -> requestBuilder
+                // The live Nuxt client sends this JSON media type for every API read, including
+                // `/posts`.  Keep it on the JSON request path only: asset streams and multipart
+                // uploads must retain their own content type.
+                .header("content-type", "application/json")
+                .get()
         }
 
         return execute(
@@ -2534,14 +2591,7 @@ class NovalPieApi(
         callTimeoutSeconds: Long? = null,
         readTimeoutSeconds: Long? = null,
     ): Any {
-        if (includeSession) {
-            cookieProvider()?.takeIf { it.isNotBlank() }?.let { cookie ->
-                requestBuilder.header("cookie", cookie)
-            }
-            authTokenProvider()?.takeIf { it.isNotBlank() }?.let { token ->
-                requestBuilder.header("authorization", "Bearer $token")
-            }
-        }
+        if (includeSession) applySessionHeaders(requestBuilder)
 
         val request = requestBuilder.build()
 
@@ -2562,18 +2612,65 @@ class NovalPieApi(
             client
         }
 
-        callClient.newCall(request).execute().use { response ->
-            val responseBody = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                // The body was already read; carry the server's own explanation instead of
-                // discarding it and leaving the user with only a status code.
-                throw NovalPieApiException(
-                    statusCode = response.code,
-                    path = path,
-                    serverMessage = NovalPieApiException.extractServerMessage(responseBody),
-                )
+        return try {
+            executeRequest(callClient, path, request)
+        } catch (failure: NovalPieApiException) {
+            // A WebView login can outlive the short native bearer token. Retry only after the
+            // server explicitly rejects that token, and only for replayable JSON/GET requests;
+            // multipart uploads must never be replayed implicitly.
+            if (!includeSession || failure.statusCode !in setOf(401, 403)) throw failure
+            val cookie = runCatching { cookieProvider() }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?: throw failure
+            val replayable = request.body == null ||
+                request.body?.contentType()?.toString()?.startsWith("application/json") == true
+            if (!replayable) throw failure
+            executeRequest(
+                callClient,
+                path,
+                request.newBuilder()
+                    .removeHeader("authorization")
+                    .removeHeader("cookie")
+                    .header("cookie", cookie)
+                    .build(),
+            )
+        }
+    }
+
+    private fun executeRequest(
+        callClient: OkHttpClient,
+        path: String,
+        request: Request,
+    ): Any {
+        val startedAt = SystemClock.elapsedRealtime()
+        try {
+            callClient.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    // The body was already read; carry the server's own explanation instead of
+                    // discarding it and leaving the user with only a status code.
+                    throw NovalPieApiException(
+                        statusCode = response.code,
+                        path = path,
+                        serverMessage = NovalPieApiException.extractServerMessage(responseBody),
+                    )
+                }
+                return parseJsonOrString(responseBody)
             }
-            return parseJsonOrString(responseBody)
+        } catch (failure: Throwable) {
+            // F07 diagnostic instrumentation: keep the endpoint and elapsed time, but never log
+            // headers, authentication credentials, cookies, response bodies, or query values.
+            Log.d(
+                HTTP_TIMING_LOG_TAG,
+                "request path=$path elapsedMs=${SystemClock.elapsedRealtime() - startedAt} result=${failure::class.java.simpleName}",
+            )
+            throw failure
+        } finally {
+            Log.d(
+                HTTP_TIMING_LOG_TAG,
+                "request path=$path elapsedMs=${SystemClock.elapsedRealtime() - startedAt} finished",
+            )
         }
     }
 
@@ -2615,12 +2712,7 @@ class NovalPieApi(
         callTimeoutSeconds: Long,
         readTimeoutSeconds: Long,
     ) {
-        cookieProvider()?.takeIf { it.isNotBlank() }?.let { cookie ->
-            requestBuilder.header("cookie", cookie)
-        }
-        authTokenProvider()?.takeIf { it.isNotBlank() }?.let { token ->
-            requestBuilder.header("authorization", "Bearer $token")
-        }
+        applySessionHeaders(requestBuilder)
 
         val explicitProxy = proxyProvider()
         val proxySelector = if (explicitProxy == null) proxySelectorProvider() else null
@@ -2633,22 +2725,75 @@ class NovalPieApi(
             readTimeout(readTimeoutSeconds, TimeUnit.SECONDS)
         }.build()
 
-        val response = callClient.newCall(requestBuilder.build()).execute()
+        val request = requestBuilder.build()
         try {
-            if (!response.isSuccessful) {
-                val responseBody = response.body?.string().orEmpty()
-                throw NovalPieApiException(
-                    statusCode = response.code,
-                    path = label,
-                    serverMessage = NovalPieApiException.extractServerMessage(responseBody),
-                )
-            }
-            val body = response.body ?: throw IOException("响应没有内容")
-            body.byteStream().use { input ->
-                consumer(input, response.header("content-type"))
+            consumeStreamResponse(callClient, label, request, consumer)
+        } catch (failure: NovalPieApiException) {
+            // Downloads and original illustrations are streamed, but their authentication contract
+            // is the same as ordinary JSON calls: a surviving WebView session may be valid after
+            // the short native bearer expires. Do not touch cookies until the server has actually
+            // rejected the first request, and never expose a rejected response body to the consumer.
+            if (failure.statusCode !in setOf(401, 403)) throw failure
+            val cookie = runCatching { cookieProvider() }
+                .getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?: throw failure
+            consumeStreamResponse(
+                callClient = callClient,
+                label = label,
+                request = request.newBuilder()
+                    .removeHeader("authorization")
+                    .removeHeader("cookie")
+                    .header("cookie", cookie)
+                    .build(),
+                consumer = consumer,
+            )
+        }
+    }
+
+    private suspend fun consumeStreamResponse(
+        callClient: OkHttpClient,
+        label: String,
+        request: Request,
+        consumer: suspend (InputStream, String?) -> Unit,
+    ) {
+        val call = callClient.newCall(request)
+        // OkHttp's synchronous execute is blocking.  Tie the call to the coroutine so an
+        // explicit native-download cancel (or ViewModel teardown) closes the socket immediately
+        // instead of leaving the UI in a busy state until the long read timeout expires.
+        val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion {
+            call.cancel()
+        }
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) {
+                    val responseBody = response.body?.string().orEmpty()
+                    throw NovalPieApiException(
+                        statusCode = response.code,
+                        path = label,
+                        serverMessage = NovalPieApiException.extractServerMessage(responseBody),
+                    )
+                }
+                val body = response.body ?: throw IOException("响应没有内容")
+                body.byteStream().use { input ->
+                    consumer(input, response.header("content-type"))
+                }
             }
         } finally {
-            response.close()
+            cancellationHandle?.dispose()
+        }
+    }
+
+    /**
+     * Native login persists a bearer token. Never query WebView's cookie store before a request:
+     * that can initialize Chromium during a cold API load and freeze lower-end devices. A valid
+     * WebView-only session is instead replayed by [execute] only after the source explicitly
+     * returns 401/403, so cookie access is both lazy and strictly an authentication fallback.
+     */
+    private fun applySessionHeaders(requestBuilder: Request.Builder) {
+        val token = authTokenProvider()?.takeIf { it.isNotBlank() }
+        if (token != null) {
+            requestBuilder.header("authorization", "Bearer $token")
         }
     }
 
@@ -4223,6 +4368,10 @@ class NovalPieApi(
             ?: source.longOrNull("comment_id")
             ?: source.longOrNull("commentId")
             ?: return null
+        // Flat reply records from the website expose their immediate parent as `comment_id` while
+        // nested records may use the explicit parent aliases. Do not treat the alias as a parent
+        // when it is also the record's own id.
+        val sourceParentCommentId = source.longOrNull("comment_id")?.takeIf { it != id }
         val replies = extractArray(source, "replies", "children", "reply_list", "replyList")
         return ForumComment(
             id = id,
@@ -4234,6 +4383,7 @@ class NovalPieApi(
                 ?: source.longOrNull("comment_id_parent")
                 ?: source.longOrNull("parent_id")
                 ?: source.longOrNull("parentId")
+                ?: sourceParentCommentId
                 ?: fallbackParentCommentId,
             authorName = source.objectStringOrNull("author", "name", "username", "display_name", "nickname")
                 ?: source.objectStringOrNull("user", "name", "username", "display_name", "nickname")
@@ -4356,6 +4506,8 @@ class NovalPieApi(
             ?: source.longOrNull("comment_id")
             ?: source.longOrNull("commentId")
             ?: return null
+        // See normalizeForumComment: the source uses comment_id as the root on flat replies.
+        val sourceParentCommentId = source.longOrNull("comment_id")?.takeIf { it != id }
         val replies = extractArray(source, "replies", "children", "reply_list", "replyList")
         return ChapterComment(
                 id = id,
@@ -4366,6 +4518,7 @@ class NovalPieApi(
                     ?: source.longOrNull("comment_id_parent")
                     ?: source.longOrNull("parent_id")
                     ?: source.longOrNull("parentId")
+                    ?: sourceParentCommentId
                     ?: fallbackParentCommentId,
                 authorName = source.objectStringOrNull("author", "name", "username", "display_name", "nickname")
                     ?: source.objectStringOrNull("user", "name", "username", "display_name", "nickname")
@@ -4452,7 +4605,8 @@ class NovalPieApi(
             ?: true
         return ForumActionResult(
             success = success,
-            message = source.firstStringOrNull("message", "msg", "detail")
+            message = source.firstStringOrNull("message", "msg", "detail"),
+            reply = source.optJSONObject("reply")?.let(::normalizeForumComment),
         )
     }
 
@@ -5502,6 +5656,7 @@ class NovalPieApi(
         private val READER_CONTENT_RETRYABLE_STATUS_CODES =
             setOf(401, 403, 408, 425, 429, 500, 502, 503, 504)
         private const val USER_AGENT = "NovalPieNative/2.0 Android"
+        private const val HTTP_TIMING_LOG_TAG = "NovalPieHttpTiming"
         private const val READER_SIGNATURE_SECRET =
             "X9f2m8Q5zL1p4R7t0Y3u6W2s5V8x1B4n7M0k3J6h9G2d5F8c1A4b7E0r3T6y9U2i"
         private const val STANDARD_BASE64_ALPHABET =

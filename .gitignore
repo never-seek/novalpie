@@ -2,6 +2,7 @@
 build/
 app/build/
 .gradle/
+.gradle-user-home/
 .cxx/
 
 # Local machine configuration

@@ -87,6 +87,14 @@ data class ReaderProgress(
     val bookTitle: String? = null,
     /** Source directory position retained so Collection can render a real N/total progress. */
     val chapterNumber: Int? = null,
+    /**
+     * Full source catalogue size observed when this reading position was saved.
+     *
+     * It is deliberately separate from [chapterNumber]: a shelf can only call a newer chapter an
+     * update when the app actually observed that the reader had completed the previous catalogue.
+     * Old records legitimately omit this value and then show progress without guessing an update.
+     */
+    val chapterCountAtLastRead: Int? = null,
 )
 
 /** The last reader route, persisted only to recover from Android reclaiming the process. */
@@ -898,7 +906,9 @@ data class ChapterComment(
 
 data class ForumActionResult(
     val success: Boolean,
-    val message: String? = null
+    val message: String? = null,
+    /** The source echoes a newly created forum reply so clients can render it immediately. */
+    val reply: ForumComment? = null,
 )
 
 data class ForumPollDraft(

@@ -69,12 +69,25 @@ internal fun compactFavoriteBookCardPresentation(
         title = effectiveEntry.book.title,
         author = effectiveEntry.book.author?.trim().takeUnless { it.isNullOrBlank() } ?: "未知作者",
         progressLabel = total?.let { "$visibleRead/$it" },
-        // Without a source-side historical total, only the exact completed-then-one-new-chapter
-        // shape can be stated as an update rather than incorrectly flagging every paused book.
-        updateLabel = total
-            ?.takeIf { visibleRead != null && visibleRead > 0 && visibleRead == it - 1 }
-            ?.let { "更新 1 章" },
+        updateLabel = favoriteBookUpdateLabel(entry, localProgress),
     )
+}
+
+/**
+ * A `read == total - 1` shelf response is ambiguous: it can be an unfinished book or a newly
+ * added chapter. Only a locally persisted completed catalogue gives the app enough evidence to
+ * distinguish those two cases without inventing a notification.
+ */
+internal fun favoriteBookUpdateLabel(
+    entry: FavoriteEntry,
+    localProgress: ReaderProgress?,
+): String? {
+    if (localProgress?.bookId != entry.book.id) return null
+    val currentTotal = (entry.chapterCount ?: entry.book.chapterCount)?.takeIf { it > 0 } ?: return null
+    val completedCatalogueSize = localProgress.chapterCountAtLastRead?.takeIf { it > 0 } ?: return null
+    val localChapterNumber = localProgress.chapterNumber?.takeIf { it > 0 } ?: return null
+    if (localChapterNumber < completedCatalogueSize || currentTotal <= completedCatalogueSize) return null
+    return "更新 ${currentTotal - completedCatalogueSize} 章"
 }
 
 internal fun compactUploadedBookCardPresentation(

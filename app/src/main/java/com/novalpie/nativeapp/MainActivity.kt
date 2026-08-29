@@ -18,7 +18,24 @@ import com.novalpie.nativeapp.ui.NovalPieApp
 import com.novalpie.nativeapp.ui.ReaderVolumeKeyAction
 import com.novalpie.nativeapp.ui.readerVolumeKeyAction
 
+/**
+ * Android may recreate a task with a non-null state bundle while delivering a new ACTION_VIEW
+ * intent. Keep that incoming link, but do not replay the exact link already consumed before a
+ * configuration recreation.
+ */
+internal fun initialActivityStartUri(
+    action: String?,
+    dataUri: String?,
+    restoredHandledUri: String?,
+): String? = dataUri?.takeIf {
+    action == Intent.ACTION_VIEW && it.isNotBlank() && it != restoredHandledUri
+}
+
 class MainActivity : ComponentActivity() {
+
+    private companion object {
+        const val STATE_HANDLED_START_URI = "novalpie.handled_start_uri"
+    }
 
     private var readerVolumeKeyHandler: ((Int) -> Unit)? = null
 
@@ -34,6 +51,7 @@ class MainActivity : ComponentActivity() {
      * running went nowhere.
      */
     private var startUri by mutableStateOf<String?>(null)
+    private var handledStartUri: String? = null
 
     @SuppressLint("SourceLockedOrientationActivity")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,17 +71,20 @@ class MainActivity : ComponentActivity() {
 
         configureNovalPieImageLoader(this, NetworkConfigStore(this).loadProxySettings())
 
-        // savedInstanceState != null means this is a configuration change, most often a rotation.
-        // Re-reading intent.data there re-ran the deep link and threw the reader back to the
-        // originally linked chapter, discarding wherever the user had navigated to since.
-        if (savedInstanceState == null) {
-            startUri = intent?.data?.toString()
-        }
+        handledStartUri = savedInstanceState?.getString(STATE_HANDLED_START_URI)
+        startUri = initialActivityStartUri(
+            action = intent?.action,
+            dataUri = intent?.data?.toString(),
+            restoredHandledUri = handledStartUri,
+        )
 
         setContent {
             NovalPieApp(
                 startUri = startUri,
-                onStartUriHandled = { startUri = null },
+                onStartUriHandled = { handledUri ->
+                    handledStartUri = handledUri
+                    if (startUri == handledUri) startUri = null
+                },
             )
         }
     }
@@ -71,7 +92,14 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        intent.data?.toString()?.let { startUri = it }
+        intent.data?.toString()
+            ?.takeIf(String::isNotBlank)
+            ?.let { startUri = it }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_HANDLED_START_URI, handledStartUri)
+        super.onSaveInstanceState(outState)
     }
 
     @SuppressLint("RestrictedApi")

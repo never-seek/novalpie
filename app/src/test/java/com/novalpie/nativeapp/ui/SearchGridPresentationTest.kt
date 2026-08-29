@@ -67,6 +67,14 @@ class SearchGridPresentationTest {
     }
 
     @Test
+    fun reservesTheFullTagPillHeightAndGapForEveryLine() {
+        // At MuMu's 240dpi, four rendered pill rows occupy 137px (91.3dp). The
+        // reservation must round up both the pill padding and the 2dp gaps so the
+        // FlowRow cannot push the metrics/footer below its row peer.
+        assertEquals(94, searchGridTagAreaMinHeightDp(lineCount = 4))
+    }
+
+    @Test
     fun narrowTwoColumnPhoneWrapsAllThreeMetricsInsteadOfClippingWordCount() {
         val book = NovelCard(
             id = 4,

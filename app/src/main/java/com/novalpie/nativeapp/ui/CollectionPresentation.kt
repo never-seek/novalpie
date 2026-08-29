@@ -435,7 +435,10 @@ private fun FavoritesSourceTabs(
     state: HomeState,
     onSelectTab: (FavoritesContentTab) -> Unit
 ) {
-    val favoriteCount = (state.favoriteEntries as? LoadResult.Success)?.value?.size ?: 0
+    val favoriteCount = collectionFavoriteCount(
+        sourceTotal = state.favoriteTotal,
+        loadedCount = (state.favoriteEntries as? LoadResult.Success)?.value?.size ?: 0,
+    )
     val historyCount = (state.history as? LoadResult.Success)?.value?.size ?: 0
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -917,12 +920,13 @@ internal fun FavoriteListRow(
 @OptIn(ExperimentalFoundationApi::class)
 internal fun FavoriteListRow(
     entry: FavoriteEntry,
+    localProgress: ReaderProgress? = null,
     selected: Boolean,
     selecting: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
-    val presentation = compactFavoriteBookCardPresentation(entry)
+    val presentation = compactFavoriteBookCardPresentation(entry, localProgress)
     Surface(
         modifier = Modifier
             .fillMaxWidth()

@@ -5,8 +5,8 @@ import com.novalpie.nativeapp.model.NovelCard
 /** Search starts with two responsive grid rows warm, bounded to avoid a full-page bandwidth burst. */
 internal const val SEARCH_INITIAL_COVER_PRELOAD_ROWS = 2
 
-/** One bounded responsive look-ahead batch protects covers after the user starts scrolling. */
-internal const val SEARCH_SCROLL_COVER_PRELOAD_ROWS = 2
+/** One bounded responsive look-ahead row keeps scrolling responsive on image-heavy result pages. */
+internal const val SEARCH_SCROLL_COVER_PRELOAD_ROWS = 1
 
 /** Six-column landscape must warm its whole first row without allowing unbounded fetch bursts. */
 internal const val SEARCH_COVER_PRELOAD_MAX_COUNT = 8

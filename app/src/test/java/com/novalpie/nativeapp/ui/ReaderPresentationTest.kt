@@ -4,6 +4,7 @@ import android.view.KeyEvent
 import androidx.compose.ui.graphics.Color
 import com.novalpie.nativeapp.model.Chapter
 import com.novalpie.nativeapp.model.ChapterComment
+import com.novalpie.nativeapp.model.ForumActionResult
 import com.novalpie.nativeapp.model.LoadResult
 import com.novalpie.nativeapp.model.ReaderChapterCacheState
 import com.novalpie.nativeapp.model.ReaderChapterContent
@@ -15,6 +16,45 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReaderPresentationTest {
+    @Test
+    fun pageModeSideTapInterceptsInteractiveCommentControlsBeforeTurningPage() {
+        assertTrue(
+            readerPageModeTapShouldInterceptChild(
+                pageTurnEnabled = true,
+                controlsVisible = false,
+                action = "pageNext",
+            )
+        )
+        assertTrue(
+            readerPageModeTapShouldInterceptChild(
+                pageTurnEnabled = true,
+                controlsVisible = false,
+                action = "pagePrev",
+            )
+        )
+        assertFalse(
+            readerPageModeTapShouldInterceptChild(
+                pageTurnEnabled = false,
+                controlsVisible = false,
+                action = "pageNext",
+            )
+        )
+        assertFalse(
+            readerPageModeTapShouldInterceptChild(
+                pageTurnEnabled = true,
+                controlsVisible = true,
+                action = "pageNext",
+            )
+        )
+        assertFalse(
+            readerPageModeTapShouldInterceptChild(
+                pageTurnEnabled = true,
+                controlsVisible = false,
+                action = "sidebar",
+            )
+        )
+    }
+
     @Test
     fun coreReaderBodyPublishesWithoutOverwritingAuxiliaryPanels() {
         val initial = ReaderState(
@@ -181,6 +221,28 @@ class ReaderPresentationTest {
     }
 
     @Test
+    fun inlineCommentInteractionDoesNotAlsoTriggerTheReaderChrome() {
+        assertFalse(
+            readerBodyTapCanHandle(
+                isShortBodyTap = true,
+                inlineInteractionInProgress = true,
+            )
+        )
+        assertTrue(
+            readerBodyTapCanHandle(
+                isShortBodyTap = true,
+                inlineInteractionInProgress = false,
+            )
+        )
+        assertFalse(
+            readerBodyTapCanHandle(
+                isShortBodyTap = false,
+                inlineInteractionInProgress = false,
+            )
+        )
+    }
+
+    @Test
     fun readerBodyTapRemainsEligibleWhenSelectableTextConsumesTheFinalPointerPass() {
         assertTrue(
             readerBodyTapIsEligible(
@@ -255,15 +317,15 @@ class ReaderPresentationTest {
     }
 
     @Test
-    fun readerNavigationKeepsTheBookAndWebEscapesDistinct() {
+    fun readerNavigationKeepsOnlyWorkingNativeDestinations() {
         assertEquals(
             listOf("关闭", "帮助", "目录", "设置", "主题", "上章", "下章", "滑动", "听书", "全屏", "导航"),
             readerCompactToolbarLabels(fontSizeSp = 17, theme = "sepia")
         )
         assertEquals("系统", "system".readerThemeLabel())
         assertEquals("深色", "dark".readerThemeLabel())
-        assertEquals(listOf("书本页", "网页正文"), readerNavigationPanelLabels(showFavoriteAction = false))
-        assertEquals(listOf("书本页", "网页正文", "收藏"), readerNavigationPanelLabels(showFavoriteAction = true))
+        assertEquals(listOf("书本页"), readerNavigationPanelLabels(showFavoriteAction = false))
+        assertEquals(listOf("书本页", "收藏"), readerNavigationPanelLabels(showFavoriteAction = true))
         assertEquals(0, readerActionRailLabels().count { it == "网页正文" })
     }
 
@@ -389,6 +451,42 @@ class ReaderPresentationTest {
     }
 
     @Test
+    fun chapterCommentMutationPreservesTheContinuousReaderWindow() {
+        val first = ReaderChapterContent(
+            chapterId = 10L,
+            title = "第一章",
+            content = ReaderContent(title = "第一章", content = "first body", source = "test"),
+        )
+        val second = ReaderChapterContent(
+            chapterId = 20L,
+            title = "第二章",
+            content = ReaderContent(title = "第二章", content = "second body", source = "test"),
+        )
+        val firstComment = ChapterComment(id = 1, chapterId = 10, authorName = "First", content = "one")
+        val state = ReaderState(
+            bookId = 7,
+            chapterId = 10,
+            chapterContents = listOf(first, second),
+            comments = LoadResult.Success(listOf(firstComment)),
+            chapterCommentStates = mapOf(
+                10L to ReaderChapterCommentState(comments = LoadResult.Success(listOf(firstComment))),
+            ),
+        )
+
+        val next = readerStateWithChapterCommentState(state, 20L) {
+            it.copy(actionLoading = false, actionMessage = "评论已同步")
+        }
+
+        assertEquals(listOf(first, second), next.chapterContents)
+        assertEquals(state.chapters, next.chapters)
+        assertEquals(
+            listOf(firstComment),
+            (readerChapterCommentState(next, 10L).comments as LoadResult.Success<List<ChapterComment>>).value,
+        )
+        assertEquals("评论已同步", readerChapterCommentState(next, 20L).actionMessage)
+    }
+
+    @Test
     fun pageTurnAtTheBoundaryOpensTheAdjacentChapterInsteadOfStopping() {
         assertEquals(
             ReaderPageBoundaryTarget.NextChapter,
@@ -405,7 +503,7 @@ class ReaderPresentationTest {
     }
 
     @Test
-    fun readerVisibleChapterUsesArticleKeysAndIgnoresSentinelAndComments() {
+    fun readerVisibleChapterUsesArticleAndInlineCommentKeysButIgnoresSentinels() {
         assertEquals(
             20L,
             readerFirstVisibleChapterId(
@@ -417,9 +515,36 @@ class ReaderPresentationTest {
                 ),
             ),
         )
+        assertEquals(
+            30L,
+            readerFirstVisibleChapterId(
+                listOf(
+                    "reader-chapter-comments-30",
+                    "reader-title-40",
+                ),
+            ),
+        )
         assertNull(
             readerFirstVisibleChapterId(
                 listOf("reader-body-end-sentinel-30-3", "reader-comments"),
+            ),
+        )
+    }
+
+    @Test
+    fun continuousReaderStatusUsesTheVisibleAppendedChapterInsteadOfTheInitialRouteChapter() {
+        assertEquals(
+            20L,
+            readerStatusChapterId(
+                routeChapterId = 10L,
+                visibleChapterId = 20L,
+            ),
+        )
+        assertEquals(
+            10L,
+            readerStatusChapterId(
+                routeChapterId = 10L,
+                visibleChapterId = null,
             ),
         )
     }
@@ -588,6 +713,14 @@ class ReaderPresentationTest {
     }
 
     @Test
+    fun disablingTtsHidesTheFeedbackSurfaceEvenAfterAnError() {
+        assertTrue(readerTtsFeedbackVisible(showTts = true, state = ReaderTtsState.Error))
+        assertFalse(readerTtsFeedbackVisible(showTts = false, state = ReaderTtsState.Error))
+        assertFalse(readerTtsFeedbackVisible(showTts = false, state = ReaderTtsState.Speaking))
+        assertFalse(readerTtsFeedbackVisible(showTts = true, state = ReaderTtsState.Stopped))
+    }
+
+    @Test
     fun ttsWithoutAnInstalledEngineFailsImmediatelyInsteadOfSilentlyWaiting() {
         assertFalse(readerTtsEngineAvailable(engineCount = 0))
         assertTrue(readerTtsEngineAvailable(engineCount = 1))
@@ -719,6 +852,30 @@ class ReaderPresentationTest {
     }
 
     @Test
+    fun disabledVolumeKeyPagingReleasesBothVolumeKeysToTheSystem() {
+        assertEquals(
+            ReaderVolumeKeyAction.Ignore,
+            readerVolumeKeyAction(
+                keyCode = KeyEvent.KEYCODE_VOLUME_UP,
+                action = KeyEvent.ACTION_DOWN,
+                repeatCount = 0,
+                readerActive = true,
+                volumeKeyPagingEnabled = false,
+            ),
+        )
+        assertEquals(
+            ReaderVolumeKeyAction.Ignore,
+            readerVolumeKeyAction(
+                keyCode = KeyEvent.KEYCODE_VOLUME_DOWN,
+                action = KeyEvent.ACTION_UP,
+                repeatCount = 0,
+                readerActive = true,
+                volumeKeyPagingEnabled = false,
+            ),
+        )
+    }
+
+    @Test
     fun readerPageTurnOffersAnExplicitNoAnimationMode() {
         assertEquals(0, readerPageAnimationDurationMs("none"))
         assertEquals(160, readerPageAnimationDurationMs("fade"))
@@ -737,5 +894,47 @@ class ReaderPresentationTest {
         assertTrue(readerSystemBarUsesDarkIcons(Color.White))
         assertTrue(readerSystemBarUsesDarkIcons(Color(0xFFF4ECD8)))
         assertFalse(readerSystemBarUsesDarkIcons(Color.Black))
+    }
+
+    @Test
+    fun rejectedChapterReplyKeepsDraftAndTargetForRetry() {
+        val state = ReaderChapterCommentState(
+            draft = "@Reply User retry",
+            replyingToCommentId = 4925,
+            replyingToName = "Reply User",
+            actionLoading = true,
+        )
+
+        val next = readerChapterCommentAfterSubmission(
+            state,
+            Result.success(ForumActionResult(success = false, message = "评论接口拒绝")),
+        )
+
+        assertEquals("@Reply User retry", next.draft)
+        assertEquals(4925L, next.replyingToCommentId)
+        assertEquals("Reply User", next.replyingToName)
+        assertFalse(next.actionLoading)
+        assertEquals("评论接口拒绝", next.actionMessage)
+    }
+
+    @Test
+    fun failedChapterReplyKeepsDraftAndTargetForRetry() {
+        val state = ReaderChapterCommentState(
+            draft = "@Reply User retry",
+            replyingToCommentId = 4925,
+            replyingToName = "Reply User",
+            actionLoading = true,
+        )
+
+        val next = readerChapterCommentAfterSubmission(
+            state,
+            Result.failure(IllegalStateException("network")),
+        )
+
+        assertEquals("@Reply User retry", next.draft)
+        assertEquals(4925L, next.replyingToCommentId)
+        assertEquals("Reply User", next.replyingToName)
+        assertFalse(next.actionLoading)
+        assertEquals("章节评论提交失败：network", next.actionMessage)
     }
 }

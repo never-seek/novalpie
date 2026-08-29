@@ -1,6 +1,10 @@
 package com.novalpie.nativeapp.ui
 
+import com.novalpie.nativeapp.model.UserProfile
+import com.novalpie.nativeapp.model.LoadResult
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 class UiNavigationTest {
@@ -33,6 +37,105 @@ class UiNavigationTest {
         assertEquals("工", bottomTabShortLabel(BottomTab.Tools))
         assertEquals("论", bottomTabShortLabel(BottomTab.Forum))
         assertEquals("我", bottomTabShortLabel(BottomTab.Profile))
+    }
+
+    @Test
+    fun rootRoutesRestoreTheirMatchingBottomTabAfterBackNavigation() {
+        assertEquals(BottomTab.Collection, rootRouteTab(AppRoute.Home))
+        assertEquals(BottomTab.Discover, rootRouteTab(AppRoute.Search))
+        assertEquals(BottomTab.Tools, rootRouteTab(AppRoute.Tools))
+        assertEquals(BottomTab.Forum, rootRouteTab(AppRoute.Forum))
+        assertEquals(BottomTab.Profile, rootRouteTab(AppRoute.Profile))
+        assertEquals(null, rootRouteTab(AppRoute.BookDetail(354491)))
+    }
+
+    @Test
+    fun losingAdministratorAccessDropsTheAdminStackToTheToolsRoot() {
+        val adminStack = listOf(
+            AppRoute.Tools,
+            AppRoute.Admin(AdminSection.Review),
+        )
+
+        assertEquals(
+            listOf(AppRoute.Tools),
+            sanitizeAdminRouteStack(adminStack, isAdmin = false),
+        )
+        assertEquals(
+            adminStack,
+            sanitizeAdminRouteStack(adminStack, isAdmin = true),
+        )
+        assertEquals(
+            listOf(AppRoute.Forum),
+            sanitizeAdminRouteStack(listOf(AppRoute.Forum), isAdmin = false),
+        )
+    }
+
+    @Test
+    fun authoritativeProfileRefreshRevokesAnExistingAdminRouteForAnOrdinaryAccount() {
+        val adminStack = listOf(
+            AppRoute.Tools,
+            AppRoute.Admin(AdminSection.OperationLogs),
+        )
+
+        assertEquals(
+            listOf(AppRoute.Tools),
+            sanitizeAdminRouteStackForAuthoritativeProfile(
+                routes = adminStack,
+                profile = UserProfile(id = 42, name = "ordinary", role = "user"),
+            ),
+        )
+        assertEquals(
+            adminStack,
+            sanitizeAdminRouteStackForAuthoritativeProfile(
+                routes = adminStack,
+                profile = UserProfile(id = 100000, name = "administrator", role = "admin"),
+            ),
+        )
+    }
+
+    @Test
+    fun toolsPermissionUsesCurrentProfileBeforeStaleShelfProfile() {
+        val shelfProfile = LoadResult.Success(
+            UserProfile(id = 100164, name = "seeking", role = "user")
+        )
+        val currentProfile = LoadResult.Success(
+            UserProfile(id = 100164, name = "seeking", role = "admin")
+        )
+
+        assertSame(
+            currentProfile.value,
+            effectiveToolsUserProfile(
+                profile = currentProfile,
+                shelfUser = shelfProfile,
+                tokenProfile = currentProfile.value,
+            ),
+        )
+        assertNull(
+            effectiveToolsUserProfile(
+                profile = shelfProfile,
+                shelfUser = shelfProfile,
+                tokenProfile = currentProfile.value,
+            )?.takeIf { isAdminProfile(it) },
+        )
+    }
+
+    @Test
+    fun toolsPermissionRejectsProfileFromAPreviousAccount() {
+        val staleAdmin = LoadResult.Success(
+            UserProfile(id = 100164, name = "old-admin", role = "admin")
+        )
+        val currentUser = LoadResult.Success(
+            UserProfile(id = 100002, name = "ordinary", role = "user")
+        )
+
+        assertEquals(
+            currentUser.value,
+            effectiveToolsUserProfile(
+                profile = staleAdmin,
+                shelfUser = currentUser,
+                tokenProfile = currentUser.value,
+            ),
+        )
     }
 
     @Test

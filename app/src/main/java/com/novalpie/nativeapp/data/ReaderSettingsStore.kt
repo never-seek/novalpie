@@ -35,6 +35,8 @@ data class ReaderSettingsValues(
     val useInfiniteScroll: Boolean = true,
     val pageTurnMode: Boolean = false,
     val pageTurnEffect: String = "fade",
+    /** When disabled, Android keeps hardware volume keys for the system stream. */
+    val volumeKeyPageTurn: Boolean = true,
     val tapAreas: List<ReaderTapArea> = emptyList(),
 )
 
@@ -109,6 +111,7 @@ class ReaderSettingsStore(context: Context) {
             pageTurnMode = savedPageTurnMode && !useInfiniteScroll,
             pageTurnEffect = prefs.getString(KEY_PAGE_TURN_EFFECT, "fade")
                 .orEmpty().takeIf { it in SUPPORTED_PAGE_TURN_EFFECTS } ?: "fade",
+            volumeKeyPageTurn = prefs.getBoolean(KEY_VOLUME_KEY_PAGE_TURN, true),
             tapAreas = loadTapAreas(defaultTapAreas),
         )
     }
@@ -144,6 +147,7 @@ class ReaderSettingsStore(context: Context) {
             .putBoolean(KEY_USE_INFINITE_SCROLL, values.useInfiniteScroll)
             .putBoolean(KEY_PAGE_TURN_MODE, values.pageTurnMode && !values.useInfiniteScroll)
             .putString(KEY_PAGE_TURN_EFFECT, values.pageTurnEffect.takeIf { it in SUPPORTED_PAGE_TURN_EFFECTS } ?: "fade")
+            .putBoolean(KEY_VOLUME_KEY_PAGE_TURN, values.volumeKeyPageTurn)
             .putString(KEY_TAP_AREAS, encodeTapAreas(values.tapAreas))
             .apply()
     }
@@ -318,6 +322,7 @@ class ReaderSettingsStore(context: Context) {
         private const val KEY_USE_INFINITE_SCROLL = "use_infinite_scroll"
         private const val KEY_PAGE_TURN_MODE = "page_turn_mode"
         private const val KEY_PAGE_TURN_EFFECT = "page_turn_effect"
+        private const val KEY_VOLUME_KEY_PAGE_TURN = "volume_key_page_turn"
         private const val KEY_TAP_AREAS = "tap_areas"
         private const val READER_CHROME_GESTURE_VERSION = 2
         private const val READER_TTS_VISIBILITY_VERSION = 1

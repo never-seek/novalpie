@@ -32,7 +32,13 @@ class AuthPresentationTest {
         val stateKey = "auto: 127.0.0.1:7890"
         val marker = captchaWebViewStateMarker(stateKey)
         assertEquals(stateKey, marker.stateKey)
-        assertEquals("https://novalpie.cc/login", marker.requestedUrl)
+        assertEquals("https://novalpie.cc/login?native_captcha=1", marker.requestedUrl)
         assertTrue(webViewMatchesRequest(marker, stateKey, marker.requestedUrl))
+    }
+
+    @Test
+    fun captchaLoadingStateUsesVisibleFeedbackInsteadOfABlankCanvas() {
+        assertEquals("正在加载源站安全验证…", captchaLoadingStatusLabel(isLoading = true))
+        assertNull(captchaLoadingStatusLabel(isLoading = false))
     }
 }
