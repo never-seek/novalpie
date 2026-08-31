@@ -25,6 +25,7 @@ private fun visibleFailureLabel(label: String): String =
 private fun visibleFailureDetail(throwable: Throwable): String {
     // Prefer what the server actually said.
     if (throwable is NovalPieApiException) {
+        unavailableNewChapterDetail(throwable)?.let { return it }
         throwable.serverMessage?.takeIf { it.isNotBlank() }?.let { return it }
         return statusExplanation(throwable.statusCode)
     }
@@ -40,6 +41,16 @@ private fun visibleFailureDetail(throwable: Throwable): String {
         return "服务返回错误 $status"
     }
     return detail
+}
+
+/** The live source keeps this website action visible while its API route is temporarily unavailable. */
+private fun unavailableNewChapterDetail(failure: NovalPieApiException): String? {
+    if (!failure.path.matches(Regex("/api(?:/v2)?/novels/\\d+/(?:chapters/request|chapter-requests)"))) return null
+    val serverText = failure.serverMessage.orEmpty()
+    val unavailable = failure.statusCode in setOf(405, 501) ||
+        serverText.contains("not implemented", ignoreCase = true) ||
+        serverText.contains("method is not supported", ignoreCase = true)
+    return "源站暂未开放该功能，请使用网页详情重试".takeIf { unavailable }
 }
 
 private fun networkFailureDetail(throwable: Throwable): String? {

@@ -2,6 +2,7 @@ package com.novalpie.nativeapp.ui
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import androidx.compose.ui.text.font.FontWeight
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -53,6 +54,32 @@ class ReaderTextTest {
         assertEquals(
             listOf("First line & title"),
             readerParagraphsFromContent("<p>First&nbsp;line &amp; title</p>")
+        )
+    }
+
+    @Test
+    fun formattedReaderParagraphsKeepStrongAndBoldRanges() {
+        val paragraph = readerFormattedParagraphsFromContent(
+            "<p>Normal <strong>strong text</strong> and <b>bold text</b>.</p>"
+        ).single()
+
+        assertEquals("Normal strong text and bold text.", paragraph.text)
+        assertEquals(
+            2,
+            paragraph.spanStyles.count { range -> range.item.fontWeight == FontWeight.Bold },
+        )
+    }
+
+    @Test
+    fun formattedReaderParagraphsKeepMarkdownBoldRangesWithoutDelimiterText() {
+        val paragraph = readerFormattedParagraphsFromContent(
+            "Normal **strong text** and __bold text__."
+        ).single()
+
+        assertEquals("Normal strong text and bold text.", paragraph.text)
+        assertEquals(
+            2,
+            paragraph.spanStyles.count { range -> range.item.fontWeight == FontWeight.Bold },
         )
     }
 

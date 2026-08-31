@@ -52,6 +52,32 @@ class ApiFailureMessageTest {
     }
 
     @Test
+    fun translatesAnUnavailableNewChapterEndpointIntoAReaderFacingAction() {
+        assertEquals(
+            "获取新章请求失败: 源站暂未开放该功能，请使用网页详情重试",
+            apiFailureMessage(
+                "获取新章",
+                NovalPieApiException(
+                    statusCode = 501,
+                    path = "/api/novels/354491/chapters/request",
+                    serverMessage = "API endpoint not implemented in Laravel yet.",
+                ),
+            ),
+        )
+        assertEquals(
+            "获取新章请求失败: 源站暂未开放该功能，请使用网页详情重试",
+            apiFailureMessage(
+                "获取新章",
+                NovalPieApiException(
+                    statusCode = 405,
+                    path = "/api/novels/354491/chapters/request",
+                    serverMessage = "The POST method is not supported for route api/novels/354491/chapters/request.",
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun explainsStatusCodesInPlainLanguageWhenServerSaysNothing() {
         fun detailFor(code: Int): String =
             apiFailureMessage("书架", NovalPieApiException(code, "/api/favorites", null))

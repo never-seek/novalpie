@@ -24,6 +24,8 @@ import com.novalpie.nativeapp.model.ForumCreateResult
 import com.novalpie.nativeapp.model.ForumPost
 import com.novalpie.nativeapp.model.ForumPostPage
 import com.novalpie.nativeapp.model.ForumPostDetail
+import com.novalpie.nativeapp.model.ForumPoll
+import com.novalpie.nativeapp.model.ForumPollOption
 import com.novalpie.nativeapp.model.MessageStats
 import com.novalpie.nativeapp.model.MessageActionResult
 import com.novalpie.nativeapp.model.MessagePage
@@ -1738,6 +1740,40 @@ class NovalPieApi(
 
     suspend fun forumPostDetail(postId: Long): ForumPostDetail = withContext(Dispatchers.IO) {
         normalizeForumPostDetail(get("/api/posts/$postId"))
+    }
+
+    /** Submit only source option ids; callers retain the detail route and refresh it afterward. */
+    suspend fun submitForumPoll(postId: Long, optionIds: List<Long>): ForumActionResult = withContext(Dispatchers.IO) {
+        require(postId > 0) { "post id must be positive" }
+        val selected = optionIds.filter { it > 0 }.distinct()
+        require(selected.isNotEmpty()) { "select at least one poll option" }
+        normalizeForumActionResult(
+            post(
+                "/api/posts/$postId/polls",
+                JSONObject().put("option_ids", JSONArray(selected)),
+            )
+        )
+    }
+
+    /** Native equivalent of the website's current authenticated “获取新章” request. */
+    suspend fun requestNovelChapters(novelId: Long): ForumActionResult = withContext(Dispatchers.IO) {
+        require(novelId > 0) { "novel id must be positive" }
+        normalizeForumActionResult(post("/api/v2/novels/$novelId/chapters/request", JSONObject()))
+    }
+
+    /** Writes the same authenticated reader position used by the website reader. */
+    suspend fun saveReadingProgress(
+        novelId: Long,
+        chapterId: Long,
+        readingPercentage: Double? = null,
+    ): ForumActionResult = withContext(Dispatchers.IO) {
+        require(novelId > 0) { "novel id must be positive" }
+        require(chapterId > 0) { "chapter id must be positive" }
+        val body = JSONObject()
+            .put("novel_id", novelId)
+            .put("chapter_id", chapterId)
+        readingPercentage?.let { body.put("reading_percentage", it) }
+        normalizeForumActionResult(post("/api/reader/progress", body))
     }
 
     suspend fun createForumPost(request: ForumCreateRequest): ForumCreateResult = withContext(Dispatchers.IO) {
@@ -4317,7 +4353,53 @@ class NovalPieApi(
             awardPoints = source.intOrNull("award_points")
                 ?: source.intOrNull("awardPoints")
                 ?: source.intOrNull("reward_points")
-                ?: source.intOrNull("rewardPoints")
+                ?: source.intOrNull("rewardPoints"),
+            poll = normalizeForumPoll(source.optJSONObject("poll")),
+        )
+    }
+
+    private fun normalizeForumPoll(source: JSONObject?): ForumPoll? {
+        source ?: return null
+        val options = extractArray(source, "options", "items", "poll_options", "pollOptions")
+            .mapNotNull { value ->
+                val option = value as? JSONObject ?: return@mapNotNull null
+                val id = option.firstLongOrNull("id", "option_id", "optionId") ?: return@mapNotNull null
+                val text = option.firstStringOrNull("text", "label", "content", "name") ?: return@mapNotNull null
+                ForumPollOption(
+                    id = id,
+                    text = text,
+                    voteCount = option.firstIntOrNull("vote_count", "voteCount", "count", "votes") ?: 0,
+                    sortOrder = option.firstIntOrNull("sort_order", "sortOrder", "order", "position"),
+                )
+            }
+            .sortedWith(compareBy<ForumPollOption> { it.sortOrder ?: Int.MAX_VALUE }.thenBy(ForumPollOption::id))
+        val allowMultiple = source.firstBooleanOrNull("allow_multiple", "allowMultiple", "multiple") ?: false
+        val userVotes = extractArray(
+            source,
+            "user_votes",
+            "userVotes",
+            "selected_option_ids",
+            "selectedOptionIds",
+        ).mapNotNull { value ->
+            when (value) {
+                is Number -> value.toLong()
+                is String -> value.toLongOrNull()
+                is JSONObject -> value.firstLongOrNull("id", "option_id", "optionId")
+                else -> null
+            }
+        }.toSet()
+        return ForumPoll(
+            id = source.firstLongOrNull("id", "poll_id", "pollId") ?: 0L,
+            question = source.firstStringOrNull("question", "title", "content"),
+            allowMultiple = allowMultiple,
+            maxChoices = (source.firstIntOrNull("max_choices", "maxChoices", "max_choice")
+                ?: if (allowMultiple) options.size else 1).coerceAtLeast(1),
+            endsAt = source.firstStringOrNull("ends_at", "endsAt", "end_at", "endAt"),
+            isClosed = source.firstBooleanOrNull("is_closed", "isClosed", "closed") ?: false,
+            totalVotes = source.firstIntOrNull("total_votes", "totalVotes", "vote_count", "voteCount")
+                ?: options.sumOf(ForumPollOption::voteCount),
+            options = options,
+            userVoteOptionIds = userVotes,
         )
     }
 

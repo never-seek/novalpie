@@ -7,6 +7,7 @@
 - `待审计`：尚未以当前源码和当前 APK 复核。
 - `源码/单测已覆盖`：尚缺实机或服务端验证。
 - `实机已验证`：本轮运行完成，仍在最终门禁前。
+- `实机回归失败`：当前 APK 已稳定复现，不能以旧证据或历史通过记录关闭。
 - `阻塞`：需要用户明确授权、外部服务状态或真实设备后才能验证。
 
 ## A. 论坛、书评与章节评论
@@ -41,9 +42,27 @@
 | B07 | 听书 | 正常可播放/停止；关闭后控件消失而非仅变灰 | 实机已验证（无引擎错误路径；播放/停止受环境阻塞） | 2026-08-29 当前 APK 在 MuMu `127.0.0.1:16384` 临时开启“显示听书入口”后，工具栏出现“听书”；点击后先显示“准备中”，约 5 秒后显示明确的系统听书引擎超时错误和“系统设置”，不是静默无响应。点击“系统设置”实际打开 `com.android.settings/.Settings$TextToSpeechSettingsActivity`；随后关闭入口，工具栏不再有“听书”，错误反馈层也消失，并恢复原先关闭状态。设备 `tts_default_synth=null` 且未安装可用 TTS engine，因此真实朗读/停止仍需带引擎的真机或可控 MuMu 环境。证据：`agent-bridge/screenshots/20260829-b07-tts-error-final.png`、`20260829-b07-system-tts-settings.png`、`20260829-b07-restored-tts-off-controls.png`；UI 树：`agent-bridge/artifacts/20260829-b07-tts-error-final-ui.xml`、`agent-bridge/artifacts/20260829-b07-restored-tts-off-ui.xml`。 |
 | B08 | 全文替换 | 对当前阅读正文生效、可回退/刷新，和网页功能同级 | 实机已验证（当前 APK） | `20260826-b08-full-replacement-panel.png` 展示全部模式；选择韩国模式后面板显示 `当前：韩国模式` 且正文重新加载，`20260826-b08-replacement-korea-reader.png`；随后已恢复 `关闭替换`。 |
 | B09 | 阅读设置 | 字体、字号、行距、背景、亮度、边距、全屏等设置完整、持久化并安全适配 | 实机已验证（当前 APK） | 设置概览实际显示字体、排版、显示、布局、替换、主题、听书、其他八类；字体页提供字号/字重/字体与 TTF/OTF/TTC 导入，布局页提供留白与点击区。字号由 16 调至 17 后冷启动仍显示 `17 sp`，随后已恢复 16。证据：`20260826-b09-settings-overview.png`、`20260826-b09-font-settings.png`、`20260826-b09-font-persisted.png`、`20260826-b09-after-cold-relaunch.png`。 |
-| B10 | 翻页动画 | 多种动画含“无动画”；开启分页后按选择执行 | 实机已验证（当前 APK） | 布局设置显示并可选 `无动画/淡入/覆盖/滑动/仿真`；当前 `无动画` 选项实际生效，右侧分页点按后正文视口立即前进，截图前后正文首段发生变化。证据：`20260826-b10-layout-settings.png`、`20260826-b10-page-none-before-turn.png`、`20260826-b10-page-none-after-turn.png`、`20260826-b10-page-none-after-turn-ui.xml`。 |
-| B11 | 音量键翻页 | 上/下键方向正确，设置可完全关闭并交还系统音量 | 实机已验证（当前 APK） | 当前设置 UI 显示音量键翻页开启；MuMu 注入音量减后正文前进，音量加后回到原视口，方向正确。关闭开关交还系统音量的当前 APK 证据已在上一轮保留：`20260824-volume-key-page-turn-off.png`、`20260824-volume-key-disabled-system-volume.png`。本轮方向证据：`20260826-b11-before-volume-down.png`、`20260826-b11-after-volume-down.png`、`20260826-b11-after-volume-up.png`。 |
-| B12 | 小屏与安全区 | 正文、菜单、底栏不被系统栏/屏幕边缘裁切 | 实机已验证（当前 APK） | MuMu 临时切换到 400dpi（约 360dp 宽）冷启动检查：正文标题、状态栏、底栏完整；工具栏的关闭/目录/设置/上章/下章/翻页/全屏/导航均完整；目录搜索框和第82章高亮卡片未越界。随后恢复物理 240dpi，并恢复至第84章。证据：`20260826-b12-narrow-reader.png`、`20260826-b12-narrow-controls.png`、`20260826-b12-narrow-catalog.png`、`20260826-b12-restored-reader.png`。 |
+| B10 | 翻页动画 | 多种动画含“无动画”；开启分页后按选择执行 | 实机已验证（当前 APK） | 2026-08-31 修复页尾 partial-item 绘制：分页页尾会遮住下一页首个放不下的完整 block，下一页仍从该 block 完整开头显示。右侧点击前进的当前 APK 截图为 `agent-bridge/screenshots/20260831-pagination-page-mode-first-page-fixed.png`、`20260831-pagination-history-page2-righttap.png`；ReaderPresentationTest 覆盖页尾遮罩策略。 |
+| B11 | 音量键翻页 | 上/下键方向正确，设置可完全关闭并交还系统音量 | 实机已验证（当前 APK） | 2026-08-31 当前 APK：音量减前进后没有页尾半段；音量加从后页准确回到刚才页面的完整起点，不再按可见条目数粗略估算。证据：`agent-bridge/screenshots/20260831-pagination-history-page3-volumedown.png`、`20260831-pagination-history-back-page2-volumeup.png`、`20260831-pagination-history-back-page1-volumeup.png`；ReaderPresentationTest 覆盖精确页历史回退。 |
+| B12 | 小屏与安全区 | 正文、菜单、底栏不被系统栏/屏幕边缘裁切 | 实机已验证（当前 APK：默认 MuMu 尺寸分页边界） | 默认 900×1600 / 240dpi、非全屏分页模式下，章节标题、插图、正文和状态栏均可见；页尾只保留完整 block，下一 block 不再被 `y=1561` 裁成半段。证据：`agent-bridge/screenshots/20260831-pagination-page-mode-first-page-fixed.png` 与 `20260831-pagination-history-page2-righttap.png`。其他极端屏幕尺寸仍纳入后续设备矩阵。 |
+
+### 2026-08-31：论坛投票帖 `/forum/1871` 反馈回归
+
+- **章评不能像网页一样折叠：已修好（实机）。** 当前 Reader 默认显示 `展开评论 (9)`；点击后出现评论、编辑器、格式栏、剧透开关与 `收起评论`，不是空占位。证据：`agent-bridge/screenshots/20260831-feedback-reader-after-swipe-29.png`、`20260831-feedback-chapter-comments-expanded-scroll.png`。
+- **分页／音量键裁切文字和图片：已修好（当前 MuMu 实机）。** 分页现在遮住本页容不下、但属于下一页的尾部 block，并维护精确页起点历史；右侧前进、音量减前进、音量加连续回退均不再显示半截文本。证据：`agent-bridge/screenshots/20260831-pagination-history-{page2-righttap,page3-volumedown,back-page2-volumeup,back-page1-volumeup}.png`；见 B10–B12。
+- **粗体不显示：已修好（源码/单测）。** 原实现只保留 HTML `<strong>/<b>`，会漏掉源站混用的 Markdown `**粗体**`/`__粗体__`。现在解析器会移除 Markdown 分隔符、保留原 HTML span 并追加 `FontWeight.Bold`；`ReaderTextTest.formattedReaderParagraphsKeepMarkdownBoldRangesWithoutDelimiterText` 先红后绿。当前读取书没有粗体源段，故不伪造一张“真实粗体截图”。
+- **字号观感／内容宽度裸 `dp`：已修好（MuMu 实机）。** 设置总览和排版详情都使用“窄 / 舒适宽度 / 宽 / 全宽”，不再把开发单位 `800 dp` 暴露为用户文案。专用 Compose 仪器测试在 MuMu 直接运行通过；证据：`agent-bridge/screenshots/20260831-reader-width-control-final.png`。
+- **正文复制只能选小段：基础链路已修好（实机＋源码），跨长文章拖拽仍需真机手势补验。** 当前正文长按出现系统 `复制 / 全选` 菜单；Reader 外层为单一 `SelectionContainer`，`ReaderPresentationTest.readerTextSelectionUsesOneArticleScopeRatherThanOneScopePerParagraph` 覆盖文章级 scope。LazyColumn 的跨屏文字拖拽仍不能被旧 MuMu UI 自动化可靠模拟，保留为真机手势验证项。
+- **繁体模式未覆盖正文和目录侧栏：已修好（当前 MuMu 实机）。** 工具页切至“繁体模式”后，`354491/6992449` 的章节标题、正文和书名均转为繁体；结束后已恢复“原文模式”。证据：`agent-bridge/screenshots/20260831-reader-traditional-body.png`、`20260831-tools-traditional.png`。
+- **阅读进度不同步网页：已修好（当前登录会话实机）。** 打开正文后原生 `POST /api/reader/progress` 在约 357ms 完成；随后“阅读历史”源站列表显示《勇者回归，将她们吃干抹净》及 `1/145`，不是本地假进度。证据：`agent-bridge/screenshots/20260831-reader-progress-history-server.png`。
+- **书籍详情“获取新章”：已修好（当前登录会话实机）。** 根因是旧 App 使用了两个过时路径；网页当前 Nuxt 模块使用 `POST /api/v2/novels/{id}/chapters/request`。原生菜单改为移动端底部动作表后可见、可点击；MuMu 真实调用约 849ms 返回“已提交获取新章请求”。证据：`agent-bridge/screenshots/20260831-v2-chapter-request-result.png`，回归：`NovalPieApiTest.requestNovelChaptersUsesTheSourceNativeEndpoint`。
+- **字体、全屏与翻页反馈：已复核。** 字体页实机显示“导入字体”和 TTF/OTF/TTC 支持（`20260831-reader-font-import.png`）；全屏正文无顶部任务栏黑边（`20260831-reader-fullscreen-on.png`）；临时切换“翻页 + 仿真”后使用横向纸张遮罩而非 LazyColumn 上滑，完成后恢复用户原偏好“无限滚动 + 淡入 + 音量键翻页开”。
+
+### 2026-08-31：投票帖下载与外部阅读器兼容性复核
+
+- **封面、插图重复/数量与体积：当前原生归档与网页原版一致。** 对《浪漫小说里的主角只喜欢我》生成临时原生 EPUB：正文 19 个 `<img>` 引用、19 个正文图片资源、1 个独立封面资源、ZIP 重复路径 0。相同书籍的网页旧 EPUB 同样为“19 正文图 + 1 封面”，因此封面独立不属于额外正文插图。源 TXT 的 19 个 `[图片:]` 标记与网页 EPUB 的正文 19 图一致；原生与网页 EPUB 大小约 75.35MB / 75.32MB，不存在数倍膨胀。临时 EPUB/TXT 已精确删除，已有下载未触碰。
+- **第三方阅读器打不开/不显示封面：已做文件级兼容修复，真实第三方 App 待设备复验。** 原生 EPUB 现在同时写入 EPUB2 `toc.ncx`、`spine toc=\"ncx\"`、cover guide 与封面页，同时保留 EPUB3 `nav.xhtml`、原图 GIF/WebP/PNG/JPEG 字节；小书实机归档 `unzip -t` 通过，包含封面、NCX、207 章和零重复路径。MuMu 未安装番茄、起点、多看或静读天下，无法把某一阅读器自身的格式支持缺失冒充为 App 问题；证据：`agent-bridge/screenshots/20260831-epub-small-progress.png` 和 `artifacts/` 中 `20260831-epub-small-*` 归档检查。
+- **超大 TXT/EPUB：保持已通过状态。** 当前流式下载未回退网页；既有 358153 归档实测为 1.607GB、84 章、541 正文图、无 OOM/ArrayBuffer 失败。此次 EPUB2 导航兼容改动不改变 TXT 流式写入或图片原始字节策略。
 
 ## C. 原生下载
 

@@ -319,6 +319,31 @@ internal fun forumPostDateLine(post: ForumPost): String {
 internal fun forumActionBarLabels(): List<String> =
     listOf("赞", "踩", "表情", "打赏", "网页")
 
+/** Mirrors native radio/checkbox behavior before a source poll is submitted. */
+internal fun forumPollSelectedOptionIdsAfterToggle(
+    selectedOptionIds: Set<Long>,
+    optionId: Long,
+    allowMultiple: Boolean,
+    maxChoices: Int,
+): Set<Long> {
+    if (optionId <= 0L) return selectedOptionIds
+    if (!allowMultiple) return if (optionId in selectedOptionIds) emptySet() else setOf(optionId)
+    if (optionId in selectedOptionIds) return selectedOptionIds - optionId
+    return if (selectedOptionIds.size >= maxChoices.coerceAtLeast(1)) {
+        selectedOptionIds
+    } else {
+        selectedOptionIds + optionId
+    }
+}
+
+/** Votes remain unavailable for guests, closed polls, and already-voted accounts. */
+internal fun forumPollCanSubmit(
+    hasAuthToken: Boolean,
+    isClosed: Boolean,
+    userVoteOptionIds: Set<Long>,
+    selectedOptionIds: Set<Long>,
+): Boolean = hasAuthToken && !isClosed && userVoteOptionIds.isEmpty() && selectedOptionIds.isNotEmpty()
+
 internal fun forumContentLinks(paragraphs: List<String>): List<String> =
     paragraphs.flatMap { paragraph ->
         forumLinksFromRichParagraphs(forumRichParagraphs(paragraph))

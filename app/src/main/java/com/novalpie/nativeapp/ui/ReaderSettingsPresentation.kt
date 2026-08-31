@@ -34,7 +34,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -279,7 +278,7 @@ internal fun ReaderSettingsControls(
         )
         ReaderValueSlider(
             label = "内容宽度",
-            valueLabel = "${options.contentWidthDp} dp",
+            valueLabel = readerContentWidthControlLabel(options.contentWidthDp),
             value = options.contentWidthDp.toFloat(),
             valueRange = ReaderSettingsStore.MIN_CONTENT_WIDTH_DP.toFloat()..ReaderSettingsStore.MAX_CONTENT_WIDTH_DP.toFloat(),
             steps = 15,

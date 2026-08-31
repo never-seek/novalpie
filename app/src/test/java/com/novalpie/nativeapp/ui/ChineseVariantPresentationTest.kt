@@ -2,6 +2,10 @@ package com.novalpie.nativeapp.ui
 
 import com.novalpie.nativeapp.model.ChineseVariant
 import com.novalpie.nativeapp.model.next
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -27,6 +31,21 @@ class ChineseVariantPresentationTest {
     fun translatesBothDirectionsForVisibleReaderContent() {
         assertEquals("閱讀小說", convertChineseVariantText("阅读小说", ChineseVariant.Traditional))
         assertEquals("阅读小说", convertChineseVariantText("閱讀小說", ChineseVariant.Simplified))
+    }
+
+    @Test
+    fun traditionalConversionPreservesFormattedReaderRanges() {
+        val source = buildAnnotatedString {
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                append("阅读")
+            }
+            append("小说")
+        }
+
+        val converted = convertChineseVariantAnnotatedText(source, ChineseVariant.Traditional)
+
+        assertEquals("閱讀小說", converted.text)
+        assertEquals(source.spanStyles, converted.spanStyles)
     }
 
     @Test

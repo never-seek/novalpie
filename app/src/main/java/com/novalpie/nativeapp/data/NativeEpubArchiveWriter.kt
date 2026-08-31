@@ -560,6 +560,7 @@ object NativeEpubArchiveWriter {
                 if (chapters.isEmpty()) throw IllegalArgumentException("EPUB 正文不能为空")
                 writeText(zip, "OEBPS/Styles/style.css", stylesheet())
                 writeText(zip, "OEBPS/nav.xhtml", navigationXhtml(metadata.title, chapters))
+                writeText(zip, "OEBPS/toc.ncx", navigationNcx(metadata, chapters, coverRecord))
                 writeText(zip, "OEBPS/content.opf", packageXml(metadata, chapters, images, coverRecord))
                 awaitIfPaused()
                 onProgress(
@@ -923,7 +924,7 @@ object NativeEpubArchiveWriter {
             "    <item id=\"chapter-${chapter.index}\" href=\"chapter-${chapter.index}.xhtml\" media-type=\"application/xhtml+xml\"/>"
         }
         val coverManifest = cover?.path?.let { path ->
-            "    <item id=\"cover-image\" href=\"$path\" media-type=\"${escapeXml(cover.mediaType ?: mediaTypeForPath(path))}\" properties=\"cover-image\"/>"
+            "    <item id=\"cover-image\" href=\"$path\" media-type=\"${escapeXml(cover.mediaType ?: mediaTypeForPath(path))}\"/>"
         }.orEmpty()
         val coverPageManifest = cover?.path?.let {
             "    <item id=\"cover-page\" href=\"cover.xhtml\" media-type=\"application/xhtml+xml\"/>"
@@ -937,10 +938,13 @@ object NativeEpubArchiveWriter {
             "    <itemref idref=\"chapter-${chapter.index}\"/>"
         }
         val coverSpineItem = cover?.path?.let { "    <itemref idref=\"cover-page\"/>" }.orEmpty()
+        val coverGuide = cover?.path?.let {
+            "  <guide><reference type=\"cover\" title=\"封面\" href=\"cover.xhtml\"/></guide>"
+        }.orEmpty()
         return """<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="book-id">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:identifier id="book-id">urn:novalpie:${escapeXml(metadata.title.hashCode().toString())}</dc:identifier>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="book-id">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
+    <dc:identifier id="book-id">${escapeXml(epubIdentifier(metadata))}</dc:identifier>
     <dc:title>${escapeXml(metadata.title)}</dc:title>
     <dc:creator>${escapeXml(metadata.author)}</dc:creator>
     <dc:language>${escapeXml(metadata.language.ifBlank { "zh" })}</dc:language>
@@ -949,18 +953,52 @@ object NativeEpubArchiveWriter {
 ${cover?.path?.let { "    <meta name=\"cover\" content=\"cover-image\"/>" }.orEmpty()}
   </metadata>
   <manifest>
-    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml"/>
     <item id="style" href="Styles/style.css" media-type="text/css"/>
 $chapterManifest
 $coverPageManifest
 $coverManifest
 $imageManifest
   </manifest>
-  <spine>
+  <spine toc="ncx">
 $coverSpineItem
 $spine
   </spine>
+$coverGuide
 </package>"""
+    }
+
+    /** EPUB 2 navigation keeps legacy Android readers from discarding a valid EPUB 3-only nav. */
+    private fun navigationNcx(
+        metadata: NativeEpubMetadata,
+        chapters: List<ChapterRecord>,
+        cover: ImageRecord?,
+    ): String {
+        val entries = buildList {
+            if (cover?.path != null) add("封面" to "cover.xhtml")
+            chapters.forEach { chapter -> add(chapter.title to "chapter-${chapter.index}.xhtml") }
+        }
+        val navPoints = entries.mapIndexed { index, (label, href) ->
+            """    <navPoint id="nav-${index + 1}" playOrder="${index + 1}">
+      <navLabel><text>${escapeXml(label)}</text></navLabel>
+      <content src="$href"/>
+    </navPoint>"""
+        }.joinToString("\n")
+        return """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN" "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head>
+    <meta name="dtb:uid" content="${escapeXml(epubIdentifier(metadata))}"/>
+    <meta name="dtb:depth" content="1"/>
+    <meta name="dtb:totalPageCount" content="0"/>
+    <meta name="dtb:maxPageNumber" content="0"/>
+  </head>
+  <docTitle><text>${escapeXml(metadata.title)}</text></docTitle>
+  <navMap>
+$navPoints
+  </navMap>
+</ncx>"""
     }
 
     private fun coverPageXhtml(metadata: NativeEpubMetadata, cover: ImageRecord): String {
@@ -1013,6 +1051,9 @@ p { margin: 0 0 0.9em; text-indent: 2em; }
         "bmp" -> "image/bmp"
         else -> "image/jpeg"
     }
+
+    private fun epubIdentifier(metadata: NativeEpubMetadata): String =
+        "urn:novalpie:${metadata.title.hashCode()}"
 
     private fun escapeXml(value: String): String = value
         .replace("&", "&amp;")

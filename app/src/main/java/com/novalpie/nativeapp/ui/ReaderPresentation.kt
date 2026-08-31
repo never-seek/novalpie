@@ -60,6 +60,142 @@ internal enum class ReaderPageScrollMotion {
 
 internal fun readerPageScrollMotion(): ReaderPageScrollMotion = ReaderPageScrollMotion.Immediate
 
+/** A measured LazyColumn item expressed without Compose runtime types for page-turn policy tests. */
+internal data class ReaderViewportItem(
+    val index: Int,
+    val offset: Int,
+    val size: Int,
+)
+
+/**
+ * The page-mode veil starts at the first whole rendered block that reaches past the viewport end.
+ * The block remains the next page's first item, so it must not be rendered as a clipped preview at
+ * the bottom of the current page.
+ */
+internal fun readerPageTrailingMaskStartOffset(
+    viewportStartOffset: Int,
+    viewportEndOffset: Int,
+    visibleItems: List<ReaderViewportItem>,
+): Int? {
+    if (viewportEndOffset <= viewportStartOffset) return null
+    return visibleItems
+        .asSequence()
+        .filter { item ->
+            item.size > 0 &&
+                item.offset >= viewportStartOffset &&
+                item.offset < viewportEndOffset &&
+                item.offset + item.size > viewportEndOffset
+        }
+        .sortedWith(compareBy<ReaderViewportItem> { it.offset }.thenBy { it.index })
+        .firstOrNull()
+        ?.offset
+}
+
+/** Backward turns reuse the exact page starts seen during forward turns when available. */
+internal fun readerPageBackwardTargetIndex(
+    pageStartHistory: List<Int>,
+    fallbackTargetIndex: Int?,
+): Int? = pageStartHistory.lastOrNull() ?: fallbackTargetIndex
+
+/**
+ * Resolves a page turn to a rendered item start instead of a raw pixel distance.  That keeps normal
+ * paragraphs, illustrations, chapter separators, and comment boundaries from being split by a
+ * volume-key or side-rail turn.  The backward move uses the number of currently visible items as a
+ * stable previous-page window because LazyColumn only reports the current viewport's measurements.
+ */
+internal fun readerPageScrollTargetIndex(
+    direction: Int,
+    firstVisibleItemIndex: Int,
+    totalItemCount: Int,
+    viewportStartOffset: Int,
+    viewportEndOffset: Int,
+    visibleItems: List<ReaderViewportItem>,
+): Int? {
+    if (totalItemCount <= 0 || direction == 0 || visibleItems.isEmpty()) return null
+    val current = firstVisibleItemIndex.coerceIn(0, totalItemCount - 1)
+    val visible = visibleItems
+        .filter { it.index in 0 until totalItemCount }
+        .sortedWith(compareBy<ReaderViewportItem> { it.offset }.thenBy { it.index })
+    if (visible.isEmpty()) return null
+    return if (direction > 0) {
+        if (current >= totalItemCount - 1) return null
+        val laterItems = visible.filter { it.index > current }
+        // A reader page must finish before the first block that will not entirely fit.  The
+        // previous 85%-viewport target avoided mid-block starts, but it also repeated fully
+        // visible paragraphs on the next page.  Start the next page with the first overflowing
+        // item instead; if all measured items fit, LazyColumn can still position the next index.
+        laterItems.firstOrNull { item -> item.offset + item.size > viewportEndOffset }?.index
+            ?: laterItems.lastOrNull()
+                ?.index
+                ?.plus(1)
+                ?.takeIf { it < totalItemCount }
+    } else {
+        if (current <= 0) return null
+        val visibleWindowSize = visible.count { it.index >= current }.coerceAtLeast(2)
+        (current - (visibleWindowSize - 1)).coerceAtLeast(0)
+    }
+}
+
+/** Fullscreen hides bars normally, but their swipe-revealed state must still inset the article. */
+internal fun readerFullscreenArticleUsesSystemBarInsets(isFullscreen: Boolean): Boolean = isFullscreen
+
+/** The reader registers a single selectable article so a drag can continue across paragraphs. */
+internal enum class ReaderSelectionScope { Article }
+
+internal fun readerSelectionScope(): ReaderSelectionScope = ReaderSelectionScope.Article
+
+/** The website starts every reader chapter with its discussion panel collapsed. */
+internal fun readerChapterCommentsDefaultCollapsed(
+    @Suppress("UNUSED_PARAMETER") pageTurnMode: Boolean,
+    @Suppress("UNUSED_PARAMETER") useInfiniteScroll: Boolean,
+): Boolean = true
+
+internal fun readerChapterCommentsToggleLabel(collapsed: Boolean, commentCount: Int): String =
+    if (collapsed) "展开评论 (${commentCount.coerceAtLeast(0)})" else "收起评论"
+
+internal fun readerChapterCommentsCollapsedSummary(commentCount: Int): String =
+    if (commentCount <= 0) {
+        "暂无评论，点击展开后写评论"
+    } else {
+        "已有 ${commentCount.coerceAtLeast(0)} 条评论，点击展开查看"
+    }
+
+/** Folding a long comment thread must not remove the ability to write the next comment. */
+internal data class ReaderChapterCommentsUiVisibility(
+    val showComposer: Boolean,
+    val showExistingThreads: Boolean,
+)
+
+internal fun readerChapterCommentsUiVisibility(
+    comments: LoadResult<List<ChapterComment>>,
+    collapsed: Boolean,
+): ReaderChapterCommentsUiVisibility {
+    val hasExistingComments = (comments as? LoadResult.Success)?.value?.isNotEmpty() == true
+    return ReaderChapterCommentsUiVisibility(
+        showComposer = !collapsed,
+        showExistingThreads = hasExistingComments && !collapsed,
+    )
+}
+
+/** Reader settings describe the native effect rather than falsely equating dp with web px. */
+internal fun readerLayoutWidthLabel(contentWidthDp: Int): String = when {
+        contentWidthDp >= 1_100 -> "全宽"
+        contentWidthDp >= 920 -> "宽"
+        contentWidthDp >= 640 -> "舒适宽度"
+        else -> "窄"
+    }
+
+/** The control and its collapsed overview must describe the same reading-width preset. */
+internal fun readerContentWidthControlLabel(contentWidthDp: Int): String =
+    readerLayoutWidthLabel(contentWidthDp)
+
+/** Keep the hardware-key preference visible before readers drill into the Layout settings. */
+internal fun readerVolumeKeyPagingOverviewTag(enabled: Boolean): String =
+    if (enabled) "音量键翻页开" else "音量键翻页关"
+
+internal fun readerLayoutOverviewSummary(contentWidthDp: Int, pageTurnMode: Boolean): String =
+    "${readerLayoutWidthLabel(contentWidthDp)} · ${if (pageTurnMode) "翻页模式" else "滚动模式"}"
+
 /** The simulated turn is rendered by a horizontal opaque page cover, not a vertical list fade. */
 internal enum class ReaderPageTurnVisualMode {
     ListViewport,

@@ -81,6 +81,54 @@ internal fun bookDetailAllowsNativeEpubDownload(
     allowDownload: Boolean?,
 ): Boolean = hasAuthToken && allowDownload != false
 
+/** The source only accepts new-chapter requests from logged-in readers of non-upload books. */
+internal fun bookDetailShowsRequestNewChapter(
+    hasAuthToken: Boolean,
+    platform: String?,
+): Boolean = hasAuthToken && !platform.equals("upload", ignoreCase = true)
+
+/**
+ * Actions exposed from the mobile book-detail overflow surface.
+ *
+ * Keeping the action contract outside Compose means permission-sensitive entries such as
+ * "获取新章" cannot silently disappear when the visual container changes.
+ */
+internal enum class BookDetailMenuAction {
+    Terminology,
+    Share,
+    RequestNewChapter,
+    DownloadEpub,
+    DownloadTxt,
+    OpenWeb,
+    EditInfo,
+    ManageChapters,
+    AppendChapters,
+}
+
+internal fun bookDetailMenuActions(
+    requestNewChapterVisible: Boolean,
+    nativeDownloadsVisible: Boolean,
+    canManageBook: Boolean,
+): List<BookDetailMenuAction> = buildList {
+    add(BookDetailMenuAction.Terminology)
+    add(BookDetailMenuAction.Share)
+    if (requestNewChapterVisible) add(BookDetailMenuAction.RequestNewChapter)
+    if (nativeDownloadsVisible) {
+        add(BookDetailMenuAction.DownloadEpub)
+        add(BookDetailMenuAction.DownloadTxt)
+    }
+    add(BookDetailMenuAction.OpenWeb)
+    if (canManageBook) {
+        add(BookDetailMenuAction.EditInfo)
+        add(BookDetailMenuAction.ManageChapters)
+        add(BookDetailMenuAction.AppendChapters)
+    }
+}
+
+/** The fixed detail action bar must not hide a completed source-action result off-screen. */
+internal fun bookDetailActionNotice(message: String?): String? =
+    message?.trim()?.takeIf(String::isNotBlank)
+
 /** The sole EPUB item in native Book Detail writes to Android Downloads, never to a WebView. */
 internal fun nativeEpubDownloadMenuLabel(isDownloading: Boolean): String =
     if (isDownloading) "正在原生下载 EPUB…" else "原生下载 EPUB（保存到下载）"

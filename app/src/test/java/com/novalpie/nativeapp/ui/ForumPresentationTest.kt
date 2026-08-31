@@ -308,6 +308,62 @@ class ForumPresentationTest {
     }
 
     @Test
+    fun pollSelectionHonorsSingleAndMultipleChoiceLimitsBeforeSubmitting() {
+        assertEquals(
+            setOf(75L),
+            forumPollSelectedOptionIdsAfterToggle(
+                selectedOptionIds = emptySet(),
+                optionId = 75L,
+                allowMultiple = false,
+                maxChoices = 1,
+            ),
+        )
+        assertEquals(
+            setOf(76L),
+            forumPollSelectedOptionIdsAfterToggle(
+                selectedOptionIds = setOf(75L),
+                optionId = 76L,
+                allowMultiple = false,
+                maxChoices = 1,
+            ),
+        )
+        assertEquals(
+            setOf(75L, 76L),
+            forumPollSelectedOptionIdsAfterToggle(
+                selectedOptionIds = setOf(75L),
+                optionId = 76L,
+                allowMultiple = true,
+                maxChoices = 2,
+            ),
+        )
+        assertEquals(
+            setOf(75L, 76L),
+            forumPollSelectedOptionIdsAfterToggle(
+                selectedOptionIds = setOf(75L, 76L),
+                optionId = 77L,
+                allowMultiple = true,
+                maxChoices = 2,
+            ),
+        )
+        assertTrue(
+            forumPollCanSubmit(
+                hasAuthToken = true,
+                isClosed = false,
+                userVoteOptionIds = emptySet(),
+                selectedOptionIds = setOf(75L),
+            ),
+        )
+        assertFalse(
+            forumPollCanSubmit(
+                hasAuthToken = true,
+                isClosed = false,
+                userVoteOptionIds = setOf(75L),
+                selectedOptionIds = setOf(75L),
+            ),
+        )
+    }
+
+    @Test
     fun forumContentLinksAreExtractedForPreviewRows() {
         val links = forumContentLinks(
             listOf(

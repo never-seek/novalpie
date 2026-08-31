@@ -171,6 +171,45 @@ class BookDetailPresentationTest {
     }
 
     @Test
+    fun nativeRequestNewChapterIsVisibleOnlyForSignedInNonUploadBooks() {
+        assertTrue(bookDetailShowsRequestNewChapter(hasAuthToken = true, platform = "novelPia"))
+        assertFalse(bookDetailShowsRequestNewChapter(hasAuthToken = false, platform = "novelPia"))
+        assertFalse(bookDetailShowsRequestNewChapter(hasAuthToken = true, platform = "upload"))
+    }
+
+    @Test
+    fun mobileBookMenuKeepsNewChapterAndPermittedNativeActionsReachable() {
+        assertEquals(
+            listOf(
+                BookDetailMenuAction.Terminology,
+                BookDetailMenuAction.Share,
+                BookDetailMenuAction.RequestNewChapter,
+                BookDetailMenuAction.DownloadEpub,
+                BookDetailMenuAction.DownloadTxt,
+                BookDetailMenuAction.OpenWeb,
+                BookDetailMenuAction.EditInfo,
+                BookDetailMenuAction.ManageChapters,
+                BookDetailMenuAction.AppendChapters,
+            ),
+            bookDetailMenuActions(
+                requestNewChapterVisible = true,
+                nativeDownloadsVisible = true,
+                canManageBook = true,
+            ),
+        )
+    }
+
+    @Test
+    fun bookDetailActionNoticeKeepsRequestFailuresVisible() {
+        assertEquals(
+            "获取新章请求失败: 当前已经是最新章节",
+            bookDetailActionNotice("  获取新章请求失败: 当前已经是最新章节  "),
+        )
+        assertEquals(null, bookDetailActionNotice("   "))
+        assertEquals(null, bookDetailActionNotice(null))
+    }
+
+    @Test
     fun nativeEpubUsesTheSameCoverSourceAsTheWebsiteDownloadGenerator() {
         val book = NovelCard(
             id = 350192,

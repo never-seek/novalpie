@@ -12,7 +12,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
@@ -42,7 +41,9 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.verticalScroll
@@ -61,12 +62,14 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -79,13 +82,16 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -94,6 +100,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -107,7 +114,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.animation.core.Animatable
@@ -154,6 +160,8 @@ import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.focus.onFocusChanged
@@ -939,6 +947,7 @@ fun NovalPieApp(
                       onToggleDownloadPause = { viewModel.toggleNativeBookDownloadPause(route.bookId) },
                      onCancelDownload = { viewModel.cancelNativeBookDownload(route.bookId) },
                     onRetryDownload = { viewModel.retryNativeBookDownload(route.bookId) },
+                    onRequestNewChapter = viewModel::requestBookDetailNewChapters,
                     onPreviewBookCover = viewModel::previewBookCover,
                     onSearchAuthor = viewModel::openBookDetailAuthorSearch,
                     onSearchTag = viewModel::openBookDetailTagSearch,
@@ -1048,6 +1057,8 @@ private fun ForumPostDetailRoute(
         onCommentDislike = viewModel::dislikeForumComment,
         onCommentEmoji = viewModel::emojiForumComment,
         onCommentAward = viewModel::awardForumComment,
+        onPollOptionToggle = viewModel::toggleForumPollOption,
+        onSubmitPoll = viewModel::submitForumPoll,
         onOpenUser = viewModel::openUserProfile,
         onOpenLogin = viewModel::openLoginFallback,
         onOpenLink = { link -> openForumRichLink(context, viewModel, link) },
@@ -1906,6 +1917,8 @@ private fun ForumPostDetailScreen(
     onCommentDislike: (ForumComment) -> Unit,
     onCommentEmoji: (ForumComment) -> Unit,
     onCommentAward: (ForumComment) -> Unit,
+    onPollOptionToggle: (Long) -> Unit,
+    onSubmitPoll: () -> Unit,
     onOpenUser: (Long) -> Unit,
     onOpenLogin: () -> Unit,
     onOpenLink: (String) -> Unit,
@@ -1938,10 +1951,15 @@ private fun ForumPostDetailScreen(
                     ForumPostHeader(
                         detail = detail.value,
                         bookReferences = state.bookReferences,
+                        hasAuthToken = hasAuthToken,
+                        selectedPollOptionIds = state.selectedPollOptionIds,
+                        actionLoading = state.actionLoading,
                         onLike = onLike,
                         onDislike = onDislike,
                         onEmoji = onEmoji,
                         onAward = onAward,
+                        onPollOptionToggle = onPollOptionToggle,
+                        onSubmitPoll = onSubmitPoll,
                         onOpenUser = onOpenUser,
                         isScrollInProgress = isScrollInProgress,
                         onOpenLink = onOpenLink,
@@ -2023,10 +2041,15 @@ private fun ForumPostDetailScreen(
 private fun ForumPostHeader(
     detail: ForumPostDetail,
     bookReferences: Map<Long, LoadResult<NovelCard>>,
+    hasAuthToken: Boolean,
+    selectedPollOptionIds: Set<Long>,
+    actionLoading: Boolean,
     onLike: () -> Unit,
     onDislike: () -> Unit,
     onEmoji: () -> Unit,
     onAward: () -> Unit,
+    onPollOptionToggle: (Long) -> Unit,
+    onSubmitPoll: () -> Unit,
     onOpenUser: (Long) -> Unit,
     isScrollInProgress: () -> Boolean,
     onOpenLink: (String) -> Unit,
@@ -2116,6 +2139,17 @@ private fun ForumPostHeader(
                 emptyLabel = "正文暂时为空"
             )
 
+            detail.poll?.takeIf { it.options.isNotEmpty() }?.let { poll ->
+                ForumPollCard(
+                    poll = poll,
+                    hasAuthToken = hasAuthToken,
+                    selectedOptionIds = selectedPollOptionIds,
+                    actionLoading = actionLoading,
+                    onOptionToggle = onPollOptionToggle,
+                    onSubmit = onSubmitPoll,
+                )
+            }
+
             Spacer(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2133,6 +2167,111 @@ private fun ForumPostHeader(
                 onAward = onAward,
                 onOpenWeb = onOpenWeb
             )
+        }
+    }
+}
+
+/** Native result card for source forum polls. It deliberately never submits without an explicit tap. */
+@Composable
+private fun ForumPollCard(
+    poll: com.novalpie.nativeapp.model.ForumPoll,
+    hasAuthToken: Boolean,
+    selectedOptionIds: Set<Long>,
+    actionLoading: Boolean,
+    onOptionToggle: (Long) -> Unit,
+    onSubmit: () -> Unit,
+) {
+    val hasVoted = poll.userVoteOptionIds.isNotEmpty()
+    val interactive = hasAuthToken && !poll.isClosed && !hasVoted && !actionLoading
+    val totalVotes = poll.totalVotes.coerceAtLeast(0)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(NovalPieRadius.md),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.46f),
+    ) {
+        Column(
+            modifier = Modifier.padding(NovalPieSpacing.md),
+            verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
+        ) {
+            Text(
+                text = poll.question?.trim().takeUnless(String?::isNullOrBlank) ?: "投票",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = buildList {
+                    add(if (poll.allowMultiple) "可多选，最多 ${poll.maxChoices.coerceAtLeast(1)} 项" else "单选")
+                    add("$totalVotes 人已投")
+                    poll.endsAt?.trim()?.takeIf(String::isNotBlank)?.let { add("截止 $it") }
+                    if (poll.isClosed) add("已结束")
+                }.joinToString(" · "),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            poll.options.forEach { option ->
+                val selected = (if (hasVoted) poll.userVoteOptionIds else selectedOptionIds).contains(option.id)
+                val voteFraction = if (totalVotes > 0) {
+                    option.voteCount.coerceAtLeast(0).toFloat() / totalVotes.toFloat()
+                } else {
+                    0f
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(NovalPieRadius.sm))
+                        .clickable(enabled = interactive) { onOptionToggle(option.id) }
+                        .padding(vertical = NovalPieSpacing.xxs),
+                    verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xxs),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (poll.allowMultiple) {
+                            Checkbox(
+                                checked = selected,
+                                onCheckedChange = if (interactive) { { onOptionToggle(option.id) } } else null,
+                            )
+                        } else {
+                            RadioButton(
+                                selected = selected,
+                                onClick = if (interactive) { { onOptionToggle(option.id) } } else null,
+                            )
+                        }
+                        Text(
+                            option.text,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            "${option.voteCount.coerceAtLeast(0)} · ${String.format(java.util.Locale.US, "%.0f%%", voteFraction * 100f)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    LinearProgressIndicator(
+                        progress = { voteFraction },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .padding(horizontal = NovalPieSpacing.sm),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                }
+            }
+            when {
+                poll.isClosed -> Text("投票已结束", style = MaterialTheme.typography.labelMedium)
+                hasVoted -> Text("你已投票", style = MaterialTheme.typography.labelMedium)
+                !hasAuthToken -> Text("登录后可投票", style = MaterialTheme.typography.labelMedium)
+                else -> Button(
+                    onClick = onSubmit,
+                    enabled = forumPollCanSubmit(
+                        hasAuthToken = hasAuthToken,
+                        isClosed = poll.isClosed,
+                        userVoteOptionIds = poll.userVoteOptionIds,
+                        selectedOptionIds = selectedOptionIds,
+                    ) && !actionLoading,
+                    modifier = Modifier.align(Alignment.End),
+                ) { Text(if (actionLoading) "提交中" else "提交投票") }
+            }
         }
     }
 }
@@ -5754,6 +5893,7 @@ private fun BookDetailScreen(
     onToggleDownloadPause: () -> Unit,
     onCancelDownload: () -> Unit,
     onRetryDownload: () -> Unit,
+    onRequestNewChapter: () -> Unit,
     onPreviewBookCover: (NovelCard) -> Unit,
     onSearchAuthor: (String) -> Unit,
     onSearchTag: (String) -> Unit,
@@ -5954,6 +6094,7 @@ private fun BookDetailScreen(
                 allowDownload = (state.book as LoadResult.Success).value.allowDownload,
                 favoriteStatus = state.favoriteStatus,
                 favoriteLoading = state.favoriteLoading,
+                actionMessage = state.actionMessage,
                 progress = progressForBook,
                 firstChapter = firstChapter,
                 hasAuthToken = hasAuthToken,
@@ -5971,6 +6112,12 @@ private fun BookDetailScreen(
                 onToggleDownloadPause = onToggleDownloadPause,
                 onCancelDownload = onCancelDownload,
                 onRetryDownload = onRetryDownload,
+                requestNewChapterVisible = bookDetailShowsRequestNewChapter(
+                    hasAuthToken = hasAuthToken,
+                    platform = (state.book as LoadResult.Success).value.platform,
+                ),
+                requestNewChapterLoading = state.requestNewChapterLoading,
+                onRequestNewChapter = onRequestNewChapter,
                 onOpenWeb = onOpenWeb,
             )
         }
@@ -5978,7 +6125,7 @@ private fun BookDetailScreen(
 }
 
 @Composable
-private fun ReaderScreen(
+internal fun ReaderScreen(
     state: ReaderState,
     options: ReaderUiOptions,
     readerFullscreen: Boolean,
@@ -6098,6 +6245,34 @@ private fun ReaderScreen(
     // modes. ReaderSettingsStore and the settings sheet repair that state for future launches.
     val continuousScrollEnabled = options.useInfiniteScroll
     val pageTurnEnabled = options.pageTurnMode && !continuousScrollEnabled
+    var pageStartHistory by remember(state.bookId, state.chapterId) { mutableStateOf(emptyList<Int>()) }
+    LaunchedEffect(pageTurnEnabled) {
+        if (!pageTurnEnabled && pageStartHistory.isNotEmpty()) {
+            pageStartHistory = emptyList()
+        }
+    }
+    val pageTrailingMask by remember(pageTurnEnabled, listState) {
+        derivedStateOf {
+            if (!pageTurnEnabled) {
+                null
+            } else {
+                val layoutInfo = listState.layoutInfo
+                readerPageTrailingMaskStartOffset(
+                    viewportStartOffset = layoutInfo.viewportStartOffset,
+                    viewportEndOffset = layoutInfo.viewportEndOffset,
+                    visibleItems = layoutInfo.visibleItemsInfo.map { item ->
+                        ReaderViewportItem(index = item.index, offset = item.offset, size = item.size)
+                    },
+                )?.let { startOffset ->
+                    ReaderPageTrailingMask(
+                        startOffset = startOffset,
+                        viewportStartOffset = layoutInfo.viewportStartOffset,
+                        viewportEndOffset = layoutInfo.viewportEndOffset,
+                    )
+                }
+            }
+        }
+    }
     val chromeVisible = readerChromeVisible(hasReadableBody, toolbarsVisible.value)
 
     // A new chapter replaces the reader route in-place, so the LazyColumn survives by design.
@@ -6310,6 +6485,18 @@ private fun ReaderScreen(
     fun turnReaderPage(direction: Int, gestureId: Long? = null) {
         if (pageTurnInProgress) return
         val adjacent = adjacentReaderChapters(state.chapterId, chapters)
+        val viewportInfo = listState.layoutInfo
+        val currentPageStartIndex = listState.firstVisibleItemIndex
+        val pageTargetIndex = readerPageScrollTargetIndex(
+            direction = direction,
+            firstVisibleItemIndex = listState.firstVisibleItemIndex,
+            totalItemCount = viewportInfo.totalItemsCount,
+            viewportStartOffset = viewportInfo.viewportStartOffset,
+            viewportEndOffset = viewportInfo.viewportEndOffset,
+            visibleItems = viewportInfo.visibleItemsInfo.map { item ->
+                ReaderViewportItem(index = item.index, offset = item.offset, size = item.size)
+            },
+        )
         val alreadyAtBoundary = if (direction < 0) !listState.canScrollBackward else !listState.canScrollForward
         val immediateTarget = readerPageBoundaryTarget(
             direction = direction,
@@ -6335,6 +6522,15 @@ private fun ReaderScreen(
             openReaderPageBoundary(immediateTarget)
             return
         }
+        // A single block taller than the viewport cannot be advanced without cutting its content.
+        // Keep it stationary rather than silently skipping its unread middle; normal chapter text
+        // and illustrations always resolve to a later item boundary above.
+        val targetIndex = if (direction < 0) {
+            readerPageBackwardTargetIndex(pageStartHistory, pageTargetIndex)
+        } else {
+            pageTargetIndex
+        } ?: return
+        val consumesHistoryEntry = direction < 0 && pageStartHistory.isNotEmpty()
         pageTurnInProgress = true
         if (gestureId != null) lastHandledReaderGestureId = gestureId
         val viewport = (listState.layoutInfo.viewportEndOffset - listState.layoutInfo.viewportStartOffset)
@@ -6342,14 +6538,13 @@ private fun ReaderScreen(
             .coerceAtLeast(320f)
         readerScope.launch {
             try {
-                val distance = viewport * 0.86f * direction
                 val duration = readerPageAnimationDurationMs(options.pageTurnEffect)
                 if (options.pageTurnEffect == "none") {
                     // The explicit no-animation mode must not briefly fade or translate the
                     // article. Move the viewport and leave all visual layers at their settled
                     // values; this is useful for low-power devices and readers who prefer a
                     // purely positional page turn.
-                    listState.scrollBy(distance)
+                    listState.scrollToItem(targetIndex)
                 } else if (readerPageTurnVisualMode(options.pageTurnEffect) == ReaderPageTurnVisualMode.HorizontalCover) {
                     // Cover the article with a paper-colored page entering horizontally. The
                     // underlying LazyColumn is advanced only while that cover is opaque, so the
@@ -6361,7 +6556,7 @@ private fun ReaderScreen(
                     simulatedPageCoverOffset.snapTo(enteringFrom)
                     simulatedPageCoverOffset.animateTo(0f, tween(duration / 2))
                     when (readerPageScrollMotion()) {
-                        ReaderPageScrollMotion.Immediate -> listState.scrollBy(distance)
+                        ReaderPageScrollMotion.Immediate -> listState.scrollToItem(targetIndex)
                     }
                     simulatedPageCoverOffset.animateTo(leavingTo, tween(duration / 2))
                 } else {
@@ -6372,10 +6567,15 @@ private fun ReaderScreen(
                     // Move the viewport in one operation. The old animated LazyColumn movement
                     // looked like a full-text vertical scroll and made volume-key turns delayed.
                     when (readerPageScrollMotion()) {
-                        ReaderPageScrollMotion.Immediate -> listState.scrollBy(distance)
+                        ReaderPageScrollMotion.Immediate -> listState.scrollToItem(targetIndex)
                     }
                     pageAlpha.animateTo(1f, tween(duration / 2))
                     pageOffset.animateTo(0f, tween(duration / 2))
+                }
+                pageStartHistory = when {
+                    direction > 0 -> pageStartHistory + currentPageStartIndex
+                    consumesHistoryEntry -> pageStartHistory.dropLast(1)
+                    else -> pageStartHistory
                 }
                 val reachedBoundary = if (direction < 0) !listState.canScrollBackward else !listState.canScrollForward
                 openReaderPageBoundary(
@@ -6551,6 +6751,11 @@ private fun ReaderScreen(
     }
 
     val ttsHighlightText = ttsController.currentSegmentText
+    val readerSystemBarModifier = if (readerFullscreenArticleUsesSystemBarInsets(readerFullscreen)) {
+        Modifier.windowInsetsPadding(WindowInsets.systemBars)
+    } else {
+        Modifier
+    }
 
     Box(
         modifier = Modifier
@@ -6576,17 +6781,23 @@ private fun ReaderScreen(
             .fillMaxHeight()
             .fillMaxWidth(readerSidePanelWidthFraction())
             .widthIn(max = readerSidePanelMaxWidthDp().dp)
-        LazyColumn(
-            state = listState,
-            userScrollEnabled = !pageTurnEnabled,
-            modifier = Modifier
-                .fillMaxSize()
+        SelectionContainer {
+            LazyColumn(
+                state = listState,
+                userScrollEnabled = !pageTurnEnabled,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(readerSystemBarModifier)
                 .graphicsLayer {
                     val horizontalCover = readerPageTurnVisualMode(options.pageTurnEffect) ==
                         ReaderPageTurnVisualMode.HorizontalCover
                     alpha = if (horizontalCover) 1f else pageAlpha.value
                     translationX = if (horizontalCover) 0f else pageOffset.value
                 }
+                .readerPageTrailingItemMask(
+                    mask = pageTrailingMask,
+                    color = palette.background,
+                )
                 .pointerInput(
                     options.tapAreas,
                     options.showRadialMenu,
@@ -6656,10 +6867,11 @@ private fun ReaderScreen(
                                     action == "sidebar" &&
                                     duration >= 500L
                                 val readerGestureEligible = isShortBodyTap || opensRadialMenu
+                                val inlineInteractionInProgress = inlineCommentInteractionActive.get()
                                 if (
                                     readerBodyTapCanHandle(
                                         isShortBodyTap = readerGestureEligible,
-                                        inlineInteractionInProgress = inlineCommentInteractionActive.get(),
+                                        inlineInteractionInProgress = inlineInteractionInProgress,
                                     ) &&
                                     (action != null || toolbarsVisible.value)
                                 ) {
@@ -6680,14 +6892,14 @@ private fun ReaderScreen(
                             }
                         }
                     }
-                },
-            contentPadding = PaddingValues(
+                    },
+                contentPadding = PaddingValues(
                 top = (if (headerVisible) chromeLayout.headerHeightDp else 0f).dp + options.screenPaddingTopDp.dp,
                 bottom = (if (statusVisible) chromeLayout.statusHeightDp else 0f).dp + options.screenPaddingBottomDp.dp,
             ),
-            verticalArrangement = Arrangement.spacedBy(0.dp)
-        ) {
-            when (val content = state.content) {
+                verticalArrangement = Arrangement.spacedBy(0.dp)
+            ) {
+                when (val content = state.content) {
                     LoadResult.Idle -> item { LibraryStatusLine("等待加载正文") }
                     LoadResult.Loading -> item { LibraryLoadingBlock("正在加载正文") }
                     is LoadResult.Error -> item { NpErrorState(
@@ -6717,15 +6929,16 @@ private fun ReaderScreen(
                         inlineCommentInteractionActive = inlineCommentInteractionActive,
                     )
             }
-            if (hasReadableBody && continuousScrollEnabled) {
-                item(key = readerEndSentinelKey) {
-                    ReaderInfiniteScrollEnd(
-                        state = state,
-                        chapters = chapters,
-                        chapterContents = chapterContents,
-                        onRetryCatalog = onRetryCatalog,
-                        onRetryNextChapter = onLoadNextChapter,
-                    )
+                if (hasReadableBody && continuousScrollEnabled) {
+                    item(key = readerEndSentinelKey) {
+                        ReaderInfiniteScrollEnd(
+                            state = state,
+                            chapters = chapters,
+                            chapterContents = chapterContents,
+                            onRetryCatalog = onRetryCatalog,
+                            onRetryNextChapter = onLoadNextChapter,
+                        )
+                    }
                 }
             }
         }
@@ -6953,6 +7166,41 @@ private fun ReaderScreen(
                 visibleChapterId = visibleReaderChapterId,
                 options = options,
                 chromeLayout = chromeLayout,
+            )
+        }
+    }
+}
+
+private data class ReaderPageTrailingMask(
+    val startOffset: Int,
+    val viewportStartOffset: Int,
+    val viewportEndOffset: Int,
+)
+
+/**
+ * LazyColumn still composes the top of the first item that will become the next page. Paint that
+ * trailing slice with the reader paper color, leaving the item intact so [scrollToItem] can present
+ * it in full on the next turn.
+ */
+private fun Modifier.readerPageTrailingItemMask(
+    mask: ReaderPageTrailingMask?,
+    color: Color,
+): Modifier = if (mask == null) {
+    this
+} else {
+    drawWithContent {
+        drawContent()
+        val top = (mask.startOffset - mask.viewportStartOffset)
+            .toFloat()
+            .coerceIn(0f, size.height)
+        val bottom = (mask.viewportEndOffset - mask.viewportStartOffset)
+            .toFloat()
+            .coerceIn(top, size.height)
+        if (bottom > top) {
+            drawRect(
+                color = color,
+                topLeft = Offset(0f, top),
+                size = Size(size.width, bottom - top),
             )
         }
     }
@@ -7335,9 +7583,10 @@ private fun ReaderStatusBar(
 }
 
 @Composable
-private fun ReaderChapterCommentsSection(
+internal fun ReaderChapterCommentsSection(
     chapterId: Long,
     commentState: ReaderChapterCommentState,
+    defaultCollapsed: Boolean,
     bookReferences: Map<Long, LoadResult<NovelCard>> = commentState.bookReferences,
     inlineCommentInteractionActive: AtomicBoolean,
     onRetry: () -> Unit,
@@ -7356,28 +7605,35 @@ private fun ReaderChapterCommentsSection(
     val spoilerPreference = LocalForumSpoilerPreference.current
     val comments = commentState.comments
     var expandedThreadIds by remember(chapterId) { mutableStateOf(emptySet<Long>()) }
-    Column(
-        modifier = Modifier.readerInlineCommentInteractionGuard(inlineCommentInteractionActive),
-        verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
-    ) {
+    var collapsed by remember(chapterId, defaultCollapsed) { mutableStateOf(defaultCollapsed) }
+    val visibility = readerChapterCommentsUiVisibility(
+        comments = comments,
+        collapsed = collapsed,
+    )
+    // Keep article paragraphs in the outer SelectionContainer, but make the interactive comment
+    // surface its own non-selectable island.  Otherwise the article-level selector claims taps
+    // intended for reply, reaction and expand controls before their click handlers run.
+    DisableSelection {
+        Column(
+            modifier = Modifier.readerInlineCommentInteractionGuard(inlineCommentInteractionActive),
+            verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
+        ) {
         NpSectionHeader(
             title = chapterCommentsSectionTitle(),
             actionLabel = chapterCommentsFallbackLabel(),
-            onAction = onOpenWeb
+            onAction = onOpenWeb,
         )
-        ForumSpoilerToggle(
-            hideSpoilers = spoilerPreference.hideSpoilers,
-            onHideSpoilersChange = spoilerPreference.onChange,
-        )
-        InlineCommentComposer(
-            draft = commentState.draft,
-            replyingToName = commentState.replyingToName,
-            loading = commentState.actionLoading,
-            message = commentState.actionMessage,
-            onDraftChange = onDraftChange,
-            onSubmit = onSubmit,
-            onCancelReply = onCancelReply
-        )
+        if (visibility.showComposer) {
+            InlineCommentComposer(
+                draft = commentState.draft,
+                replyingToName = commentState.replyingToName,
+                loading = commentState.actionLoading,
+                message = commentState.actionMessage,
+                onDraftChange = onDraftChange,
+                onSubmit = onSubmit,
+                onCancelReply = onCancelReply,
+            )
+        }
         when (comments) {
             LoadResult.Idle -> LibraryStatusLine("等待加载章节评论")
             LoadResult.Loading -> LibraryLoadingBlock("正在同步章节评论")
@@ -7387,11 +7643,25 @@ private fun ReaderChapterCommentsSection(
                 onRetry = onRetry
             )
             is LoadResult.Success -> {
-                if (comments.value.isEmpty()) {
+                val commentCount = comments.value.size
+                TextButton(onClick = { collapsed = !collapsed }) {
+                    Text(readerChapterCommentsToggleLabel(collapsed, commentCount))
+                }
+                if (collapsed) {
+                    Text(
+                        readerChapterCommentsCollapsedSummary(commentCount),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (comments.value.isEmpty()) {
                     LibraryStatusLine("还没有章节评论")
                 } else {
                     val threads = chapterCommentThreads(comments.value)
-                    Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)) {
+                    if (visibility.showExistingThreads) Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)) {
+                        ForumSpoilerToggle(
+                            hideSpoilers = spoilerPreference.hideSpoilers,
+                            onHideSpoilersChange = spoilerPreference.onChange,
+                        )
                         Text(
                             chapterCommentThreadSummary(threads, rootLabel = "章节评论"),
                             style = MaterialTheme.typography.labelMedium,
@@ -7415,8 +7685,9 @@ private fun ReaderChapterCommentsSection(
                                 onOpenUser = onOpenUser,
                                 onOpenLink = onOpenLink,
                             )
-                        }
-                    }
+        }
+    }
+}
                 }
             }
         }
@@ -7985,7 +8256,10 @@ private fun readerSettingsOverviewSummary(
     ReaderSettingsCategory.Font -> "${options.fontSizeSp}sp · 行高${formatReaderOptionDecimal(options.lineHeight)}"
     ReaderSettingsCategory.Typography -> "首行缩进 · ${if (options.emptyLine) "保留空行" else "紧凑段落"}"
     ReaderSettingsCategory.Display -> "评论${if (options.showComments) "开" else "关"} · 插图${if (options.showImages) "开" else "关"}"
-    ReaderSettingsCategory.Layout -> "${options.contentWidthDp}dp 宽 · ${if (options.pageTurnMode) "翻页模式" else "滚动模式"}"
+    ReaderSettingsCategory.Layout -> readerLayoutOverviewSummary(
+        contentWidthDp = options.contentWidthDp,
+        pageTurnMode = options.pageTurnMode,
+    )
     ReaderSettingsCategory.Replacement -> options.replaceMode.readerReplaceModeLabel()
     ReaderSettingsCategory.Theme -> readerThemeLabel(options.theme, options.customThemes)
     ReaderSettingsCategory.Tts -> "语速、声音和朗读行为"
@@ -7999,7 +8273,11 @@ private fun readerSettingsOverviewTags(
     ReaderSettingsCategory.Font -> listOf("${options.fontSizeSp}sp", "字重${options.fontWeight}")
     ReaderSettingsCategory.Typography -> listOf(if (options.textIndent) "首行缩进" else "无缩进", if (options.emptyLine) "保留空行" else "紧凑")
     ReaderSettingsCategory.Display -> listOf(if (options.showComments) "评论开" else "评论关", if (options.showTts) "听书开" else "听书关")
-    ReaderSettingsCategory.Layout -> listOf("${options.contentWidthDp}dp", if (options.useInfiniteScroll) "滚动模式" else "翻页模式")
+    ReaderSettingsCategory.Layout -> listOf(
+        readerLayoutWidthLabel(options.contentWidthDp),
+        if (options.useInfiniteScroll) "滚动模式" else "翻页模式",
+        readerVolumeKeyPagingOverviewTag(options.volumeKeyPageTurn),
+    )
     ReaderSettingsCategory.Replacement -> listOf(options.replaceMode.readerReplaceModeLabel())
     ReaderSettingsCategory.Theme -> listOf(readerThemeLabel(options.theme, options.customThemes))
     ReaderSettingsCategory.Tts -> listOf("听书")
@@ -9654,6 +9932,7 @@ private fun BookDetailIntroduction(
 }
 
 /** Source-style fixed actions: collection, menu, and the chapter entry point. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BookDetailBottomActionBar(
     modifier: Modifier = Modifier,
@@ -9664,6 +9943,7 @@ private fun BookDetailBottomActionBar(
     allowDownload: Boolean?,
     favoriteStatus: LoadResult<FavoriteStatus>,
     favoriteLoading: Boolean,
+    actionMessage: String?,
     progress: ReaderProgress?,
     firstChapter: Chapter?,
     hasAuthToken: Boolean,
@@ -9679,12 +9959,21 @@ private fun BookDetailBottomActionBar(
     onToggleDownloadPause: () -> Unit,
     onCancelDownload: () -> Unit,
     onRetryDownload: () -> Unit,
+    requestNewChapterVisible: Boolean,
+    requestNewChapterLoading: Boolean,
+    onRequestNewChapter: () -> Unit,
     onOpenWeb: () -> Unit,
 ) {
     val context = LocalContext.current
     val isFavorited = (favoriteStatus as? LoadResult.Success)?.value?.isFavorited
     val downloadStateForBook = nativeEpubDownloadState.takeIf { it.bookId == bookId }
     var menuExpanded by remember(bookId) { mutableStateOf(false) }
+    val nativeDownloadsVisible = bookDetailAllowsNativeEpubDownload(hasAuthToken, allowDownload)
+    val menuActions = bookDetailMenuActions(
+        requestNewChapterVisible = requestNewChapterVisible,
+        nativeDownloadsVisible = nativeDownloadsVisible,
+        canManageBook = canManageBook,
+    )
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface,
@@ -9736,6 +10025,24 @@ private fun BookDetailBottomActionBar(
                 }
                 }
             }
+            bookDetailActionNotice(actionMessage)?.let { message ->
+                Text(
+                    text = message,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(
+                            start = NovalPieSpacing.screenHorizontal,
+                            end = NovalPieSpacing.screenHorizontal,
+                            top = NovalPieSpacing.xs,
+                        ),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (message.contains("失败") || message.contains("错误")) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -9780,101 +10087,14 @@ private fun BookDetailBottomActionBar(
                 ) {
                     Text("菜单", maxLines = 1)
                     Icon(
-                        imageVector = Icons.Filled.KeyboardArrowUp,
+                        imageVector = if (menuExpanded) {
+                            Icons.Filled.KeyboardArrowUp
+                        } else {
+                            Icons.Filled.KeyboardArrowDown
+                        },
                         contentDescription = null,
                         modifier = Modifier.size(NovalPieSize.iconSm),
                     )
-                }
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("术语表") },
-                        onClick = {
-                            menuExpanded = false
-                            onOpenTerminology()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("分享") },
-                        onClick = {
-                            menuExpanded = false
-                            val shareText = "$bookTitle\nhttps://novalpie.cc/book/$bookId"
-                            context.startActivity(
-                                Intent.createChooser(
-                                    Intent(Intent.ACTION_SEND)
-                                        .setType("text/plain")
-                                        .putExtra(Intent.EXTRA_TEXT, shareText),
-                                    "分享书籍",
-                                ),
-                            )
-                        },
-                    )
-                    if (bookDetailAllowsNativeEpubDownload(hasAuthToken, allowDownload)) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    nativeEpubDownloadMenuLabel(
-                                        isDownloading = nativeEpubDownloadState.busy &&
-                                            nativeEpubDownloadState.bookId == bookId &&
-                                            nativeEpubDownloadState.format == NativeBookDownloadFormat.Epub,
-                                    )
-                                )
-                            },
-                            enabled = !nativeEpubDownloadState.busy,
-                            onClick = {
-                                menuExpanded = false
-                                onDownloadEpub()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    nativeTxtDownloadMenuLabel(
-                                        isDownloading = nativeEpubDownloadState.busy &&
-                                            nativeEpubDownloadState.bookId == bookId &&
-                                            nativeEpubDownloadState.format == NativeBookDownloadFormat.Txt,
-                                    )
-                                )
-                            },
-                            enabled = !nativeEpubDownloadState.busy,
-                            onClick = {
-                                menuExpanded = false
-                                onDownloadTxt()
-                            },
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = { Text("打开网页详情") },
-                        onClick = {
-                            menuExpanded = false
-                            onOpenWeb()
-                        },
-                    )
-                    if (canManageBook) {
-                        DropdownMenuItem(
-                            text = { Text("编辑信息") },
-                            onClick = {
-                                menuExpanded = false
-                                onEditInfo()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("章节管理") },
-                            onClick = {
-                                menuExpanded = false
-                                onManageChapters()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("追加章节") },
-                            onClick = {
-                                menuExpanded = false
-                                onAppendChapters()
-                            },
-                        )
-                    }
                 }
             }
                 Button(
@@ -9892,6 +10112,83 @@ private fun BookDetailBottomActionBar(
                         if (progress != null) "继续阅读" else "立即阅读 (${chapterCount.coerceAtLeast(0)}章)",
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+    if (menuExpanded) {
+        ModalBottomSheet(
+            onDismissRequest = { menuExpanded = false },
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp),
+                contentPadding = PaddingValues(bottom = NovalPieSpacing.lg),
+            ) {
+                item {
+                    Text(
+                        text = "书籍操作",
+                        modifier = Modifier.padding(
+                            horizontal = NovalPieSpacing.screenHorizontal,
+                            vertical = NovalPieSpacing.sm,
+                        ),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    HorizontalDivider()
+                }
+                items(menuActions, key = { action -> action.name }) { action ->
+                    val enabled = action != BookDetailMenuAction.RequestNewChapter || !requestNewChapterLoading
+                    val label = when (action) {
+                        BookDetailMenuAction.Terminology -> "术语表"
+                        BookDetailMenuAction.Share -> "分享"
+                        BookDetailMenuAction.RequestNewChapter -> {
+                            if (requestNewChapterLoading) "正在获取新章…" else "获取新章"
+                        }
+                        BookDetailMenuAction.DownloadEpub -> nativeEpubDownloadMenuLabel(
+                            isDownloading = nativeEpubDownloadState.busy &&
+                                nativeEpubDownloadState.bookId == bookId &&
+                                nativeEpubDownloadState.format == NativeBookDownloadFormat.Epub,
+                        )
+                        BookDetailMenuAction.DownloadTxt -> nativeTxtDownloadMenuLabel(
+                            isDownloading = nativeEpubDownloadState.busy &&
+                                nativeEpubDownloadState.bookId == bookId &&
+                                nativeEpubDownloadState.format == NativeBookDownloadFormat.Txt,
+                        )
+                        BookDetailMenuAction.OpenWeb -> "打开网页详情"
+                        BookDetailMenuAction.EditInfo -> "编辑信息"
+                        BookDetailMenuAction.ManageChapters -> "章节管理"
+                        BookDetailMenuAction.AppendChapters -> "追加章节"
+                    }
+                    ListItem(
+                        headlineContent = { Text(label) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = enabled) {
+                                menuExpanded = false
+                                when (action) {
+                                    BookDetailMenuAction.Terminology -> onOpenTerminology()
+                                    BookDetailMenuAction.Share -> {
+                                        val shareText = "$bookTitle\nhttps://novalpie.cc/book/$bookId"
+                                        context.startActivity(
+                                            Intent.createChooser(
+                                                Intent(Intent.ACTION_SEND)
+                                                    .setType("text/plain")
+                                                    .putExtra(Intent.EXTRA_TEXT, shareText),
+                                                "分享书籍",
+                                            ),
+                                        )
+                                    }
+                                    BookDetailMenuAction.RequestNewChapter -> onRequestNewChapter()
+                                    BookDetailMenuAction.DownloadEpub -> onDownloadEpub()
+                                    BookDetailMenuAction.DownloadTxt -> onDownloadTxt()
+                                    BookDetailMenuAction.OpenWeb -> onOpenWeb()
+                                    BookDetailMenuAction.EditInfo -> onEditInfo()
+                                    BookDetailMenuAction.ManageChapters -> onManageChapters()
+                                    BookDetailMenuAction.AppendChapters -> onAppendChapters()
+                                }
+                            },
                     )
                 }
             }
@@ -10815,7 +11112,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readerBodyItems(
                         topPadding = if (index == 0 && chapter.title.isNullOrBlank()) 20.dp else 0.dp,
                         bottomPadding = textLayout.paragraphSpacingDp.dp,
                     ) {
-                        ReaderParagraph(block.value, textLayout, readerPalette(options), highlightedText)
+                        ReaderParagraph(
+                            value = block.formatted ?: ReaderFormattedParagraph(block.value),
+                            textLayout = textLayout,
+                            palette = readerPalette(options),
+                            highlightedText = highlightedText,
+                        )
                     }
                 }
                 is ReaderContentBlock.Image -> if (options.showImages) {
@@ -10857,6 +11159,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readerBodyItems(
                     chapterId = chapter.chapterId,
                     commentState = chapterCommentStates[chapter.chapterId]
                         ?: readerChapterCommentState(fallbackCommentState, chapter.chapterId),
+                    defaultCollapsed = readerChapterCommentsDefaultCollapsed(
+                        pageTurnMode = options.pageTurnMode,
+                        useInfiniteScroll = options.useInfiniteScroll,
+                    ),
                     bookReferences = (chapterCommentStates[chapter.chapterId]
                         ?: readerChapterCommentState(fallbackCommentState, chapter.chapterId))
                         .bookReferences,
@@ -10958,11 +11264,10 @@ private fun ReaderChapterHeading(
     textLayout: ReaderTextLayout,
     palette: ReaderPalette,
 ) {
-    SelectionContainer {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
             // Source chapter separators use a 2px top rule before the subdued heading, not a
             // heavy divider below it. Keeping it above the title produces the same calm rhythm.
             Box(
@@ -10983,21 +11288,21 @@ private fun ReaderChapterHeading(
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
             Spacer(modifier = Modifier.height(textLayout.titleBottomSpacingDp.dp))
-        }
     }
 }
 
 @Composable
 private fun ReaderParagraph(
-    value: String,
+    value: ReaderFormattedParagraph,
     textLayout: ReaderTextLayout,
     palette: ReaderPalette,
     highlightedText: String? = null,
 ) {
-    SelectionContainer {
-        val displayText = readerTextWithWordSpacing(value, textLayout.wordSpacingSp)
+    val displayText = readerTextWithWordSpacing(value.text, textLayout.wordSpacingSp)
         val highlight = highlightedText?.trim()?.takeIf(String::isNotBlank)
-        val annotated = buildAnnotatedString {
+        val annotated = if (highlight == null || !value.spanStyles.isEmpty()) {
+            value.toAnnotatedString()
+        } else buildAnnotatedString {
             val start = highlight?.let(displayText::indexOf)?.takeIf { it >= 0 }
             if (start == null) {
                 append(displayText)
@@ -11023,7 +11328,6 @@ private fun ReaderParagraph(
             ),
             color = palette.text,
         )
-    }
 }
 
 @Composable

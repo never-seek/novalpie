@@ -854,13 +854,35 @@ data class ForumPostPage(
     val totalPages: Int? = null
 )
 
+/** Source poll option retained verbatim enough for native result rendering and a vote submission. */
+data class ForumPollOption(
+    val id: Long,
+    val text: String,
+    val voteCount: Int = 0,
+    val sortOrder: Int? = null,
+)
+
+/** A forum-post poll is part of the post detail payload, not a separate WebView-only feature. */
+data class ForumPoll(
+    val id: Long = 0L,
+    val question: String? = null,
+    val allowMultiple: Boolean = false,
+    val maxChoices: Int = 1,
+    val endsAt: String? = null,
+    val isClosed: Boolean = false,
+    val totalVotes: Int = 0,
+    val options: List<ForumPollOption> = emptyList(),
+    val userVoteOptionIds: Set<Long> = emptySet(),
+)
+
 data class ForumPostDetail(
     val post: ForumPost,
     val content: String? = null,
     val likeCount: Int? = null,
     val dislikeCount: Int? = null,
     val reactionCount: Int? = null,
-    val awardPoints: Int? = null
+    val awardPoints: Int? = null,
+    val poll: ForumPoll? = null,
 )
 
 data class ForumComment(

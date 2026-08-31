@@ -140,6 +140,8 @@ import com.novalpie.nativeapp.model.UserCheckinAction
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -542,7 +544,9 @@ data class ForumPostDetailState(
     val commentClientRequestId: String? = null,
     val expandedCommentIds: Set<Long> = emptySet(),
     val actionMessage: String? = null,
-    val actionLoading: Boolean = false
+    val actionLoading: Boolean = false,
+    /** Locally staged option ids are kept separate from the source's authoritative user votes. */
+    val selectedPollOptionIds: Set<Long> = emptySet(),
 )
 
 /**
@@ -683,7 +687,8 @@ data class BookDetailState(
     val replyingToName: String? = null,
     val favoriteLoading: Boolean = false,
     val actionMessage: String? = null,
-    val actionLoading: Boolean = false
+    val actionLoading: Boolean = false,
+    val requestNewChapterLoading: Boolean = false,
 )
 
 enum class NativeBookDownloadFormat {
@@ -1046,6 +1051,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private var authRequestSerial = 0L
     private var readerRequestSerial = 0L
     private var readerCatalogRequestSerial = 0L
+    private val readerProgressSyncMutex = Mutex()
+    private var readerProgressSyncRevision = 0L
     private var imagePreviewRequestSerial = 0L
     /**
      * Native downloads are long-running and must have an explicit lifecycle.  Keeping the job and
@@ -5562,6 +5569,67 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         forumPostDetailState = forumPostDetailState.copy(expandedCommentIds = expanded)
     }
 
+    fun toggleForumPollOption(optionId: Long) {
+        val poll = (forumPostDetailState.detail as? LoadResult.Success<ForumPostDetail>)?.value?.poll ?: return
+        if (poll.isClosed || poll.userVoteOptionIds.isNotEmpty()) return
+        forumPostDetailState = forumPostDetailState.copy(
+            selectedPollOptionIds = forumPollSelectedOptionIdsAfterToggle(
+                selectedOptionIds = forumPostDetailState.selectedPollOptionIds,
+                optionId = optionId,
+                allowMultiple = poll.allowMultiple,
+                maxChoices = poll.maxChoices,
+            ),
+        )
+    }
+
+    /** Submits the source-compatible poll payload and reloads only after the server accepts it. */
+    fun submitForumPoll() {
+        val postId = forumPostDetailState.postId
+        val poll = (forumPostDetailState.detail as? LoadResult.Success<ForumPostDetail>)?.value?.poll ?: return
+        val selected = forumPostDetailState.selectedPollOptionIds
+        if (
+            postId <= 0 || forumPostDetailState.actionLoading ||
+            !forumPollCanSubmit(
+                hasAuthToken = !authToken.isNullOrBlank(),
+                isClosed = poll.isClosed,
+                userVoteOptionIds = poll.userVoteOptionIds,
+                selectedOptionIds = selected,
+            )
+        ) return
+        val routeRequestSerial = forumPostDetailRequestSerial
+        forumPostDetailState = forumPostDetailState.copy(actionLoading = true, actionMessage = null)
+        viewModelScope.launch {
+            val result = runCatching { api.submitForumPoll(postId, selected.toList()) }
+            if (
+                routeRequestSerial != forumPostDetailRequestSerial ||
+                currentRoute != AppRoute.ForumPostDetail(postId) ||
+                forumPostDetailState.postId != postId
+            ) return@launch
+            forumPostDetailState = result.fold(
+                onSuccess = { action ->
+                    forumPostDetailState.copy(
+                        actionLoading = false,
+                        actionMessage = action.message ?: if (action.success) "投票已提交" else "投票提交失败",
+                        selectedPollOptionIds = if (action.success) emptySet() else selected,
+                    )
+                },
+                onFailure = { failure ->
+                    forumPostDetailState.copy(
+                        actionLoading = false,
+                        actionMessage = apiFailureMessage("投票", failure),
+                    )
+                },
+            )
+            if (result.getOrNull()?.success == true) {
+                loadForumPostDetail(
+                    postId = postId,
+                    preservedActionMessage = forumPostDetailState.actionMessage,
+                    retainVisibleComments = true,
+                )
+            }
+        }
+    }
+
     fun submitForumComment() {
         val postId = forumPostDetailState.postId
         val content = forumPostDetailState.commentDraft.trim()
@@ -7781,6 +7849,39 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    /** Ask the source to fetch new chapters; this is intentionally not a local catalogue refresh. */
+    fun requestBookDetailNewChapters() {
+        val state = bookDetailState
+        val book = (state.book as? LoadResult.Success)?.value ?: return
+        if (
+            state.bookId <= 0 || state.requestNewChapterLoading ||
+            !bookDetailShowsRequestNewChapter(!authToken.isNullOrBlank(), book.platform)
+        ) return
+        val requestSerial = bookDetailRequestSerial
+        bookDetailState = state.copy(requestNewChapterLoading = true, actionMessage = null)
+        viewModelScope.launch {
+            val result = runCatching { api.requestNovelChapters(book.id) }
+            if (
+                !isFreshRequestSerial(requestSerial, bookDetailRequestSerial) ||
+                !isFreshBookDetailResult(currentRoute, bookDetailState, book.id)
+            ) return@launch
+            bookDetailState = result.fold(
+                onSuccess = { action ->
+                    bookDetailState.copy(
+                        requestNewChapterLoading = false,
+                        actionMessage = action.message ?: if (action.success) "已提交获取新章请求" else "获取新章失败",
+                    )
+                },
+                onFailure = { failure ->
+                    bookDetailState.copy(
+                        requestNewChapterLoading = false,
+                        actionMessage = apiFailureMessage("获取新章", failure),
+                    )
+                },
+            )
+        }
+    }
+
     private data class NativeDownloadDestination(
         val displayName: String,
         val mimeType: String,
@@ -8805,6 +8906,15 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         readerProgressRevision += 1
         if (bookDetailState.bookId == bookId) {
             bookDetailState = bookDetailState.copy(readerProgress = readerProgressStore.load(bookId))
+        }
+        if (!authToken.isNullOrBlank()) {
+            val syncRevision = ++readerProgressSyncRevision
+            viewModelScope.launch {
+                readerProgressSyncMutex.withLock {
+                    if (syncRevision != readerProgressSyncRevision) return@withLock
+                    runCatching { api.saveReadingProgress(bookId, chapterId) }
+                }
+            }
         }
     }
 

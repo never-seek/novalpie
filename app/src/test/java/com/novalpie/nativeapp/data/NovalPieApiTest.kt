@@ -3303,6 +3303,114 @@ class NovalPieApiTest {
     }
 
     @Test
+    fun forumPostDetailRetainsTheSourcePollQuestionOptionsTotalsAndCurrentVote() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "id": 1871,
+                      "type": "discussion",
+                      "title": "Native feedback",
+                      "poll": {
+                        "id": 19,
+                        "question": "用下来感觉咋样？",
+                        "allow_multiple": false,
+                        "max_choices": 1,
+                        "ends_at": "2026-09-10 00:00:00",
+                        "is_closed": false,
+                        "total_votes": 3,
+                        "options": [
+                          { "id": 75, "text": "挺好用", "vote_count": 0, "sort_order": 0 },
+                          { "id": 76, "text": "有点小毛病", "vote_count": 3, "sort_order": 1 }
+                        ],
+                        "user_votes": [76]
+                      }
+                    }
+                    """.trimIndent()
+                )
+        )
+
+        val poll = api.forumPostDetail(1871).poll ?: throw AssertionError("expected source poll")
+
+        assertEquals(19L, poll.id)
+        assertEquals("用下来感觉咋样？", poll.question)
+        assertFalse(poll.allowMultiple)
+        assertEquals(1, poll.maxChoices)
+        assertEquals("2026-09-10 00:00:00", poll.endsAt)
+        assertFalse(poll.isClosed)
+        assertEquals(3, poll.totalVotes)
+        assertEquals(listOf(75L, 76L), poll.options.map { it.id })
+        assertEquals(listOf("挺好用", "有点小毛病"), poll.options.map { it.text })
+        assertEquals(listOf(0, 3), poll.options.map { it.voteCount })
+        assertEquals(setOf(76L), poll.userVoteOptionIds)
+    }
+
+    @Test
+    fun submitForumPollUsesTheSourceOptionIdsPayload() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody("""{"success":true,"message":"已投票"}""")
+        )
+
+        val result = api.submitForumPoll(postId = 1871, optionIds = listOf(75L))
+
+        assertTrue(result.success)
+        assertEquals("已投票", result.message)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/posts/1871/polls", request.requestUrl?.encodedPath)
+        assertEquals(listOf(75L), JSONObject(request.body.readUtf8())
+            .getJSONArray("option_ids")
+            .let { values -> (0 until values.length()).map(values::getLong) })
+    }
+
+    @Test
+    fun requestNovelChaptersUsesTheSourceNativeEndpoint() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody("""{"success":true,"message":"已提交获取新章节请求"}""")
+        )
+
+        val result = api.requestNovelChapters(354491)
+
+        assertTrue(result.success)
+        assertEquals("已提交获取新章节请求", result.message)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/v2/novels/354491/chapters/request", request.requestUrl?.encodedPath)
+        assertEquals("{}", request.body.readUtf8())
+    }
+
+    @Test
+    fun saveReadingProgressUsesSourceEndpointAndPayload() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody("""{"success":true,"message":"阅读进度已同步"}""")
+        )
+
+        val result = api.saveReadingProgress(
+            novelId = 354491,
+            chapterId = 6992449,
+            readingPercentage = 0.42,
+        )
+
+        assertTrue(result.success)
+        assertEquals("阅读进度已同步", result.message)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/reader/progress", request.requestUrl?.encodedPath)
+        val payload = JSONObject(request.body.readUtf8())
+        assertEquals(354491L, payload.getLong("novel_id"))
+        assertEquals(6992449L, payload.getLong("chapter_id"))
+        assertEquals(0.42, payload.getDouble("reading_percentage"), 0.0001)
+    }
+
+    @Test
     fun forumPostCommentsNormalizeWebsiteAliasesAndSendReadonlyParameters() = runBlocking {
         server.enqueue(
             MockResponse()

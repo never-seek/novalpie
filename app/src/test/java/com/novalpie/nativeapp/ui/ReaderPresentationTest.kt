@@ -243,27 +243,12 @@ class ReaderPresentationTest {
     }
 
     @Test
-    fun readerBodyTapRemainsEligibleWhenSelectableTextConsumesTheFinalPointerPass() {
-        assertTrue(
-            readerBodyTapIsEligible(
-                moved = false,
-                durationMillis = 120L,
-                longPressTimeoutMillis = 500L,
-            ),
-        )
+    fun readerChromeDoesNotHandleAnyTapThatStartsOnAnInlineCommentSurface() {
         assertFalse(
-            readerBodyTapIsEligible(
-                moved = true,
-                durationMillis = 120L,
-                longPressTimeoutMillis = 500L,
-            ),
-        )
-        assertFalse(
-            readerBodyTapIsEligible(
-                moved = false,
-                durationMillis = 500L,
-                longPressTimeoutMillis = 500L,
-            ),
+            readerBodyTapCanHandle(
+                isShortBodyTap = true,
+                inlineInteractionInProgress = true,
+            )
         )
     }
 
@@ -784,6 +769,160 @@ class ReaderPresentationTest {
     }
 
     @Test
+    fun pageTurnsSnapToAReaderItemBoundaryInsteadOfAViewportPixelFraction() {
+        val firstPageItems = listOf(
+            ReaderViewportItem(index = 0, offset = 0, size = 220),
+            ReaderViewportItem(index = 1, offset = 220, size = 300),
+            ReaderViewportItem(index = 2, offset = 520, size = 330),
+            ReaderViewportItem(index = 3, offset = 850, size = 220),
+        )
+
+        assertEquals(
+            3,
+            readerPageScrollTargetIndex(
+                direction = 1,
+                firstVisibleItemIndex = 0,
+                totalItemCount = 8,
+                viewportStartOffset = 0,
+                viewportEndOffset = 1_000,
+                visibleItems = firstPageItems,
+            ),
+        )
+        val laterPageItems = listOf(
+            ReaderViewportItem(index = 3, offset = 0, size = 220),
+            ReaderViewportItem(index = 4, offset = 220, size = 300),
+            ReaderViewportItem(index = 5, offset = 520, size = 330),
+            ReaderViewportItem(index = 6, offset = 850, size = 220),
+        )
+        assertEquals(
+            0,
+            readerPageScrollTargetIndex(
+                direction = -1,
+                firstVisibleItemIndex = 3,
+                totalItemCount = 8,
+                viewportStartOffset = 0,
+                viewportEndOffset = 1_000,
+                visibleItems = laterPageItems,
+            ),
+        )
+    }
+
+    @Test
+    fun pageTurnsBeginWithTheFirstItemThatWouldOverflowThePreviousPage() {
+        val currentPageItems = listOf(
+            ReaderViewportItem(index = 0, offset = 0, size = 120),
+            ReaderViewportItem(index = 8, offset = 800, size = 60),
+            ReaderViewportItem(index = 9, offset = 860, size = 60),
+            ReaderViewportItem(index = 10, offset = 920, size = 120),
+        )
+
+        assertEquals(
+            10,
+            readerPageScrollTargetIndex(
+                direction = 1,
+                firstVisibleItemIndex = 0,
+                totalItemCount = 13,
+                viewportStartOffset = 0,
+                viewportEndOffset = 1_000,
+                visibleItems = currentPageItems,
+            ),
+        )
+    }
+
+    @Test
+    fun pageViewportHidesTheTrailingItemThatWouldOtherwiseBeSplitAcrossTwoPages() {
+        val partiallyVisibleNextItem = listOf(
+            ReaderViewportItem(index = 0, offset = 0, size = 220),
+            ReaderViewportItem(index = 1, offset = 220, size = 300),
+            ReaderViewportItem(index = 2, offset = 520, size = 330),
+            ReaderViewportItem(index = 3, offset = 850, size = 220),
+        )
+        assertEquals(
+            850,
+            readerPageTrailingMaskStartOffset(
+                viewportStartOffset = 0,
+                viewportEndOffset = 1_000,
+                visibleItems = partiallyVisibleNextItem,
+            ),
+        )
+        assertNull(
+            readerPageTrailingMaskStartOffset(
+                viewportStartOffset = 0,
+                viewportEndOffset = 1_000,
+                visibleItems = partiallyVisibleNextItem.dropLast(1),
+            ),
+        )
+    }
+
+    @Test
+    fun pageHistoryReturnsToTheExactPriorPageInsteadOfEstimatingByVisibleItemCount() {
+        assertEquals(
+            4,
+            readerPageBackwardTargetIndex(
+                pageStartHistory = listOf(0, 4),
+                fallbackTargetIndex = 0,
+            ),
+        )
+        assertEquals(
+            2,
+            readerPageBackwardTargetIndex(
+                pageStartHistory = emptyList(),
+                fallbackTargetIndex = 2,
+            ),
+        )
+    }
+
+    @Test
+    fun fullscreenReaderKeepsDynamicSystemBarProtectionForTransientBars() {
+        assertTrue(readerFullscreenArticleUsesSystemBarInsets(isFullscreen = true))
+        assertFalse(readerFullscreenArticleUsesSystemBarInsets(isFullscreen = false))
+    }
+
+    @Test
+    fun readerTextSelectionUsesOneArticleScopeRatherThanOneScopePerParagraph() {
+        assertEquals(ReaderSelectionScope.Article, readerSelectionScope())
+    }
+
+    @Test
+    fun everyReaderChapterStartsWithItsCommentSectionCollapsedLikeTheWebsite() {
+        assertTrue(readerChapterCommentsDefaultCollapsed(pageTurnMode = true, useInfiniteScroll = false))
+        assertTrue(readerChapterCommentsDefaultCollapsed(pageTurnMode = false, useInfiniteScroll = true))
+        assertTrue(readerChapterCommentsDefaultCollapsed(pageTurnMode = false, useInfiniteScroll = false))
+        assertEquals("展开评论 (3)", readerChapterCommentsToggleLabel(collapsed = true, commentCount = 3))
+        assertEquals("收起评论", readerChapterCommentsToggleLabel(collapsed = false, commentCount = 3))
+        assertEquals("暂无评论，点击展开后写评论", readerChapterCommentsCollapsedSummary(0))
+        assertEquals("已有 3 条评论，点击展开查看", readerChapterCommentsCollapsedSummary(3))
+    }
+
+    @Test
+    fun readerLayoutOverviewUsesReadingWidthRatherThanRawDp() {
+        assertEquals("舒适宽度", readerLayoutWidthLabel(contentWidthDp = 800))
+        assertEquals("全宽", readerLayoutWidthLabel(contentWidthDp = 1_200))
+        assertEquals(
+            "舒适宽度 · 翻页模式",
+            readerLayoutOverviewSummary(contentWidthDp = 800, pageTurnMode = true),
+        )
+        assertEquals(
+            "全宽 · 滚动模式",
+            readerLayoutOverviewSummary(contentWidthDp = 1_200, pageTurnMode = false),
+        )
+    }
+
+    @Test
+    fun readerWidthControlUsesTheSameReaderNamesAsTheLayoutOverview() {
+        assertEquals("窄", readerContentWidthControlLabel(contentWidthDp = 480))
+        assertEquals("舒适宽度", readerContentWidthControlLabel(contentWidthDp = 800))
+        assertEquals("宽", readerContentWidthControlLabel(contentWidthDp = 1_000))
+        assertEquals("全宽", readerContentWidthControlLabel(contentWidthDp = 1_200))
+    }
+
+    @Test
+    fun readerLayoutOverviewMakesVolumeKeyPagingDiscoverable() {
+        assertEquals("音量键翻页开", readerVolumeKeyPagingOverviewTag(enabled = true))
+        assertEquals("音量键翻页关", readerVolumeKeyPagingOverviewTag(enabled = false))
+    }
+
+    @Test
     fun simulatedPageTurnsUseAHorizontalCoverInsteadOfAVerticalScrollEffect() {
         assertEquals(
             ReaderPageTurnVisualMode.HorizontalCover,
@@ -936,5 +1075,35 @@ class ReaderPresentationTest {
         assertEquals("Reply User", next.replyingToName)
         assertFalse(next.actionLoading)
         assertEquals("章节评论提交失败：network", next.actionMessage)
+    }
+
+    @Test
+    fun collapsedChapterCommentsHideTheComposerAndExistingThreadsUntilExpanded() {
+        val comment = ChapterComment(
+            id = 1,
+            chapterId = 9,
+            authorName = "读者",
+            content = "已有评论",
+        )
+
+        val collapsed = readerChapterCommentsUiVisibility(
+            comments = LoadResult.Success(listOf(comment)),
+            collapsed = true,
+        )
+        val empty = readerChapterCommentsUiVisibility(
+            comments = LoadResult.Success(emptyList()),
+            collapsed = false,
+        )
+        val collapsedEmpty = readerChapterCommentsUiVisibility(
+            comments = LoadResult.Success(emptyList()),
+            collapsed = true,
+        )
+
+        assertFalse(collapsed.showComposer)
+        assertFalse(collapsed.showExistingThreads)
+        assertTrue(empty.showComposer)
+        assertFalse(empty.showExistingThreads)
+        assertFalse(collapsedEmpty.showComposer)
+        assertFalse(collapsedEmpty.showExistingThreads)
     }
 }

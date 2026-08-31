@@ -459,6 +459,13 @@ class NativeEpubArchiveWriterTest {
         assertTrue(opf.contains("name=\"cover\" content=\"cover-image\""))
         assertTrue(opf.contains("id=\"cover-page\""))
         assertTrue(opf.contains("idref=\"cover-page\""))
+        assertTrue(opf.contains("version=\"2.0\""))
+        assertTrue(opf.contains("id=\"ncx\" href=\"toc.ncx\""))
+        assertTrue(opf.contains("<spine toc=\"ncx\">"))
+        assertTrue(opf.contains("<reference type=\"cover\""))
+        val ncx = entries.getValue("OEBPS/toc.ncx").toString(Charsets.UTF_8)
+        assertTrue(ncx.contains("src=\"cover.xhtml\""))
+        assertTrue(ncx.contains("src=\"chapter-1.xhtml\""))
         assertEquals(1, progress.last().totalImages)
         assertEquals(1, progress.last().completedImages)
     }

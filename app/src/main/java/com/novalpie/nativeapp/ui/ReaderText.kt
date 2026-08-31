@@ -1,12 +1,24 @@
 package com.novalpie.nativeapp.ui
 
 import android.text.Html
+import android.text.Spanned
+import android.text.style.StyleSpan
 import android.os.Build
+import android.graphics.Typeface
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import com.novalpie.nativeapp.model.ChapterIllustration
 import com.novalpie.nativeapp.model.ReaderContent
 
 internal sealed interface ReaderContentBlock {
-    data class Text(val value: String) : ReaderContentBlock
+    data class Text(
+        val value: String,
+        /** Kept only for reader rendering; other consumers retain the plain source-compatible value. */
+        val formatted: ReaderFormattedParagraph? = null,
+    ) : ReaderContentBlock
     data class Image(
         val url: String,
         val alt: String? = null,
@@ -14,6 +26,12 @@ internal sealed interface ReaderContentBlock {
         val originalUrl: String? = null,
     ) : ReaderContentBlock
 }
+
+/** Reader prose plus the source emphasis spans retained from rendered HTML. */
+internal data class ReaderFormattedParagraph(
+    val text: String,
+    val spanStyles: List<AnnotatedString.Range<SpanStyle>> = emptyList(),
+)
 
 internal fun readerImagePlaceholdersFromIllustrations(
     illustrations: List<ChapterIllustration>
@@ -153,6 +171,35 @@ internal fun readerParagraphsFromContent(raw: String): List<String> {
         }
 }
 
+/**
+ * Converts the chapter's safe HTML subset into display text without losing <strong>/<b> ranges.
+ * The normal paragraph splitter remains the source of truth for article rhythm; this rich parser
+ * is deliberately scoped to an individual reader paragraph so markup never leaks across blocks.
+ */
+internal fun readerFormattedParagraphsFromContent(raw: String): List<ReaderFormattedParagraph> {
+    val source = raw.trim()
+    if (source.isBlank()) return emptyList()
+    if (!source.contains('<') || !source.contains('>')) {
+        return readerParagraphsFromContent(source)
+            .map { paragraph -> applyMarkdownBoldRanges(ReaderFormattedParagraph(paragraph)) }
+    }
+    val prepared = source
+        .replace(consecutiveBreakTagRegex, PARAGRAPH_BREAK_MARKER)
+        .replace(breakTagRegex, LINE_BREAK_MARKER)
+        .replace(blockEndTagRegex, PARAGRAPH_BREAK_MARKER)
+    val spanned = htmlToSpanned(
+        if (readerStructuralMarkupRegex.containsMatchIn(source)) prepared else prepared.replace("\n", "<br>")
+    )
+    val normalizedText = spanned.toString()
+        .replace('\u00A0', ' ')
+        .replace(LINE_BREAK_MARKER, "\n")
+        .replace(PARAGRAPH_BREAK_MARKER, "\n\n")
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+    return splitReaderFormattedParagraphs(normalizedText, spanned)
+        .map(::applyMarkdownBoldRanges)
+}
+
 /** Applies the website's optional duplicate-line cleanup without altering authored repeats. */
 internal fun readerBlocksForDisplay(
     blocks: List<ReaderContentBlock>,
@@ -207,8 +254,8 @@ private fun normalizeReaderParagraph(value: String): String? {
 }
 
 private fun appendReaderTextBlocks(target: MutableList<ReaderContentBlock>, raw: String) {
-    readerParagraphsFromContent(raw).forEach { paragraph ->
-        target += ReaderContentBlock.Text(paragraph)
+    readerFormattedParagraphsFromContent(raw).forEach { paragraph ->
+        target += ReaderContentBlock.Text(value = paragraph.text, formatted = paragraph)
     }
 }
 
@@ -235,11 +282,159 @@ private fun decodeHtmlValue(value: String?): String = value?.let(::htmlToPlainTe
 
 /** Html.fromHtml(String, flags) was added in API 24; Android 6 uses the legacy overload. */
 private fun htmlToPlainText(value: String): String {
-    val decoded = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-        Html.fromHtml(value, Html.FROM_HTML_MODE_LEGACY)
-    } else {
-        @Suppress("DEPRECATION")
-        Html.fromHtml(value)
-    }
+    val decoded = htmlToSpanned(value)
     return decoded.toString().replace('\u00A0', ' ')
+}
+
+/** Html.fromHtml(String, flags) was added in API 24; Android 6 uses the legacy overload. */
+private fun htmlToSpanned(value: String): Spanned = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+    Html.fromHtml(value, Html.FROM_HTML_MODE_LEGACY)
+} else {
+    @Suppress("DEPRECATION")
+    Html.fromHtml(value)
+}
+
+private fun splitReaderFormattedParagraphs(
+    text: String,
+    original: Spanned,
+): List<ReaderFormattedParagraph> {
+    val paragraphs = mutableListOf<ReaderFormattedParagraph>()
+    var cursor = 0
+    Regex("\\n{2,}").findAll(text).forEach { separator ->
+        addReaderFormattedParagraph(paragraphs, text, original, cursor, separator.range.first)
+        cursor = separator.range.last + 1
+    }
+    addReaderFormattedParagraph(paragraphs, text, original, cursor, text.length)
+    return paragraphs
+}
+
+private fun addReaderFormattedParagraph(
+    target: MutableList<ReaderFormattedParagraph>,
+    text: String,
+    original: Spanned,
+    start: Int,
+    end: Int,
+) {
+    val raw = text.substring(start, end)
+    val leading = raw.indexOfFirst { !it.isWhitespace() }.takeIf { it >= 0 } ?: return
+    val trailing = raw.indexOfLast { !it.isWhitespace() }.takeIf { it >= leading } ?: return
+    val paragraphStart = start + leading
+    val paragraphEnd = start + trailing + 1
+    val paragraphText = text.substring(paragraphStart, paragraphEnd)
+    val styles = original.getSpans(paragraphStart, paragraphEnd, StyleSpan::class.java)
+        .filter { span -> span.style and Typeface.BOLD != 0 }
+        .mapNotNull { span ->
+            val spanStart = original.getSpanStart(span).coerceIn(paragraphStart, paragraphEnd)
+            val spanEnd = original.getSpanEnd(span).coerceIn(paragraphStart, paragraphEnd)
+            if (spanStart >= spanEnd) {
+                null
+            } else {
+                AnnotatedString.Range(
+                    item = SpanStyle(fontWeight = FontWeight.Bold),
+                    start = spanStart - paragraphStart,
+                    end = spanEnd - paragraphStart,
+                )
+            }
+        }
+    target += ReaderFormattedParagraph(text = paragraphText, spanStyles = styles)
+}
+
+/**
+ * The source mixes rendered HTML with plain Markdown in chapter bodies. Html.fromHtml() preserves
+ * `<strong>` spans but deliberately leaves `**strong**` and `__strong__` untouched, so normalize
+ * the latter after HTML span extraction and remap the existing offsets as delimiters disappear.
+ */
+private fun applyMarkdownBoldRanges(paragraph: ReaderFormattedParagraph): ReaderFormattedParagraph {
+    val source = paragraph.text
+    if (!source.contains("**") && !source.contains("__")) return paragraph
+
+    val output = StringBuilder(source.length)
+    val outputOffsets = IntArray(source.length + 1)
+    val markdownRanges = mutableListOf<AnnotatedString.Range<SpanStyle>>()
+    var cursor = 0
+    while (cursor < source.length) {
+        outputOffsets[cursor] = output.length
+        val delimiter = markdownBoldDelimiterAt(source, cursor)
+        val closingIndex = delimiter?.let { markdownBoldClosingIndex(source, cursor + it.length, it) }
+        if (delimiter == null || closingIndex == null) {
+            output.append(source[cursor])
+            cursor += 1
+            continue
+        }
+
+        val delimiterEnd = cursor + delimiter.length
+        (cursor until delimiterEnd).forEach { index -> outputOffsets[index] = output.length }
+        val boldStart = output.length
+        var inner = delimiterEnd
+        while (inner < closingIndex) {
+            outputOffsets[inner] = output.length
+            output.append(source[inner])
+            inner += 1
+        }
+        val boldEnd = output.length
+        (closingIndex until (closingIndex + delimiter.length)).forEach { index ->
+            outputOffsets[index] = output.length
+        }
+        cursor = closingIndex + delimiter.length
+        outputOffsets[cursor] = output.length
+        markdownRanges += AnnotatedString.Range(
+            item = SpanStyle(fontWeight = FontWeight.Bold),
+            start = boldStart,
+            end = boldEnd,
+        )
+    }
+    outputOffsets[source.length] = output.length
+
+    val remappedHtmlRanges = paragraph.spanStyles.mapNotNull { range ->
+        val start = outputOffsets[range.start.coerceIn(0, source.length)]
+        val end = outputOffsets[range.end.coerceIn(0, source.length)]
+        AnnotatedString.Range(range.item, start, end).takeIf { start < end }
+    }
+    return ReaderFormattedParagraph(
+        text = output.toString(),
+        spanStyles = remappedHtmlRanges + markdownRanges,
+    )
+}
+
+private fun markdownBoldDelimiterAt(value: String, index: Int): String? {
+    if (isMarkdownEscaped(value, index)) return null
+    return when {
+        value.startsWith("**", index) -> "**"
+        value.startsWith("__", index) -> "__"
+        else -> null
+    }
+}
+
+private fun markdownBoldClosingIndex(value: String, start: Int, delimiter: String): Int? {
+    var candidate = value.indexOf(delimiter, start)
+    while (candidate >= 0) {
+        val content = value.substring(start, candidate)
+        if (content.any { !it.isWhitespace() } && !isMarkdownEscaped(value, candidate)) return candidate
+        candidate = value.indexOf(delimiter, candidate + delimiter.length)
+    }
+    return null
+}
+
+private fun isMarkdownEscaped(value: String, index: Int): Boolean {
+    var slashCount = 0
+    var cursor = index - 1
+    while (cursor >= 0 && value[cursor] == '\\') {
+        slashCount += 1
+        cursor -= 1
+    }
+    return slashCount % 2 != 0
+}
+
+internal fun ReaderFormattedParagraph.toAnnotatedString(): AnnotatedString = buildAnnotatedString {
+    var cursor = 0
+    spanStyles.sortedBy(AnnotatedString.Range<SpanStyle>::start).forEach { range ->
+        val start = range.start.coerceIn(0, text.length)
+        val end = range.end.coerceIn(start, text.length)
+        if (cursor < start) append(text.substring(cursor, start))
+        if (start < end) {
+            withStyle(range.item) { append(text.substring(start, end)) }
+        }
+        cursor = end
+    }
+    if (cursor < text.length) append(text.substring(cursor))
 }

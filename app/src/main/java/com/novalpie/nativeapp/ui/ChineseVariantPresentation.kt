@@ -56,6 +56,20 @@ internal fun convertChineseVariantText(text: String, variant: ChineseVariant): S
     return fallbackChineseVariantText(text, variant)
 }
 
+/** Apply the same local conversion to rich reader text while preserving its style/annotation ranges. */
+internal fun convertChineseVariantAnnotatedText(
+    text: AnnotatedString,
+    variant: ChineseVariant,
+): AnnotatedString = if (variant == ChineseVariant.Original || text.text.isBlank()) {
+    text
+} else {
+    AnnotatedString(
+        text = convertChineseVariantText(text.text, variant),
+        spanStyles = text.spanStyles,
+        paragraphStyles = text.paragraphStyles,
+    )
+}
+
 private fun fallbackChineseVariantText(text: String, variant: ChineseVariant): String {
     val table = when (variant) {
         ChineseVariant.Traditional -> simplifiedToTraditional
@@ -150,7 +164,7 @@ internal fun Text(
     style: TextStyle = LocalTextStyle.current
 ) {
     MaterialText(
-        text = text,
+        text = convertChineseVariantAnnotatedText(text, LocalChineseVariant.current),
         modifier = modifier,
         color = color,
         fontSize = fontSize,
