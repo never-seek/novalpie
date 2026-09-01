@@ -1,6 +1,7 @@
 package com.novalpie.nativeapp.ui
 
 import android.app.Activity
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -247,6 +248,9 @@ import com.novalpie.nativeapp.model.ReaderContent
 import com.novalpie.nativeapp.model.ReaderChapterContent
 import com.novalpie.nativeapp.model.ReaderChapterCacheState
 import com.novalpie.nativeapp.model.ReaderProgress
+import com.novalpie.nativeapp.model.ReaderViewportAnchor
+import com.novalpie.nativeapp.model.ReaderReplacementRule
+import com.novalpie.nativeapp.model.ReaderReplacementTarget
 import com.novalpie.nativeapp.model.SearchPage
 import com.novalpie.nativeapp.model.SiteMessage
 import com.novalpie.nativeapp.model.UserBadge
@@ -942,8 +946,26 @@ fun NovalPieApp(
                      onCommentAward = viewModel::awardBookComment,
                      onOpenUser = viewModel::openUserProfile,
                     onOpenLink = { link -> openForumRichLink(context, viewModel, link) },
-                    onDownloadEpub = { viewModel.downloadBookEpub(route.bookId) },
-                     onDownloadTxt = { viewModel.downloadBookTxt(route.bookId) },
+        onDownloadEpub = { applyRules ->
+            viewModel.downloadBookEpub(
+                bookId = route.bookId,
+                replacementMode = if (applyRules) {
+                    NativeDownloadReplacementMode.EffectiveReaderRules
+                } else {
+                    NativeDownloadReplacementMode.Source
+                },
+            )
+        },
+        onDownloadTxt = { applyRules ->
+            viewModel.downloadBookTxt(
+                bookId = route.bookId,
+                replacementMode = if (applyRules) {
+                    NativeDownloadReplacementMode.EffectiveReaderRules
+                } else {
+                    NativeDownloadReplacementMode.Source
+                },
+            )
+        },
                       onToggleDownloadPause = { viewModel.toggleNativeBookDownloadPause(route.bookId) },
                      onCancelDownload = { viewModel.cancelNativeBookDownload(route.bookId) },
                     onRetryDownload = { viewModel.retryNativeBookDownload(route.bookId) },
@@ -1103,6 +1125,7 @@ private fun ReaderRoute(
         readerFullscreen = viewModel.readerFullscreen,
         onReaderFullscreenChange = viewModel::updateReaderFullscreen,
         ttsSettings = viewModel.readerTtsSettings,
+        replacementState = viewModel.readerReplacementState,
         catalogQuery = viewModel.readerCatalogQuery,
         onCatalogQueryChange = viewModel::updateReaderCatalogQuery,
         onDecreaseFont = viewModel::decreaseReaderFont,
@@ -1110,7 +1133,15 @@ private fun ReaderRoute(
         onCycleTheme = viewModel::cycleReaderTheme,
         onReaderOptionsChange = viewModel::setReaderOptions,
         onReaderTtsSettingsChange = viewModel::updateReaderTtsSettings,
-        onResetReaderOptions = viewModel::resetReaderOptions,
+        onReaderReplacementSourceChange = viewModel::selectReaderReplacementSource,
+        onSaveReaderReplacementRule = viewModel::saveReaderReplacementRule,
+        onDeleteReaderReplacementRule = viewModel::deleteReaderReplacementRule,
+        onSetSharedReaderReplacementRuleVisible = viewModel::setSharedReaderReplacementRuleVisible,
+        onCloneSharedReaderReplacementRule = viewModel::cloneSharedReaderReplacementRule,
+         onReaderSharedRulesEnabledChange = viewModel::setReaderSharedRulesEnabled,
+         onDefaultReaderSharedRulesEnabledChange = viewModel::setDefaultReaderSharedRulesEnabled,
+         onResetReaderSharedRulesOverride = viewModel::resetReaderSharedRulesOverride,
+         onResetReaderOptions = viewModel::resetReaderOptions,
         onClearReaderChapterCache = viewModel::clearReaderChapterCache,
         onRetry = {
             viewModel.loadReader(
@@ -1127,6 +1158,7 @@ private fun ReaderRoute(
         },
         onLoadNextChapter = viewModel::loadNextReaderChapter,
         onVisibleChapterChanged = viewModel::recordVisibleReaderChapter,
+        onViewportAnchorChanged = viewModel::recordReaderViewportAnchor,
         onToggleFavorite = viewModel::toggleReaderFavorite,
         onBack = viewModel::goBack,
         onCommentDraftChange = viewModel::updateReaderCommentDraft,
@@ -5888,8 +5920,8 @@ private fun BookDetailScreen(
     onCommentAward: (ChapterComment) -> Unit,
     onOpenUser: (Long) -> Unit,
     onOpenLink: (String) -> Unit,
-    onDownloadEpub: () -> Unit,
-    onDownloadTxt: () -> Unit,
+    onDownloadEpub: (Boolean) -> Unit,
+    onDownloadTxt: (Boolean) -> Unit,
     onToggleDownloadPause: () -> Unit,
     onCancelDownload: () -> Unit,
     onRetryDownload: () -> Unit,
@@ -5977,12 +6009,6 @@ private fun BookDetailScreen(
                     when (val book = state.book) {
                         is LoadResult.Success -> BookDetailIntroduction(
                             book = book.value,
-                            canManageBook = bookManagementActionsVisible(
-                                (state.managementPermissions as? LoadResult.Success)?.value
-                            ),
-                            onEditInfo = onEditInfo,
-                            onManageChapters = onManageChapters,
-                            onAppendChapters = onAppendChapters,
                         )
                         else -> Unit
                     }
@@ -6131,6 +6157,7 @@ internal fun ReaderScreen(
     readerFullscreen: Boolean,
     onReaderFullscreenChange: (Boolean) -> Unit,
     ttsSettings: ReaderTtsSettings,
+    replacementState: ReaderReplacementState,
     catalogQuery: String,
     onCatalogQueryChange: (String) -> Unit,
     onDecreaseFont: () -> Unit,
@@ -6138,6 +6165,14 @@ internal fun ReaderScreen(
     onCycleTheme: () -> Unit,
     onReaderOptionsChange: (ReaderUiOptions) -> Unit,
     onReaderTtsSettingsChange: ((ReaderTtsSettings) -> ReaderTtsSettings) -> Unit,
+    onReaderReplacementSourceChange: (ReaderReplacementRuleSource) -> Unit,
+    onSaveReaderReplacementRule: (ReaderReplacementRule) -> Unit,
+    onDeleteReaderReplacementRule: (String) -> Unit,
+    onSetSharedReaderReplacementRuleVisible: (String, Boolean) -> Unit,
+    onCloneSharedReaderReplacementRule: (ReaderReplacementRule) -> Unit,
+    onReaderSharedRulesEnabledChange: (Boolean) -> Unit,
+    onDefaultReaderSharedRulesEnabledChange: (Boolean) -> Unit,
+    onResetReaderSharedRulesOverride: () -> Unit,
     onResetReaderOptions: () -> Unit,
     onClearReaderChapterCache: () -> Unit,
     onRetry: () -> Unit,
@@ -6147,6 +6182,7 @@ internal fun ReaderScreen(
     onOpenReaderAtPosition: (Long, Long, ReaderChapterEntryPosition) -> Unit,
     onLoadNextChapter: () -> Unit,
     onVisibleChapterChanged: (Long, String?) -> Unit,
+    onViewportAnchorChanged: (ReaderViewportAnchor) -> Unit,
     onToggleFavorite: () -> Unit,
     onBack: () -> Unit,
     onCommentDraftChange: (Long, String) -> Unit,
@@ -6168,8 +6204,13 @@ internal fun ReaderScreen(
     val readerHelpVisible = remember { mutableStateOf(false) }
     val readerNavigationVisible = remember { mutableStateOf(false) }
     val readerSettingsCategory = remember { mutableStateOf<ReaderSettingsCategory?>(null) }
+    var replacementPrefillSource by remember { mutableStateOf<String?>(null) }
     val toolbarsVisible = remember { mutableStateOf(false) }
     var pendingChapterEntryPosition by remember { mutableStateOf(ReaderChapterEntryPosition.Start) }
+    // Auto-next needs to survive the route's loading phase, but must not hijack a later manual
+    // navigation to some other chapter.
+    var pendingTtsContinuationChapterId by remember(state.bookId) { mutableStateOf<Long?>(null) }
+    var pendingTtsContinuationSourceChapterId by remember(state.bookId) { mutableStateOf<Long?>(null) }
     val radialMenuVisible = remember { mutableStateOf(false) }
     var lastReaderChromeTapUptime by remember { mutableLongStateOf(0L) }
     var lastReaderChromeTapXFraction by remember { mutableFloatStateOf(-1f) }
@@ -6177,9 +6218,22 @@ internal fun ReaderScreen(
     val listState = rememberLazyListState()
     val readerTouchSlop = LocalViewConfiguration.current.touchSlop
     val readableContent = (state.content as? LoadResult.Success)?.value
-    val chapterContents = remember(state.chapterContents, readableContent, state.chapterId) {
+    val sourceChapterContents = remember(state.chapterContents, readableContent, state.chapterId) {
         state.chapterContents.ifEmpty {
             readableContent?.let { listOf(ReaderChapterContent(state.chapterId, it.title, it)) }.orEmpty()
+        }
+    }
+    val chapterContents = remember(sourceChapterContents, chapters, replacementState.revision) {
+        sourceChapterContents.map { chapter ->
+            val chapterOrder = readerChapterOrderForId(
+                chapterId = chapter.chapterId,
+                chapters = chapters,
+            )
+            effectiveReaderChapterContent(
+                chapter = chapter,
+                chapterOrder = chapterOrder,
+                replacementState = replacementState,
+            )
         }
     }
     // Keep the viewport observer alive while the infinite-scroll window grows.  Restarting it on
@@ -6187,10 +6241,15 @@ internal fun ReaderScreen(
     // to chapter N+1, leaving the footer stuck on the route's opening chapter.
     val latestChapterContents by rememberUpdatedState(chapterContents)
     val latestVisibleChapterChanged by rememberUpdatedState(onVisibleChapterChanged)
+    val latestViewportAnchorChanged by rememberUpdatedState(onViewportAnchorChanged)
+    val latestReaderOptions by rememberUpdatedState(options)
     // The route remains anchored to the opening chapter during continuous scroll, while the
     // footer follows the article that actually occupies the viewport.
     var visibleReaderChapterId by remember(state.bookId, state.chapterId) {
         mutableStateOf<Long?>(state.chapterId.takeIf { it > 0L })
+    }
+    var pendingViewportAnchor by remember(state.bookId, state.chapterId) {
+        mutableStateOf(state.restoreViewportAnchor)
     }
     val readerEndSentinelKey = remember(chapterContents) {
         readerBodyEndSentinelKey(chapterContents)
@@ -6230,8 +6289,34 @@ internal fun ReaderScreen(
     androidx.compose.runtime.DisposableEffect(ttsController) {
         onDispose { ttsController.shutdown() }
     }
+    var lastAppliedTtsSettings by remember(ttsController) { mutableStateOf(ttsSettings) }
+    LaunchedEffect(ttsSettings) {
+        if (ttsSettings != lastAppliedTtsSettings) {
+            ttsController.updateSettingsForResume(ttsSettings)
+            lastAppliedTtsSettings = ttsSettings
+        }
+    }
     LaunchedEffect(options.showTts) {
         if (!options.showTts) ttsController.stop()
+    }
+    LaunchedEffect(replacementState.ttsRevision) {
+        // The display text and spoken text share the effective replacement pipeline. Never allow
+        // an already queued utterance to speak pre-replacement text after a user rule edit.
+        // Background glossary imports intentionally leave the existing queue alone.
+        ttsController.stop()
+    }
+    LaunchedEffect(chapters) {
+        // Until the directory names the current chapter's real ordinal, scope-specific rules are
+        // intentionally withheld. Stop any queue that began in that brief gap rather than let it
+        // speak text for the wrong chapter scope.
+        if (readerReplacementStateHasScopedRules(replacementState)) {
+            ttsController.stop()
+        }
+    }
+    LaunchedEffect(ttsController.voiceFallback) {
+        ttsController.voiceFallback?.let {
+            onReaderTtsSettingsChange { settings -> settings.copy(voice = null) }
+        }
     }
 
     // D11. The reader is the app's one fully immersive route -- globalProductTopBarVisible excludes
@@ -6280,6 +6365,15 @@ internal fun ReaderScreen(
     // in the middle of chapter B before its heading and first paragraphs.
     LaunchedEffect(state.bookId, state.chapterId, state.entryPosition) {
         ttsController.stop()
+        val continuationTarget = pendingTtsContinuationChapterId
+        if (
+            continuationTarget != null &&
+            state.chapterId != continuationTarget &&
+            state.chapterId != pendingTtsContinuationSourceChapterId
+        ) {
+            pendingTtsContinuationChapterId = null
+            pendingTtsContinuationSourceChapterId = null
+        }
         catalogVisible.value = false
         readerSettingsVisible.value = false
         readerHelpVisible.value = false
@@ -6319,6 +6413,33 @@ internal fun ReaderScreen(
         pendingChapterEntryPosition = ReaderChapterEntryPosition.Start
     }
 
+    // A regular open and a process/background recovery both enter through the same route.  The
+    // route still starts at item zero while its source body loads, then this local-only anchor
+    // restores the exact paragraph once the actual LazyColumn item ordering exists.  Explicit
+    // "previous chapter end" navigation remains authoritative and never consumes a stale anchor.
+    LaunchedEffect(
+        state.bookId,
+        state.chapterId,
+        state.entryPosition,
+        hasReadableBody,
+        readerEndSentinelKey,
+        pendingViewportAnchor,
+    ) {
+        val anchor = pendingViewportAnchor ?: return@LaunchedEffect
+        if (!hasReadableBody || state.entryPosition != ReaderChapterEntryPosition.Start) {
+            return@LaunchedEffect
+        }
+        withFrameNanos { }
+        readerBodyItemIndexForViewportAnchor(
+            contents = chapterContents,
+            options = options,
+            anchor = anchor,
+        )?.let { itemIndex ->
+            listState.scrollToItem(itemIndex, anchor.itemScrollOffsetPx)
+        }
+        pendingViewportAnchor = null
+    }
+
     // Infinite scrolling appends bodies without replacing the route. Save a chapter only after
     // one of its article items becomes visible, never merely because it was prefetched.
     LaunchedEffect(listState) {
@@ -6344,6 +6465,14 @@ internal fun ReaderScreen(
                     latestChapterContents.firstOrNull { it.chapterId == visibleChapterId }?.title,
                 )
             }
+            readerViewportAnchorForBodyItem(
+                contents = latestChapterContents,
+                options = latestReaderOptions,
+                globalItemIndex = observation.second,
+                // Persist in a 24px bucket.  This keeps a close same-paragraph restore without
+                // writing SharedPreferences for every individual scroll pixel.
+                itemScrollOffsetPx = (observation.third / 24) * 24,
+            )?.let(latestViewportAnchorChanged)
         }
     }
 
@@ -6631,6 +6760,38 @@ internal fun ReaderScreen(
         toolbarsVisible.value = true
     }
 
+    // Compose's built-in SelectionContainer owns the Android selection action mode. Observe only
+    // the resulting copy event and validate it against the current effective chapter window; this
+    // gives the same “select text → open replacement form prefilled” flow as the website without
+    // replacing native long-press selection or intercepting reader scroll gestures.
+    DisposableEffect(context, readerView) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        if (clipboard == null) {
+            onDispose { }
+        } else {
+            val listener = ClipboardManager.OnPrimaryClipChangedListener {
+                readerView.post {
+                    val copied = runCatching {
+                        clipboard.primaryClip
+                            ?.takeIf { it.itemCount > 0 }
+                            ?.getItemAt(0)
+                            ?.coerceToText(context)
+                    }.getOrNull()
+                    val source = readerReplacementPrefillSource(
+                        clipboardText = copied,
+                        contents = latestChapterContents,
+                    )
+                    if (source != null) {
+                        replacementPrefillSource = source
+                        openReaderSettings(ReaderSettingsCategory.Replacement)
+                    }
+                }
+            }
+            clipboard.addPrimaryClipChangedListener(listener)
+            onDispose { clipboard.removePrimaryClipChangedListener(listener) }
+        }
+    }
+
     fun openReaderCatalog() {
         closeReaderSidePanel()
         catalogVisible.value = true
@@ -6727,29 +6888,116 @@ internal fun ReaderScreen(
         )
     }
 
-    fun toggleTts() {
+    fun startTts(continueFromPreviousChapter: Boolean) {
         val segments = chapterContents.flatMap { chapter ->
             readerParagraphsFromContent(chapter.content.content)
         }
-        ttsController.toggle(
-            segments = segments,
-            settings = ttsSettings,
-            onSegmentChanged = { _, text ->
-                if (ttsSettings.enableAutoScroll) {
-                    val itemIndex = readerBodyItemIndexForText(chapterContents, options, text)
-                    if (itemIndex != null) {
-                        readerScope.launch {
-                            listState.animateScrollToItem(itemIndex)
-                        }
+        val onFinished: (() -> Unit)? = if (ttsSettings.enableAutoNextChapter) {
+            {
+                val nextChapterId = readerTtsAutoNextChapterId(
+                    spokenChapterIds = chapterContents.map(ReaderChapterContent::chapterId),
+                    routeChapterId = state.chapterId,
+                    chapters = chapters,
+                )
+                if (nextChapterId != null) {
+                    pendingTtsContinuationSourceChapterId = state.chapterId
+                    pendingTtsContinuationChapterId = nextChapterId
+                    onOpenReader(state.bookId, nextChapterId)
+                }
+                Unit
+            }
+        } else {
+            null
+        }
+        val onSegmentChanged: (Int, String) -> Unit = { _, text ->
+            if (ttsSettings.enableAutoScroll) {
+                val itemIndex = readerBodyItemIndexForText(chapterContents, options, text)
+                if (itemIndex != null) {
+                    readerScope.launch {
+                        listState.animateScrollToItem(itemIndex)
                     }
                 }
-            },
-            onFinished = if (ttsSettings.enableAutoNextChapter) {
-                { adjacentReaderChapters(state.chapterId, chapters).next?.let { onOpenReader(state.bookId, it.id) } }
-            } else null,
-        )
+            }
+        }
+        if (continueFromPreviousChapter) {
+            ttsController.speak(
+                segments = segments,
+                settings = ttsSettings,
+                onSegmentChanged = onSegmentChanged,
+                onFinished = onFinished,
+            )
+        } else {
+            ttsController.toggle(
+                segments = segments,
+                settings = ttsSettings,
+                onSegmentChanged = onSegmentChanged,
+                onFinished = onFinished,
+            )
+        }
     }
 
+    fun toggleTts() {
+        when (
+            readerTtsToggleAction(
+                pendingChapterId = pendingTtsContinuationChapterId,
+                hasReadableBody = hasReadableBody,
+                playbackState = ttsController.state,
+            )
+        ) {
+            ReaderTtsToggleAction.CancelPendingContinuation -> {
+                pendingTtsContinuationChapterId = null
+                pendingTtsContinuationSourceChapterId = null
+                ttsController.stop()
+            }
+            ReaderTtsToggleAction.StartPlayback ->
+                startTts(continueFromPreviousChapter = false)
+            ReaderTtsToggleAction.PausePlayback -> ttsController.pause()
+            ReaderTtsToggleAction.ResumePlayback -> ttsController.resume()
+            ReaderTtsToggleAction.StopPlayback -> ttsController.stop()
+            ReaderTtsToggleAction.IgnoreUntilBodyLoads -> Unit
+        }
+    }
+
+    LaunchedEffect(
+        pendingTtsContinuationChapterId,
+        state.chapterId,
+        hasReadableBody,
+        chapterContents,
+        ttsSettings,
+    ) {
+        if (
+            readerTtsContinuationShouldStart(
+                pendingChapterId = pendingTtsContinuationChapterId,
+                currentChapterId = state.chapterId,
+                hasReadableBody = hasReadableBody,
+            )
+        ) {
+            // Clear this first. Starting TTS changes reader state and must never replay a chapter
+            // because a recomposition observed the same continuation twice.
+            pendingTtsContinuationChapterId = null
+            pendingTtsContinuationSourceChapterId = null
+            startTts(continueFromPreviousChapter = true)
+        }
+    }
+    LaunchedEffect(pendingTtsContinuationChapterId, state.chapterId, state.content) {
+        if (
+            readerTtsContinuationShouldCancelForLoadFailure(
+                pendingChapterId = pendingTtsContinuationChapterId,
+                currentChapterId = state.chapterId,
+                bodyLoadFailed = state.content is LoadResult.Error,
+            )
+        ) {
+            pendingTtsContinuationChapterId = null
+            pendingTtsContinuationSourceChapterId = null
+            ttsController.stop()
+        }
+    }
+
+    val readerTtsState = if (pendingTtsContinuationChapterId != null) {
+        ReaderTtsState.Loading
+    } else {
+        ttsController.state
+    }
     val ttsHighlightText = ttsController.currentSegmentText
     val readerSystemBarModifier = if (readerFullscreenArticleUsesSystemBarInsets(readerFullscreen)) {
         Modifier.windowInsetsPadding(WindowInsets.systemBars)
@@ -6973,7 +7221,7 @@ internal fun ReaderScreen(
                 state = state,
                 chapters = chapters,
                 favoriteStatus = state.favoriteStatus,
-                ttsState = ttsController.state,
+                ttsState = readerTtsState,
                 showTts = options.showTts,
                 onPrevious = {
                     adjacentReaderChapters(state.chapterId, chapters).previous?.let { onOpenReader(state.bookId, it.id) }
@@ -7073,6 +7321,18 @@ internal fun ReaderScreen(
                 ttsSettings = ttsSettings,
                 ttsVoiceOptions = ttsController.voiceOptions,
                 onTtsSettingsChange = onReaderTtsSettingsChange,
+                replacementState = replacementState,
+                currentChapterOrder = readerChapterOrderForId(state.chapterId, chapters),
+                replacementPrefillSource = replacementPrefillSource,
+                onReplacementSourceChange = onReaderReplacementSourceChange,
+                onSaveReplacementRule = onSaveReaderReplacementRule,
+                onDeleteReplacementRule = onDeleteReaderReplacementRule,
+                onSetSharedReplacementRuleVisible = onSetSharedReaderReplacementRuleVisible,
+                onCloneSharedReplacementRule = onCloneSharedReaderReplacementRule,
+                 onSharedRulesEnabledChange = onReaderSharedRulesEnabledChange,
+                 onDefaultSharedRulesEnabledChange = onDefaultReaderSharedRulesEnabledChange,
+                 onResetSharedRulesOverride = onResetReaderSharedRulesOverride,
+                 onReplacementPrefillConsumed = { replacementPrefillSource = null },
                 onDismiss = { readerSettingsVisible.value = false },
                 sidebar = true,
                 modifier = readerSidePanelModifier,
@@ -7120,7 +7380,7 @@ internal fun ReaderScreen(
                 },
                 onToggleReadingMode = ::toggleReaderReadingMode,
                 onToggleTts = ::toggleTts,
-                ttsState = ttsController.state,
+                ttsState = readerTtsState,
                 onToggleFullscreen = { onReaderFullscreenChange(!readerFullscreen) },
                 onOpenNavigation = ::openReaderNavigation,
             )
@@ -7129,7 +7389,7 @@ internal fun ReaderScreen(
         androidx.compose.animation.AnimatedVisibility(
             visible = readerTtsFeedbackVisible(
                 showTts = options.showTts,
-                state = ttsController.state,
+                state = readerTtsState,
             ) && !sidePanelVisible,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -7139,8 +7399,10 @@ internal fun ReaderScreen(
                 ),
         ) {
             ReaderTtsFeedback(
-                state = ttsController.state,
+                state = readerTtsState,
                 failureMessage = ttsController.failureMessage,
+                voiceFallbackMessage = ttsController.voiceFallback?.message,
+                onStop = ttsController::stop,
                 onOpenSystemTtsSettings = {
                     // The actionable error refers to the Android speech engine, not an app-local
                     // voice preference. Open the matching system surface and retain the local TTS
@@ -7816,12 +8078,7 @@ private fun ReaderActionRailLegacy(
             if (options.showTts) {
                 ReaderRailAction(
                     icon = Icons.Filled.RecordVoiceOver,
-                    label = when (ttsState) {
-                        ReaderTtsState.Speaking -> "停止"
-                        ReaderTtsState.Loading -> "准备中"
-                        ReaderTtsState.Error -> "听书异常"
-                        ReaderTtsState.Stopped -> labels[8]
-                    },
+                    label = readerTtsPrimaryActionLabel(ttsState, labels[8]),
                     onClick = onToggleTts,
                     modifier = Modifier.weight(1f),
                 )
@@ -7907,12 +8164,7 @@ private fun ReaderActionRailV2(
                     }
                     val label = when (spec.id) {
                         ReaderRailActionId.ReadingMode -> readerReadingModeActionLabel(options.pageTurnMode)
-                        ReaderRailActionId.Tts -> when (ttsState) {
-                            ReaderTtsState.Speaking -> "停止"
-                            ReaderTtsState.Loading -> "准备中"
-                            ReaderTtsState.Error -> "听书异常"
-                            ReaderTtsState.Stopped -> spec.label
-                        }
+                        ReaderRailActionId.Tts -> readerTtsPrimaryActionLabel(ttsState, spec.label)
                         ReaderRailActionId.Fullscreen -> if (fullscreen) "退出全屏" else spec.label
                         else -> spec.label
                     }
@@ -7992,12 +8244,15 @@ private fun ReaderRailAction(
 private fun ReaderTtsFeedback(
     state: ReaderTtsState,
     failureMessage: String?,
+    voiceFallbackMessage: String?,
+    onStop: () -> Unit,
     onOpenSystemTtsSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val message = when (state) {
-        ReaderTtsState.Loading -> "正在准备听书…"
-        ReaderTtsState.Speaking -> "正在听书"
+        ReaderTtsState.Loading -> voiceFallbackMessage ?: "正在准备听书…"
+        ReaderTtsState.Speaking -> voiceFallbackMessage ?: "正在听书"
+        ReaderTtsState.Paused -> "听书已暂停"
         ReaderTtsState.Error -> failureMessage ?: "听书暂时不可用"
         ReaderTtsState.Stopped -> return
     }
@@ -8033,7 +8288,14 @@ private fun ReaderTtsFeedback(
                 maxLines = 2,
                 modifier = Modifier.widthIn(max = 260.dp),
             )
-            if (isError) {
+            if (readerTtsStopActionVisible(state)) {
+                TextButton(
+                    onClick = onStop,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                ) {
+                    Text("停止", style = MaterialTheme.typography.labelMedium)
+                }
+            } else if (isError) {
                 TextButton(onClick = onOpenSystemTtsSettings, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)) {
                     Text(readerTtsSystemSettingsLabel(), style = MaterialTheme.typography.labelMedium)
                 }
@@ -8058,6 +8320,18 @@ private fun ReaderSettingsSheet(
     ttsSettings: ReaderTtsSettings,
     ttsVoiceOptions: List<ReaderTtsVoiceOption>,
     onTtsSettingsChange: ((ReaderTtsSettings) -> ReaderTtsSettings) -> Unit,
+    replacementState: ReaderReplacementState,
+    currentChapterOrder: Int?,
+    replacementPrefillSource: String?,
+    onReplacementSourceChange: (ReaderReplacementRuleSource) -> Unit,
+    onSaveReplacementRule: (ReaderReplacementRule) -> Unit,
+    onDeleteReplacementRule: (String) -> Unit,
+    onSetSharedReplacementRuleVisible: (String, Boolean) -> Unit,
+    onCloneSharedReplacementRule: (ReaderReplacementRule) -> Unit,
+    onSharedRulesEnabledChange: (Boolean) -> Unit,
+    onDefaultSharedRulesEnabledChange: (Boolean) -> Unit,
+    onResetSharedRulesOverride: () -> Unit,
+    onReplacementPrefillConsumed: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     sidebar: Boolean = false,
@@ -8112,6 +8386,7 @@ private fun ReaderSettingsSheet(
                 ReaderSettingsOverview(
                     options = options,
                     palette = palette,
+                    replacementState = replacementState,
                     onSelect = { selectedCategory = it },
                 )
             } else if (selectedCategory == ReaderSettingsCategory.Tts) {
@@ -8121,6 +8396,25 @@ private fun ReaderSettingsSheet(
                     metaColor = palette.sidebarText.copy(alpha = 0.68f),
                     voiceOptions = ttsVoiceOptions,
                     onChange = onTtsSettingsChange,
+                )
+            } else if (selectedCategory == ReaderSettingsCategory.Replacement) {
+                ReaderReplacementSettingsControls(
+                    state = replacementState,
+                    currentChapterOrder = currentChapterOrder,
+                    prefillSource = replacementPrefillSource,
+                    options = options,
+                    textColor = palette.sidebarText,
+                    metaColor = palette.sidebarText.copy(alpha = 0.68f),
+                    onOptionsChange = onOptionsChange,
+                    onSourceChange = onReplacementSourceChange,
+                    onSaveRule = onSaveReplacementRule,
+                    onDeleteRule = onDeleteReplacementRule,
+                    onSetSharedRuleVisible = onSetSharedReplacementRuleVisible,
+                    onCloneSharedRule = onCloneSharedReplacementRule,
+                    onSharedRulesEnabledChange = onSharedRulesEnabledChange,
+                    onDefaultSharedRulesEnabledChange = onDefaultSharedRulesEnabledChange,
+                    onResetSharedRulesOverride = onResetSharedRulesOverride,
+                    onPrefillConsumed = onReplacementPrefillConsumed,
                 )
             } else {
                 ReaderSettingsControls(
@@ -8147,6 +8441,7 @@ private fun ReaderSettingsSheet(
 private fun ReaderSettingsOverview(
     options: ReaderUiOptions,
     palette: ReaderPalette,
+    replacementState: ReaderReplacementState,
     onSelect: (ReaderSettingsCategory) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -8166,8 +8461,8 @@ private fun ReaderSettingsOverview(
             ReaderSettingsOverviewCard(
                 icon = readerSettingsCategoryIcon(category),
                 title = readerSettingsOverviewTitle(category),
-                summary = readerSettingsOverviewSummary(category, options),
-                tags = readerSettingsOverviewTags(category, options),
+                summary = readerSettingsOverviewSummary(category, options, replacementState),
+                tags = readerSettingsOverviewTags(category, options, replacementState),
                 palette = palette,
                 onClick = { onSelect(category) },
             )
@@ -8252,6 +8547,7 @@ private fun readerSettingsOverviewTitle(category: ReaderSettingsCategory): Strin
 private fun readerSettingsOverviewSummary(
     category: ReaderSettingsCategory,
     options: ReaderUiOptions,
+    replacementState: ReaderReplacementState = ReaderReplacementState(),
 ): String = when (category) {
     ReaderSettingsCategory.Font -> "${options.fontSizeSp}sp · 行高${formatReaderOptionDecimal(options.lineHeight)}"
     ReaderSettingsCategory.Typography -> "首行缩进 · ${if (options.emptyLine) "保留空行" else "紧凑段落"}"
@@ -8260,7 +8556,7 @@ private fun readerSettingsOverviewSummary(
         contentWidthDp = options.contentWidthDp,
         pageTurnMode = options.pageTurnMode,
     )
-    ReaderSettingsCategory.Replacement -> options.replaceMode.readerReplaceModeLabel()
+    ReaderSettingsCategory.Replacement -> readerReplacementModeSummary(replacementState)
     ReaderSettingsCategory.Theme -> readerThemeLabel(options.theme, options.customThemes)
     ReaderSettingsCategory.Tts -> "语速、声音和朗读行为"
     ReaderSettingsCategory.Other -> "缓存与重置快捷入口"
@@ -8269,6 +8565,7 @@ private fun readerSettingsOverviewSummary(
 private fun readerSettingsOverviewTags(
     category: ReaderSettingsCategory,
     options: ReaderUiOptions,
+    replacementState: ReaderReplacementState = ReaderReplacementState(),
 ): List<String> = when (category) {
     ReaderSettingsCategory.Font -> listOf("${options.fontSizeSp}sp", "字重${options.fontWeight}")
     ReaderSettingsCategory.Typography -> listOf(if (options.textIndent) "首行缩进" else "无缩进", if (options.emptyLine) "保留空行" else "紧凑")
@@ -8278,7 +8575,10 @@ private fun readerSettingsOverviewTags(
         if (options.useInfiniteScroll) "滚动模式" else "翻页模式",
         readerVolumeKeyPagingOverviewTag(options.volumeKeyPageTurn),
     )
-    ReaderSettingsCategory.Replacement -> listOf(options.replaceMode.readerReplaceModeLabel())
+    ReaderSettingsCategory.Replacement -> listOf(
+        "我的 ${replacementState.personalRules.size}",
+        readerReplacementModeTag(replacementState),
+    )
     ReaderSettingsCategory.Theme -> listOf(readerThemeLabel(options.theme, options.customThemes))
     ReaderSettingsCategory.Tts -> listOf("听书")
     ReaderSettingsCategory.Other -> listOf("缓存/重置")
@@ -9861,10 +10161,6 @@ private fun BookDetailFavoriteChip(status: LoadResult<FavoriteStatus>) {
 @OptIn(ExperimentalLayoutApi::class)
 private fun BookDetailIntroduction(
     book: NovelCard,
-    canManageBook: Boolean,
-    onEditInfo: () -> Unit,
-    onManageChapters: () -> Unit,
-    onAppendChapters: () -> Unit,
 ) {
     val introductionFacts = bookDetailIntroductionFacts(book)
     NpCard {
@@ -9892,41 +10188,6 @@ private fun BookDetailIntroduction(
                 style = MaterialTheme.typography.bodyMedium,
                 lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.45f,
             )
-            if (canManageBook) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(NovalPieRadius.sm),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(NovalPieSpacing.sm),
-                        verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs),
-                    ) {
-                        Text(
-                            "书籍管理",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs),
-                            verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs),
-                        ) {
-                            OutlinedButton(
-                                onClick = onEditInfo,
-                                contentPadding = PaddingValues(horizontal = NovalPieSpacing.sm, vertical = 0.dp),
-                            ) { Text("编辑信息") }
-                            OutlinedButton(
-                                onClick = onManageChapters,
-                                contentPadding = PaddingValues(horizontal = NovalPieSpacing.sm, vertical = 0.dp),
-                            ) { Text("章节管理") }
-                            OutlinedButton(
-                                onClick = onAppendChapters,
-                                contentPadding = PaddingValues(horizontal = NovalPieSpacing.sm, vertical = 0.dp),
-                            ) { Text("追加章节") }
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -9954,8 +10215,8 @@ private fun BookDetailBottomActionBar(
     onEditInfo: () -> Unit,
     onManageChapters: () -> Unit,
     onAppendChapters: () -> Unit,
-    onDownloadEpub: () -> Unit,
-    onDownloadTxt: () -> Unit,
+    onDownloadEpub: (Boolean) -> Unit,
+    onDownloadTxt: (Boolean) -> Unit,
     onToggleDownloadPause: () -> Unit,
     onCancelDownload: () -> Unit,
     onRetryDownload: () -> Unit,
@@ -9968,6 +10229,8 @@ private fun BookDetailBottomActionBar(
     val isFavorited = (favoriteStatus as? LoadResult.Success)?.value?.isFavorited
     val downloadStateForBook = nativeEpubDownloadState.takeIf { it.bookId == bookId }
     var menuExpanded by remember(bookId) { mutableStateOf(false) }
+    var downloadChoiceFormat by remember(bookId) { mutableStateOf<NativeBookDownloadFormat?>(null) }
+    var downloadApplyReplacementRules by remember(bookId) { mutableStateOf(false) }
     val nativeDownloadsVisible = bookDetailAllowsNativeEpubDownload(hasAuthToken, allowDownload)
     val menuActions = bookDetailMenuActions(
         requestNewChapterVisible = requestNewChapterVisible,
@@ -10181,8 +10444,12 @@ private fun BookDetailBottomActionBar(
                                         )
                                     }
                                     BookDetailMenuAction.RequestNewChapter -> onRequestNewChapter()
-                                    BookDetailMenuAction.DownloadEpub -> onDownloadEpub()
-                                    BookDetailMenuAction.DownloadTxt -> onDownloadTxt()
+                                    BookDetailMenuAction.DownloadEpub -> {
+                                        downloadChoiceFormat = NativeBookDownloadFormat.Epub
+                                    }
+                                    BookDetailMenuAction.DownloadTxt -> {
+                                        downloadChoiceFormat = NativeBookDownloadFormat.Txt
+                                    }
                                     BookDetailMenuAction.OpenWeb -> onOpenWeb()
                                     BookDetailMenuAction.EditInfo -> onEditInfo()
                                     BookDetailMenuAction.ManageChapters -> onManageChapters()
@@ -10193,6 +10460,68 @@ private fun BookDetailBottomActionBar(
                 }
             }
         }
+    }
+    downloadChoiceFormat?.let { format ->
+        val formatLabel = if (format == NativeBookDownloadFormat.Epub) "EPUB" else "TXT"
+        AlertDialog(
+            onDismissRequest = { downloadChoiceFormat = null },
+            title = { Text("原生下载 $formatLabel") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm)) {
+                    Text(
+                        "选择导出内容。替换版只使用开始下载时的当前规则快照，不会改变网站正文、缓存或图片。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(NovalPieRadius.sm))
+                            .clickable { downloadApplyReplacementRules = false }
+                            .padding(vertical = NovalPieSpacing.xs),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = !downloadApplyReplacementRules,
+                            onClick = { downloadApplyReplacementRules = false },
+                        )
+                        Column {
+                            Text("原文下载", fontWeight = FontWeight.SemiBold)
+                            Text("与网站源文件保持一致", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(NovalPieRadius.sm))
+                            .clickable { downloadApplyReplacementRules = true }
+                            .padding(vertical = NovalPieSpacing.xs),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(
+                            selected = downloadApplyReplacementRules,
+                            onClick = { downloadApplyReplacementRules = true },
+                        )
+                        Column {
+                            Text("应用当前替换规则", fontWeight = FontWeight.SemiBold)
+                            Text("导出阅读副本；图片和原图不受替换影响", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val applyRules = downloadApplyReplacementRules
+                        downloadChoiceFormat = null
+                        if (format == NativeBookDownloadFormat.Epub) onDownloadEpub(applyRules)
+                        else onDownloadTxt(applyRules)
+                    },
+                ) { Text("开始下载") }
+            },
+            dismissButton = {
+                TextButton(onClick = { downloadChoiceFormat = null }) { Text("取消") }
+            },
+        )
     }
 }
 

@@ -23,8 +23,8 @@ android {
         applicationId = "com.novalpie.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2026082901
-        versionName = "2.0.0-native-beta5"
+        versionCode = 2026090101
+        versionName = "2.0.0-native-beta6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -131,6 +131,7 @@ dependencies {
     implementation(libs.coil.gif)
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.re2j)
 
     testImplementation(libs.junit)
     testImplementation(libs.androidx.test.core)

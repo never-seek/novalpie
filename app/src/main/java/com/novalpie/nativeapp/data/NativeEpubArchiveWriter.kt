@@ -7,6 +7,7 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.Reader
+import java.io.Writer
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.LinkedHashMap
 import kotlinx.coroutines.CancellationException
@@ -62,6 +63,12 @@ data class NativeEpubExportProgress(
     val failedImages: Int = 0,
     val currentChapterTitle: String? = null,
     val currentImageUrl: String? = null,
+)
+
+/** Immutable transformed text for one source chapter; binary assets remain outside this contract. */
+data class NativeDownloadChapterText(
+    val title: String,
+    val body: String,
 )
 
 /** Metadata captured during the same pass that copies an asset to its staging file. */
@@ -403,6 +410,9 @@ object NativeEpubArchiveWriter {
         metadata: NativeEpubMetadata,
         source: Reader,
         openAsset: suspend (String) -> NativeEpubAsset,
+        transformChapter: (chapterOrder: Int, title: String, body: String) -> NativeDownloadChapterText = { _, title, body ->
+            NativeDownloadChapterText(title = title, body = body)
+        },
         imageConcurrency: Int = DEFAULT_IMAGE_CONCURRENCY,
         stagingDirectory: File? = null,
         stagedAssetCacheMaxBytes: Long = DEFAULT_STAGED_ASSET_CACHE_MAX_BYTES,
@@ -472,9 +482,15 @@ object NativeEpubArchiveWriter {
                 suspend fun flushChapter(title: String, body: String) {
                     awaitIfPaused()
                     val chapterIndex = chapters.size + 1
-                    val chapterTitle = title.ifBlank { "第${chapterIndex}章" }
+                    val sourceTitle = title.ifBlank { "第${chapterIndex}章" }
+                    val transformed = transformChapter(
+                        chapterNumber(sourceTitle) ?: chapterIndex,
+                        sourceTitle,
+                        body,
+                    )
+                    val chapterTitle = transformed.title.ifBlank { sourceTitle }
                     val renderedBody = renderBody(
-                        rawBody = body,
+                        rawBody = transformed.body,
                         zip = zip,
                         imageRecords = images,
                         stagedAssets = stagedAssets,
@@ -575,6 +591,67 @@ object NativeEpubArchiveWriter {
             }
         } finally {
             stagedAssets.clear()
+        }
+    }
+
+    /**
+     * Streams a source TXT through the exact same chapter boundary rules as EPUB. The metadata
+     * preamble is copied byte-for-character at line granularity, while only recognized chapter
+     * titles/bodies reach [transformChapter]. This avoids materializing an entire paid download.
+     */
+    suspend fun writeTransformedTxt(
+        output: Writer,
+        source: Reader,
+        transformChapter: (chapterOrder: Int, title: String, body: String) -> NativeDownloadChapterText,
+        awaitIfPaused: suspend () -> Unit = {},
+    ) {
+        val writer = output.buffered()
+        BufferedReader(source).use { reader ->
+            var currentTitle: String? = null
+            val currentBody = StringBuilder()
+            var lastChapterNumber: Int? = null
+            var nextChapterIndex = 1
+            var firstLine = true
+
+            suspend fun flushCurrentChapter() {
+                val sourceTitle = currentTitle ?: return
+                val transformed = transformChapter(
+                    chapterNumber(sourceTitle) ?: nextChapterIndex,
+                    sourceTitle,
+                    currentBody.toString(),
+                )
+                writer.write(transformed.title.ifBlank { sourceTitle })
+                writer.write('\n'.code)
+                writer.write(transformed.body)
+                writer.write('\n'.code)
+                nextChapterIndex += 1
+            }
+
+            while (true) {
+                awaitIfPaused()
+                val rawLine = reader.readLine() ?: break
+                val line = if (firstLine) rawLine.removePrefix("\uFEFF") else rawLine
+                firstLine = false
+                val heading = chapterHeadingPattern.matchEntire(line.trim())?.groupValues?.getOrNull(1)
+                if (heading != null && isChapterBoundary(heading, lastChapterNumber)) {
+                    if (currentTitle != null) {
+                        flushCurrentChapter()
+                        currentBody.clear()
+                    }
+                    currentTitle = heading.trim()
+                    lastChapterNumber = chapterNumber(currentTitle.orEmpty()) ?: lastChapterNumber
+                } else if (currentTitle == null) {
+                    // Preserve the source preamble as-is; it is not reader prose and should never
+                    // be mistaken for a replacement target.
+                    writer.write(line)
+                    writer.write('\n'.code)
+                } else {
+                    if (currentBody.isNotEmpty()) currentBody.append('\n')
+                    currentBody.append(line)
+                }
+            }
+            flushCurrentChapter()
+            writer.flush()
         }
     }
 

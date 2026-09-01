@@ -95,6 +95,16 @@ data class ReaderProgress(
      * Old records legitimately omit this value and then show progress without guessing an update.
      */
     val chapterCountAtLastRead: Int? = null,
+    /** Same-chapter native viewport anchor; website sync intentionally remains chapter-level. */
+    val viewportItemIndex: Int? = null,
+    val viewportItemScrollOffsetPx: Int? = null,
+)
+
+/** A stable reader body item plus an intra-item offset, persisted only on this device. */
+data class ReaderViewportAnchor(
+    val chapterId: Long,
+    val itemIndexWithinChapter: Int,
+    val itemScrollOffsetPx: Int,
 )
 
 /** The last reader route, persisted only to recover from Android reclaiming the process. */

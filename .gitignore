@@ -2,6 +2,7 @@
 build/
 app/build/
 .gradle/
+.gradle-user/
 .gradle-user-home/
 .cxx/
 

@@ -2,6 +2,10 @@ package com.novalpie.nativeapp.data
 
 import com.novalpie.nativeapp.model.MessageQuery
 import com.novalpie.nativeapp.model.MessageSettings
+import com.novalpie.nativeapp.model.ReaderReplacementOwner
+import com.novalpie.nativeapp.model.ReaderReplacementRegexFlag
+import com.novalpie.nativeapp.model.ReaderReplacementRule
+import com.novalpie.nativeapp.model.ReaderReplacementTarget
 import com.novalpie.nativeapp.model.BookEditRequest
 import com.novalpie.nativeapp.model.ForumCreateRequest
 import com.novalpie.nativeapp.model.ForumPollDraft
@@ -4103,6 +4107,101 @@ class NovalPieApiTest {
         assertEquals("95654", request.requestUrl?.queryParameter("novel_id"))
         assertEquals("魔力", request.requestUrl?.queryParameter("keyword"))
         assertEquals("0", request.requestUrl?.queryParameter("page"))
+    }
+
+    @Test
+    fun personalGlossaryCrudUsesReaderReplacementEndpoints() = runBlocking {
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"data":{"id":11,"novel_id":12,"source_name":"Alice","target_name":"艾莉丝"}}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"data":{"id":11,"novel_id":12,"source_name":"Alice","target_name":"爱丽丝"}}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody("""{"success":true}"""),
+        )
+
+        val created = api.createPersonalGlossary(12L, "Alice", "艾莉丝")
+        val updated = api.updatePersonalGlossary(11L, "爱丽丝")
+        api.deletePersonalGlossary(11L)
+
+        assertEquals(ReaderReplacementOwner.Personal, created.owner)
+        assertEquals("爱丽丝", updated.replacement)
+
+        val createRequest = server.takeRequest()
+        assertEquals("POST", createRequest.method)
+        assertEquals("/api/users/me/glossaries", createRequest.requestUrl?.encodedPath)
+        assertEquals("Alice", JSONObject(createRequest.body.readUtf8()).getString("source_name"))
+        val updateRequest = server.takeRequest()
+        assertEquals("PUT", updateRequest.method)
+        assertEquals("/api/users/me/glossaries/11", updateRequest.requestUrl?.encodedPath)
+        assertEquals("爱丽丝", JSONObject(updateRequest.body.readUtf8()).getString("target_name"))
+        val deleteRequest = server.takeRequest()
+        assertEquals("DELETE", deleteRequest.method)
+        assertEquals("/api/users/me/glossaries/11", deleteRequest.requestUrl?.encodedPath)
+    }
+
+    @Test
+    fun regexPersonalGlossaryCreateUsesTheWebsiteEncodedSource() = runBlocking {
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"data":{"id":12,"novel_id":34,"source_name":"re:/(Alice)\\/(Bob)/gim","target_name":"$2-$1"}}""",
+            ),
+        )
+        val localRule = ReaderReplacementRule(
+            id = "local-1",
+            novelId = 34L,
+            source = "(Alice)/(Bob)",
+            replacement = "$2-$1",
+            isRegex = true,
+            regexFlags = setOf(
+                ReaderReplacementRegexFlag.IgnoreCase,
+                ReaderReplacementRegexFlag.Multiline,
+            ),
+            target = ReaderReplacementTarget.Both,
+        )
+
+        val created = api.createPersonalGlossary(localRule)
+
+        assertEquals("personal:12", created.id)
+        val request = server.takeRequest()
+        assertEquals("re:/(Alice)\\/(Bob)/gim", JSONObject(request.body.readUtf8()).getString("source_name"))
+    }
+
+    @Test
+    fun websiteEncodedRegexGlossaryIsDecodedBeforeNativeReaderAppliesIt() = runBlocking {
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"data":[{"id":11,"novel_id":12,"source_name":"re:/(Alice)\\/(Bob)/gim","target_name":"$2-$1"}]}""",
+            ),
+        )
+
+        val rule = api.personalGlossaries(12L).single()
+
+        assertEquals("(Alice)/(Bob)", rule.source)
+        assertTrue(rule.isRegex)
+        assertTrue(ReaderReplacementRegexFlag.IgnoreCase in rule.regexFlags)
+        assertTrue(ReaderReplacementRegexFlag.Multiline in rule.regexFlags)
+        assertEquals("/api/users/me/glossaries", server.takeRequest().requestUrl?.encodedPath)
+    }
+
+    @Test
+    fun sharedGlossaryIsReadOnlyAndNormalizesAsSharedRules() = runBlocking {
+        server.enqueue(
+            MockResponse().setHeader("content-type", "application/json").setBody(
+                """{"data":[{"id":21,"novel_id":12,"source_name":"Bob","target_name":"鲍勃"}]}""",
+            ),
+        )
+
+        val rules = api.sharedGlossaries(12L)
+
+        assertEquals(ReaderReplacementOwner.Shared, rules.single().owner)
+        assertEquals("Bob", rules.single().source)
+        assertEquals("/api/users/me/novels/12/glossary", server.takeRequest().path)
     }
 
     @Test

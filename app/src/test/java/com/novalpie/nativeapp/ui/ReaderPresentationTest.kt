@@ -13,9 +13,45 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import com.novalpie.nativeapp.model.ReaderViewportAnchor
 import org.junit.Test
 
 class ReaderPresentationTest {
+    @Test
+    fun contentWidthBelongsToTheLayoutSettingsCategory() {
+        assertEquals(
+            ReaderSettingsCategory.Layout,
+            readerSettingsCategoryForContentWidth(),
+        )
+    }
+
+    @Test
+    fun readerViewportAnchorRestoresTheSameChapterRelativeParagraphAfterReopen() {
+        val contents = listOf(
+            ReaderChapterContent(
+                chapterId = 11L,
+                title = "第一章",
+                content = ReaderContent(
+                    title = "第一章",
+                    content = "第一段\n第二段\n第三段",
+                    source = "novelpia",
+                ),
+            ),
+        )
+        val options = ReaderUiOptions(showComments = false)
+        val anchor = readerViewportAnchorForBodyItem(
+            contents = contents,
+            options = options,
+            globalItemIndex = 2,
+            itemScrollOffsetPx = 48,
+        )
+
+        assertEquals(ReaderViewportAnchor(11L, 2, 48), anchor)
+        assertEquals(
+            2,
+            readerBodyItemIndexForViewportAnchor(contents, options, anchor!!),
+        )
+    }
     @Test
     fun pageModeSideTapInterceptsInteractiveCommentControlsBeforeTurningPage() {
         assertTrue(
@@ -703,6 +739,22 @@ class ReaderPresentationTest {
         assertFalse(readerTtsFeedbackVisible(showTts = false, state = ReaderTtsState.Error))
         assertFalse(readerTtsFeedbackVisible(showTts = false, state = ReaderTtsState.Speaking))
         assertFalse(readerTtsFeedbackVisible(showTts = true, state = ReaderTtsState.Stopped))
+    }
+
+    @Test
+    fun ttsRailLabelMatchesTheActualPauseAndResumeAction() {
+        assertEquals("暂停", readerTtsPrimaryActionLabel(ReaderTtsState.Speaking, "听书"))
+        assertEquals("继续", readerTtsPrimaryActionLabel(ReaderTtsState.Paused, "听书"))
+        assertEquals("准备中", readerTtsPrimaryActionLabel(ReaderTtsState.Loading, "听书"))
+        assertEquals("听书", readerTtsPrimaryActionLabel(ReaderTtsState.Stopped, "听书"))
+    }
+
+    @Test
+    fun ttsFeedbackKeepsAnExplicitStopActionWhilePausedOrSpeaking() {
+        assertTrue(readerTtsStopActionVisible(ReaderTtsState.Speaking))
+        assertTrue(readerTtsStopActionVisible(ReaderTtsState.Paused))
+        assertFalse(readerTtsStopActionVisible(ReaderTtsState.Loading))
+        assertFalse(readerTtsStopActionVisible(ReaderTtsState.Stopped))
     }
 
     @Test

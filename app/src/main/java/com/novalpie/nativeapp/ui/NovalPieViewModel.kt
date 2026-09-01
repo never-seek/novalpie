@@ -34,6 +34,7 @@ import com.novalpie.nativeapp.data.NetworkConfigStore
 import com.novalpie.nativeapp.data.NovalPieApi
 import com.novalpie.nativeapp.data.NativeEpubArchiveWriter
 import com.novalpie.nativeapp.data.NativeEpubAsset
+import com.novalpie.nativeapp.data.NativeDownloadChapterText
 import com.novalpie.nativeapp.data.NativeEpubExportProgress
 import com.novalpie.nativeapp.data.NativeEpubMetadata
 import com.novalpie.nativeapp.data.NativeDownloadControl
@@ -53,6 +54,7 @@ import com.novalpie.nativeapp.data.ReaderFontStore
 import com.novalpie.nativeapp.data.ReaderSettingsValues
 import com.novalpie.nativeapp.data.ReaderTtsSettings
 import com.novalpie.nativeapp.data.ReaderTtsSettingsStore
+import com.novalpie.nativeapp.data.ReaderReplacementRulesStore
 import com.novalpie.nativeapp.data.SearchHistoryStore
 import com.novalpie.nativeapp.data.SearchSettingsStore
 import com.novalpie.nativeapp.data.WorkspaceLocalStore
@@ -103,6 +105,9 @@ import com.novalpie.nativeapp.model.ReaderCustomTheme
 import com.novalpie.nativeapp.model.ReaderProgress
 import com.novalpie.nativeapp.model.ReaderSession
 import com.novalpie.nativeapp.model.ReaderTapArea
+import com.novalpie.nativeapp.model.ReaderViewportAnchor
+import com.novalpie.nativeapp.model.ReaderReplacementOwner
+import com.novalpie.nativeapp.model.ReaderReplacementRule
 import com.novalpie.nativeapp.model.SiteMessage
 import com.novalpie.nativeapp.model.TerminologyEntry
 import com.novalpie.nativeapp.model.TerminologyPage
@@ -150,6 +155,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
+import java.io.OutputStreamWriter
 import java.nio.charset.Charset
 import java.util.Calendar
 import java.util.Locale
@@ -696,9 +702,15 @@ enum class NativeBookDownloadFormat {
     Txt,
 }
 
+enum class NativeDownloadReplacementMode {
+    Source,
+    EffectiveReaderRules,
+}
+
 data class NativeEpubDownloadState(
     val bookId: Long = 0,
     val format: NativeBookDownloadFormat? = null,
+    val replacementMode: NativeDownloadReplacementMode = NativeDownloadReplacementMode.Source,
     val busy: Boolean = false,
     val paused: Boolean = false,
     val progress: NativeEpubExportProgress? = null,
@@ -773,6 +785,8 @@ data class ReaderState(
     val chapterId: Long = 0,
     /** One-shot viewport request consumed by ReaderScreen after this chapter body composes. */
     val entryPosition: ReaderChapterEntryPosition = ReaderChapterEntryPosition.Start,
+    /** One-shot local same-chapter anchor consumed after the actual body has composed. */
+    val restoreViewportAnchor: ReaderViewportAnchor? = null,
     val content: LoadResult<ReaderContent> = LoadResult.Idle,
     val chapterContents: List<ReaderChapterContent> = emptyList(),
     val chapters: LoadResult<List<Chapter>> = LoadResult.Idle,
@@ -970,6 +984,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private val readerSessionStore = ReaderSessionStore(application)
     private val readerSettingsStore = ReaderSettingsStore(application)
     private val readerTtsSettingsStore = ReaderTtsSettingsStore(application)
+    private val readerReplacementRulesStore = ReaderReplacementRulesStore(application)
     private val appThemeSettingsStore = AppThemeSettingsStore(application)
     private val chineseVariantSettingsStore = ChineseVariantSettingsStore(application)
     private val searchHistoryStore = SearchHistoryStore(application)
@@ -1067,6 +1082,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val bookId: Long,
         val format: NativeBookDownloadFormat,
         val ticket: EpubDownloadTicket,
+        val replacementMode: NativeDownloadReplacementMode,
+        val replacementSnapshot: ReaderDownloadReplacementSnapshot?,
     )
     /** Reuse a granted ticket on retry so a transport failure cannot charge the user twice. */
     private var nativeDownloadRetry: NativeDownloadRetry? = null
@@ -1186,6 +1203,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         private set
     var readerTtsSettings by mutableStateOf(readerTtsSettingsStore.load())
         private set
+    var readerReplacementState by mutableStateOf(ReaderReplacementState())
+        private set
+    /** Tracks a local rule while its first remote glossary row is being created. */
+    private val pendingReaderReplacementCreates = mutableSetOf<String>()
+    private val deletedPendingReaderReplacementCreates = mutableSetOf<String>()
     var appThemeMode by mutableStateOf(appThemeSettingsStore.loadMode())
         private set
     var chineseVariant by mutableStateOf(chineseVariantSettingsStore.loadVariant())
@@ -1215,7 +1237,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         // authenticated shelf requests through the same proxy/CDN route; Forum loads on tab or
         // deep-link entry instead.
         startupReaderSession?.let { session ->
-            loadReader(session.bookId, session.chapterId)
+            loadReader(session.bookId, session.chapterId, restoreViewport = true)
         } ?: loadHome()
     }
 
@@ -1733,6 +1755,363 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val next = transform(readerTtsSettings)
         readerTtsSettingsStore.save(next)
         readerTtsSettings = readerTtsSettingsStore.load()
+    }
+
+    fun selectReaderReplacementSource(source: ReaderReplacementRuleSource) {
+        val current = readerReplacementState
+        if (current.source == source) return
+        readerReplacementState = current.copy(
+            source = source,
+            actionMessage = if (source == ReaderReplacementRuleSource.All) {
+                if (current.sharedRulesEnabled) "正在管理全部规则" else "公共规则当前未应用；可在本书开关中启用"
+            } else "正在管理我的规则",
+        )
+    }
+
+    /** Explicit per-book control: it governs reader, TTS, and captured download rule snapshots. */
+    fun setReaderSharedRulesEnabled(enabled: Boolean) {
+        val current = readerReplacementState
+        if (current.novelId <= 0L || current.sharedRulesEnabled == enabled) return
+        readerReplacementRulesStore.saveSharedRulesEnabledOverride(current.novelId, enabled)
+        readerReplacementState = current.copy(
+            source = if (enabled) ReaderReplacementRuleSource.All else ReaderReplacementRuleSource.Personal,
+            sharedRulesEnabledOverride = enabled,
+            revision = readerReplacementNextLocalRevision(
+                currentRevision = current.revision,
+                persistedRevision = readerReplacementRulesStore.revision(current.novelId),
+            ),
+            ttsRevision = current.ttsRevision + 1L,
+            actionMessage = if (enabled) "本书已应用公共规则；可逐条关闭不需要的规则" else "本书现仅应用我的规则",
+        )
+    }
+
+    /** Controls the default used only by books without their own explicit public-rule choice. */
+    fun setDefaultReaderSharedRulesEnabled(enabled: Boolean) {
+        val current = readerReplacementState
+        if (current.defaultSharedRulesEnabled == enabled) return
+        readerReplacementRulesStore.saveDefaultSharedRulesEnabled(enabled)
+        val effectiveChanged = current.sharedRulesEnabledOverride == null && current.sharedRulesEnabled != enabled
+        readerReplacementState = current.copy(
+            source = if (effectiveChanged && enabled) ReaderReplacementRuleSource.All else current.source,
+            defaultSharedRulesEnabled = enabled,
+            revision = if (effectiveChanged) current.revision + 1L else current.revision,
+            ttsRevision = if (effectiveChanged) current.ttsRevision + 1L else current.ttsRevision,
+            actionMessage = if (enabled) "未单独设置的书籍将默认应用公共规则" else "未单独设置的书籍将默认只应用我的规则",
+        )
+    }
+
+    /** Removes only this book's override so it follows the device-wide default again. */
+    fun resetReaderSharedRulesOverride() {
+        val current = readerReplacementState
+        if (current.novelId <= 0L || current.sharedRulesEnabledOverride == null) return
+        readerReplacementRulesStore.saveSharedRulesEnabledOverride(current.novelId, null)
+        val effectiveEnabled = readerSharedRulesEnabled(
+            defaultEnabled = current.defaultSharedRulesEnabled,
+            bookOverride = null,
+        )
+        readerReplacementState = current.copy(
+            source = if (effectiveEnabled) ReaderReplacementRuleSource.All else ReaderReplacementRuleSource.Personal,
+            sharedRulesEnabledOverride = null,
+            revision = current.revision + 1L,
+            ttsRevision = current.ttsRevision + 1L,
+            actionMessage = "本书已恢复跟随默认设置",
+        )
+    }
+
+    fun saveReaderReplacementRule(rule: ReaderReplacementRule) {
+        val state = readerReplacementState
+        if (state.novelId <= 0L) return
+        val normalized = rule.copy(
+            novelId = state.novelId,
+            owner = ReaderReplacementOwner.Personal,
+        )
+        val validation = validateReaderReplacementRule(normalized)
+        if (!validation.isValid) {
+            readerReplacementState = state.copy(actionMessage = validation.message ?: "替换规则无效")
+            return
+        }
+        val previous = state.personalRules.firstOrNull { it.id == normalized.id }
+        val syncAction = readerReplacementSaveSyncAction(previous = previous, saved = normalized)
+        val nextRules = state.personalRules
+            .filterNot { it.id == normalized.id }
+            .plus(normalized)
+            .sortedWith(compareBy<ReaderReplacementRule> { it.order }.thenBy { it.id })
+        readerReplacementRulesStore.savePersonalRules(state.novelId, nextRules)
+        readerReplacementState = state.copy(
+            personalRules = nextRules,
+            revision = readerReplacementNextLocalRevision(
+                currentRevision = state.revision,
+                persistedRevision = readerReplacementRulesStore.revision(state.novelId),
+            ),
+            ttsRevision = state.ttsRevision + 1L,
+            actionMessage = when (syncAction) {
+                ReaderReplacementRemoteSyncAction.None -> "规则已保存在当前设备（章节范围、标题规则和停用规则不会改动网页）"
+                else -> "我的替换规则已保存，正在同步网页…"
+            },
+        )
+        if (
+            syncAction is ReaderReplacementRemoteSyncAction.Create &&
+            normalized.id in pendingReaderReplacementCreates
+        ) {
+            // A rapid second save must update the local draft but never create duplicate website
+            // glossary rows. The first create callback reconciles and then syncs this newest form.
+            return
+        }
+        syncReaderReplacementSave(
+            bookId = state.novelId,
+            previous = previous,
+            saved = normalized,
+            action = syncAction,
+        )
+    }
+
+    fun deleteReaderReplacementRule(ruleId: String) {
+        val state = readerReplacementState
+        if (state.novelId <= 0L || ruleId.isBlank()) return
+        val removedRule = state.personalRules.firstOrNull { it.id == ruleId } ?: return
+        val syncAction = readerReplacementDeleteSyncAction(removedRule)
+        val nextRules = state.personalRules.filterNot { it.id == ruleId }
+        readerReplacementRulesStore.savePersonalRules(state.novelId, nextRules)
+        readerReplacementState = state.copy(
+            personalRules = nextRules,
+            revision = readerReplacementNextLocalRevision(
+                currentRevision = state.revision,
+                persistedRevision = readerReplacementRulesStore.revision(state.novelId),
+            ),
+            ttsRevision = state.ttsRevision + 1L,
+            actionMessage = if (syncAction == ReaderReplacementRemoteSyncAction.None) {
+                "替换规则已删除"
+            } else {
+                "替换规则已删除，正在同步网页…"
+            },
+        )
+        if (ruleId in pendingReaderReplacementCreates) {
+            // The server may still finish the in-flight POST; its callback deletes the resulting
+            // row before it can reappear on the website.
+            deletedPendingReaderReplacementCreates += ruleId
+            return
+        }
+        syncReaderReplacementDelete(
+            bookId = state.novelId,
+            removedRuleId = ruleId,
+            action = syncAction,
+        )
+    }
+
+    private fun syncReaderReplacementSave(
+        bookId: Long,
+        previous: ReaderReplacementRule?,
+        saved: ReaderReplacementRule,
+        action: ReaderReplacementRemoteSyncAction,
+    ) {
+        if (action == ReaderReplacementRemoteSyncAction.None) return
+        if (action is ReaderReplacementRemoteSyncAction.Create) {
+            pendingReaderReplacementCreates += saved.id
+        }
+        viewModelScope.launch {
+            val result = runCatching {
+                when (action) {
+                    ReaderReplacementRemoteSyncAction.None -> null
+                    is ReaderReplacementRemoteSyncAction.Create -> api.createPersonalGlossary(action.rule)
+                    is ReaderReplacementRemoteSyncAction.Update -> api.updatePersonalGlossary(
+                        ruleId = action.serverRuleId,
+                        replacement = action.replacement,
+                    )
+                    is ReaderReplacementRemoteSyncAction.Replace -> {
+                        // Source/regex flags are immutable in the website API. Delete then create
+                        // keeps the server vocabulary unambiguous; the local rule remains usable
+                        // even if the network drops between those two operations.
+                        api.deletePersonalGlossary(action.serverRuleId)
+                        api.createPersonalGlossary(action.rule)
+                    }
+                    is ReaderReplacementRemoteSyncAction.Delete -> {
+                        api.deletePersonalGlossary(action.serverRuleId)
+                        null
+                    }
+                }
+            }
+            if (action is ReaderReplacementRemoteSyncAction.Create) {
+                pendingReaderReplacementCreates -= saved.id
+            }
+            result.onFailure { failure ->
+                if (readerReplacementState.novelId == bookId) {
+                    readerReplacementState = readerReplacementState.copy(
+                        actionMessage = "规则已保存在本机，网页同步失败：${apiFailureMessage("替换规则", failure)}",
+                    )
+                }
+            }.onSuccess { remoteRule ->
+                reconcileReaderReplacementSave(
+                    bookId = bookId,
+                    previous = previous,
+                    saved = saved,
+                    action = action,
+                    remoteRule = remoteRule,
+                )
+            }
+        }
+    }
+
+    private fun reconcileReaderReplacementSave(
+        bookId: Long,
+        previous: ReaderReplacementRule?,
+        saved: ReaderReplacementRule,
+        action: ReaderReplacementRemoteSyncAction,
+        remoteRule: ReaderReplacementRule?,
+    ) {
+        if (readerReplacementState.novelId != bookId) return
+        val current = readerReplacementState
+        val currentRule = current.personalRules.firstOrNull { it.id == saved.id }
+
+        if (saved.id in deletedPendingReaderReplacementCreates) {
+            deletedPendingReaderReplacementCreates -= saved.id
+            remoteRule?.websiteRuleId?.let { serverRuleId ->
+                viewModelScope.launch { runCatching { api.deletePersonalGlossary(serverRuleId) } }
+            }
+            return
+        }
+        if (currentRule == null) return
+
+        val remoteId = remoteRule?.websiteRuleId ?: currentRule.websiteRuleId
+        val synchronizedRule = currentRule.copy(
+            websiteRuleId = remoteId,
+            createdAt = remoteRule?.createdAt ?: currentRule.createdAt,
+            updatedAt = remoteRule?.updatedAt ?: currentRule.updatedAt,
+        )
+        val nextRules = current.personalRules.map { rule ->
+            if (rule.id == synchronizedRule.id) synchronizedRule else rule
+        }
+        if (nextRules != current.personalRules) {
+            readerReplacementRulesStore.savePersonalRules(bookId, nextRules)
+        }
+        readerReplacementState = current.copy(
+            personalRules = nextRules,
+            actionMessage = if (remoteId != null) "替换规则已同步到网页" else "替换规则已保存",
+        )
+
+        // If the reader edited the local row again while its initial POST was in flight, bind the
+        // newly returned server ID to the newest rule and perform exactly one follow-up mutation.
+        if (action is ReaderReplacementRemoteSyncAction.Create && currentRule != saved && remoteId != null) {
+            val remoteBaseline = saved.copy(websiteRuleId = remoteId)
+            val followUp = readerReplacementSaveSyncAction(
+                previous = remoteBaseline,
+                saved = synchronizedRule,
+            )
+            syncReaderReplacementSave(
+                bookId = bookId,
+                previous = remoteBaseline,
+                saved = synchronizedRule,
+                action = followUp,
+            )
+        }
+    }
+
+    private fun syncReaderReplacementDelete(
+        bookId: Long,
+        removedRuleId: String,
+        action: ReaderReplacementRemoteSyncAction,
+    ) {
+        val delete = action as? ReaderReplacementRemoteSyncAction.Delete ?: return
+        viewModelScope.launch {
+            runCatching { api.deletePersonalGlossary(delete.serverRuleId) }
+                .onFailure { failure ->
+                    if (
+                        readerReplacementState.novelId == bookId &&
+                        readerReplacementState.personalRules.none { it.id == removedRuleId }
+                    ) {
+                        readerReplacementState = readerReplacementState.copy(
+                            actionMessage = "规则已从本机删除，网页同步失败：${apiFailureMessage("删除替换规则", failure)}",
+                        )
+                    }
+                }
+                .onSuccess {
+                    if (readerReplacementState.novelId == bookId) {
+                        readerReplacementState = readerReplacementState.copy(actionMessage = "替换规则已从网页删除")
+                    }
+                }
+        }
+    }
+
+    fun setSharedReaderReplacementRuleVisible(ruleId: String, visible: Boolean) {
+        val state = readerReplacementState
+        if (state.novelId <= 0L || ruleId.isBlank()) return
+        val nextHidden = state.hiddenSharedRuleIds.toMutableSet().apply {
+            if (visible) remove(ruleId) else add(ruleId)
+        }
+        readerReplacementRulesStore.saveHiddenSharedRuleIds(state.novelId, nextHidden)
+        readerReplacementState = state.copy(
+            hiddenSharedRuleIds = nextHidden,
+            revision = readerReplacementNextLocalRevision(
+                currentRevision = state.revision,
+                persistedRevision = readerReplacementRulesStore.revision(state.novelId),
+            ),
+            ttsRevision = state.ttsRevision + 1L,
+            actionMessage = if (visible) "公共规则已启用" else "公共规则已隐藏",
+        )
+    }
+
+    fun cloneSharedReaderReplacementRule(sharedRule: ReaderReplacementRule) {
+        val state = readerReplacementState
+        if (state.novelId <= 0L) return
+        val clone = cloneSharedReaderReplacementRule(
+            sharedRule = sharedRule,
+            newId = "local-${java.util.UUID.randomUUID()}",
+        ).copy(novelId = state.novelId)
+        saveReaderReplacementRule(clone)
+        readerReplacementState = readerReplacementState.copy(actionMessage = "已复制到我的规则，可继续编辑")
+    }
+
+    private fun loadReaderReplacementRules(bookId: Long) {
+        if (bookId <= 0L) return
+        // The server glossary contract only represents a simple source/target pair. Import it as
+        // a useful baseline, but preserve edits locally so scoped and regex rules cannot be
+        // silently flattened or race a delayed remote create/delete response.
+        val localRules = readerReplacementRulesStore.loadPersonalRules(bookId)
+        val hiddenSharedRuleIds = readerReplacementRulesStore.loadHiddenSharedRuleIds(bookId)
+        val defaultSharedRulesEnabled = readerReplacementRulesStore.loadDefaultSharedRulesEnabled()
+        val sharedRulesEnabledOverride = readerReplacementRulesStore.loadSharedRulesEnabledOverride(bookId)
+        val sharedRulesEnabled = readerSharedRulesEnabled(defaultSharedRulesEnabled, sharedRulesEnabledOverride)
+        readerReplacementState = ReaderReplacementState(
+            novelId = bookId,
+            source = if (sharedRulesEnabled) ReaderReplacementRuleSource.All else ReaderReplacementRuleSource.Personal,
+            personalRules = localRules,
+            sharedRules = LoadResult.Loading,
+            hiddenSharedRuleIds = hiddenSharedRuleIds,
+            defaultSharedRulesEnabled = defaultSharedRulesEnabled,
+            sharedRulesEnabledOverride = sharedRulesEnabledOverride,
+            revision = readerReplacementRulesStore.revision(bookId),
+        )
+        viewModelScope.launch {
+            val personalRequest = async { runCatching { api.personalGlossaries(bookId) } }
+            val sharedRequest = async { runCatching { api.sharedGlossaries(bookId) } }
+            val personal = personalRequest.await()
+            val shared = sharedRequest.await()
+            if (readerReplacementState.novelId != bookId) return@launch
+            val current = readerReplacementState
+            val mergedPersonalRules = personal.getOrNull()?.let { remoteRules ->
+                mergeReaderReplacementPersonalRules(
+                    localRules = current.personalRules,
+                    remoteRules = remoteRules,
+                )
+            } ?: current.personalRules
+            if (mergedPersonalRules != current.personalRules) {
+                readerReplacementRulesStore.savePersonalRules(bookId, mergedPersonalRules)
+            }
+            val loadedSharedRules = shared.toLoadResult("加载公共替换规则")
+            val actionMessage = when {
+                shared.isFailure -> apiFailureMessage("加载公共替换规则", shared.exceptionOrNull()!!)
+                else -> null
+            }
+            readerReplacementState = current.copy(
+                personalRules = mergedPersonalRules,
+                sharedRules = loadedSharedRules,
+                revision = readerReplacementRevisionAfterRulesLoad(
+                    current = current,
+                    personalRules = mergedPersonalRules,
+                    sharedRules = loadedSharedRules,
+                ),
+                actionMessage = actionMessage,
+            )
+        }
     }
 
     /** Appends the next source chapter to the current reader window for website-style scrolling. */
@@ -6680,7 +7059,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val nextStack = replaceTopReaderRoute(currentStack, next)
         if (nextStack === currentStack) return
         routes.replaceWith(nextStack)
-        loadReader(bookId, chapterId, entryPosition = entryPosition)
+        loadReader(
+            bookId,
+            chapterId,
+            entryPosition = entryPosition,
+            restoreViewport = entryPosition == ReaderChapterEntryPosition.Start,
+        )
     }
 
     fun continueReading(progress: ReaderProgress) {
@@ -6690,7 +7074,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         routes.add(AppRoute.BookDetail(progress.bookId))
         loadBookDetail(progress.bookId)
         routes.add(AppRoute.Reader(progress.bookId, progress.chapterId))
-        loadReader(progress.bookId, progress.chapterId)
+        loadReader(progress.bookId, progress.chapterId, restoreViewport = true)
     }
 
     fun clearReaderProgress() {
@@ -7892,6 +8276,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private fun beginNativeDownload(
         bookId: Long,
         format: NativeBookDownloadFormat,
+        replacementMode: NativeDownloadReplacementMode,
         message: String,
     ): Long {
         nativeDownloadGeneration += 1
@@ -7902,6 +8287,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         nativeEpubDownloadState = NativeEpubDownloadState(
             bookId = bookId,
             format = format,
+            replacementMode = replacementMode,
             busy = true,
             message = message,
         )
@@ -7917,12 +8303,51 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun reusableNativeDownloadTicket(
+    private fun reusableNativeDownloadRetry(
         bookId: Long,
         format: NativeBookDownloadFormat,
-    ): EpubDownloadTicket? = nativeDownloadRetry
-        ?.takeIf { it.bookId == bookId && it.format == format }
-        ?.ticket
+        replacementMode: NativeDownloadReplacementMode,
+    ): NativeDownloadRetry? = nativeDownloadRetry
+        ?.takeIf {
+            it.bookId == bookId &&
+                it.format == format &&
+                it.replacementMode == replacementMode
+        }
+
+    /**
+     * Build a detached export snapshot before requesting/download-streaming content. A server
+     * glossary fetch is required only when the user elected to apply rules; source exports remain
+     * completely streaming and do not wait on reader configuration APIs.
+     */
+    private suspend fun resolveDownloadReplacementSnapshot(
+        bookId: Long,
+        replacementMode: NativeDownloadReplacementMode,
+    ): ReaderDownloadReplacementSnapshot? {
+        if (replacementMode == NativeDownloadReplacementMode.Source) return null
+        val localRules = readerReplacementRulesStore.loadPersonalRules(bookId)
+        val defaultSharedRulesEnabled = readerReplacementRulesStore.loadDefaultSharedRulesEnabled()
+        val sharedRulesEnabledOverride = readerReplacementRulesStore.loadSharedRulesEnabledOverride(bookId)
+        val sharedRulesEnabled = readerSharedRulesEnabled(
+            defaultEnabled = defaultSharedRulesEnabled,
+            bookOverride = sharedRulesEnabledOverride,
+        )
+        val personal = api.personalGlossaries(bookId)
+        val mergedPersonal = mergeReaderReplacementPersonalRules(
+            localRules = localRules,
+            remoteRules = personal,
+        )
+        val shared = if (sharedRulesEnabled) api.sharedGlossaries(bookId) else emptyList()
+        val snapshotState = ReaderReplacementState(
+            novelId = bookId,
+            source = if (sharedRulesEnabled) ReaderReplacementRuleSource.All else ReaderReplacementRuleSource.Personal,
+            personalRules = mergedPersonal,
+            sharedRules = LoadResult.Success(shared),
+            hiddenSharedRuleIds = readerReplacementRulesStore.loadHiddenSharedRuleIds(bookId),
+            defaultSharedRulesEnabled = defaultSharedRulesEnabled,
+            sharedRulesEnabledOverride = sharedRulesEnabledOverride,
+        )
+        return readerDownloadReplacementSnapshot(applyRules = true, state = snapshotState)
+    }
 
     /** Cancels only the active native job and leaves its authorization ticket available to retry. */
     fun cancelNativeBookDownload(bookId: Long) {
@@ -7980,14 +8405,23 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val state = nativeEpubDownloadState
         if (state.busy || !state.canRetry || state.bookId != bookId) return
         when (state.format) {
-            NativeBookDownloadFormat.Epub -> downloadBookEpub(bookId)
-            NativeBookDownloadFormat.Txt -> downloadBookTxt(bookId)
+            NativeBookDownloadFormat.Epub -> downloadBookEpub(
+                bookId = bookId,
+                replacementMode = state.replacementMode,
+            )
+            NativeBookDownloadFormat.Txt -> downloadBookTxt(
+                bookId = bookId,
+                replacementMode = state.replacementMode,
+            )
             null -> Unit
         }
     }
 
     /** Downloads the source-authorized EPUB into Android Downloads without opening a WebView. */
-    fun downloadBookEpub(bookId: Long) {
+    fun downloadBookEpub(
+        bookId: Long,
+        replacementMode: NativeDownloadReplacementMode = NativeDownloadReplacementMode.Source,
+    ) {
         val book = (bookDetailState.book as? LoadResult.Success)?.value
             ?.takeIf { it.id == bookId }
         if (bookId <= 0 || nativeEpubDownloadState.busy) return
@@ -8001,13 +8435,15 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         }
         val app = getApplication<Application>()
         val imageConcurrency = profileState.downloadImageConcurrency
-        val reusableTicket = reusableNativeDownloadTicket(bookId, NativeBookDownloadFormat.Epub)
+        val reusableRetry = reusableNativeDownloadRetry(bookId, NativeBookDownloadFormat.Epub, replacementMode)
+        val reusableTicket = reusableRetry?.ticket
         if (reusableTicket == null) nativeDownloadRetry = null
         cleanupNativeEpubTempFiles(app.cacheDir)
         cleanupNativeEpubTempFiles(File(app.filesDir, "novalpie-epub-work"))
         val generation = beginNativeDownload(
             bookId = bookId,
             format = NativeBookDownloadFormat.Epub,
+            replacementMode = replacementMode,
             message = if (reusableTicket == null) "正在申请下载授权…" else "正在使用上次授权重试…",
         )
         nativeDownloadJob = viewModelScope.launch {
@@ -8020,11 +8456,15 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             // therefore records temporary files from multiple IO workers.
             val temporaryAssets = ConcurrentLinkedQueue<File>()
             try {
+                val replacementSnapshot = reusableRetry?.replacementSnapshot
+                    ?: resolveDownloadReplacementSnapshot(bookId, replacementMode)
                 val ticket = reusableTicket ?: api.requestEpubDownload(bookId).also {
                     nativeDownloadRetry = NativeDownloadRetry(
                         bookId = bookId,
                         format = NativeBookDownloadFormat.Epub,
                         ticket = it,
+                        replacementMode = replacementMode,
+                        replacementSnapshot = replacementSnapshot,
                     )
                 }
                 updateNativeDownload(generation) {
@@ -8049,6 +8489,17 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                                         coverUrl = nativeEpubCoverUrl(book),
                                     ),
                                     source = source,
+                                    transformChapter = { chapterOrder, title, body ->
+                                        replacementSnapshot
+                                            ?.transform(chapterOrder, title, body)
+                                            ?.let { transformed ->
+                                                NativeDownloadChapterText(
+                                                    title = transformed.title,
+                                                    body = transformed.body,
+                                                )
+                                            }
+                                            ?: NativeDownloadChapterText(title = title, body = body)
+                                    },
                                     imageConcurrency = imageConcurrency,
                                     stagingDirectory = epubWorkDirectory,
                                     awaitIfPaused = { downloadControl?.awaitIfPaused() },
@@ -8158,7 +8609,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Downloads the source-authorized TXT into Android Downloads without opening a WebView. */
-    fun downloadBookTxt(bookId: Long) {
+    fun downloadBookTxt(
+        bookId: Long,
+        replacementMode: NativeDownloadReplacementMode = NativeDownloadReplacementMode.Source,
+    ) {
         val book = (bookDetailState.book as? LoadResult.Success)?.value
             ?.takeIf { it.id == bookId }
         if (bookId <= 0 || nativeEpubDownloadState.busy) return
@@ -8170,11 +8624,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             )
             return
         }
-        val reusableTicket = reusableNativeDownloadTicket(bookId, NativeBookDownloadFormat.Txt)
+        val reusableRetry = reusableNativeDownloadRetry(bookId, NativeBookDownloadFormat.Txt, replacementMode)
+        val reusableTicket = reusableRetry?.ticket
         if (reusableTicket == null) nativeDownloadRetry = null
         val generation = beginNativeDownload(
             bookId = bookId,
             format = NativeBookDownloadFormat.Txt,
+            replacementMode = replacementMode,
             message = if (reusableTicket == null) "正在申请下载授权…" else "正在使用上次授权重试…",
         )
         nativeDownloadJob = viewModelScope.launch {
@@ -8182,11 +8638,15 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             var destination: NativeDownloadDestination? = null
             var destinationCommitted = false
             try {
+                val replacementSnapshot = reusableRetry?.replacementSnapshot
+                    ?: resolveDownloadReplacementSnapshot(bookId, replacementMode)
                 val ticket = reusableTicket ?: api.requestTxtDownload(bookId).also {
                     nativeDownloadRetry = NativeDownloadRetry(
                         bookId = bookId,
                         format = NativeBookDownloadFormat.Txt,
                         ticket = it,
+                        replacementMode = replacementMode,
+                        replacementSnapshot = replacementSnapshot,
                     )
                 }
                 updateNativeDownload(generation) {
@@ -8197,11 +8657,32 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     val target = destination ?: throw IOException("无法创建下载目标")
                     openNativeDownloadOutput(target).use { output ->
                         api.streamDownloadFile(ticket.fileName) { input ->
-                            copyNativeDownloadStream(
-                                input = input,
-                                output = output,
-                                awaitIfPaused = { downloadControl?.awaitIfPaused() },
-                            )
+                            if (replacementSnapshot == null) {
+                                copyNativeDownloadStream(
+                                    input = input,
+                                    output = output,
+                                    awaitIfPaused = { downloadControl?.awaitIfPaused() },
+                                )
+                            } else {
+                                InputStreamReader(input, Charsets.UTF_8).use { source ->
+                                    OutputStreamWriter(output, Charsets.UTF_8).use { writer ->
+                                        NativeEpubArchiveWriter.writeTransformedTxt(
+                                            output = writer,
+                                            source = source,
+                                            transformChapter = { chapterOrder, title, body ->
+                                                replacementSnapshot.transform(chapterOrder, title, body)
+                                                    .let { transformed ->
+                                                        NativeDownloadChapterText(
+                                                            title = transformed.title,
+                                                            body = transformed.body,
+                                                        )
+                                                    }
+                                            },
+                                            awaitIfPaused = { downloadControl?.awaitIfPaused() },
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                     commitNativeDownloadDestination(target)
@@ -8579,9 +9060,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         chapterId: Long,
         preserveContinuousWindow: Boolean = false,
         entryPosition: ReaderChapterEntryPosition = ReaderChapterEntryPosition.Start,
+        restoreViewport: Boolean = entryPosition == ReaderChapterEntryPosition.Start,
     ) {
         val requestSerial = ++readerRequestSerial
         val catalogRequestSerial = ++readerCatalogRequestSerial
+        loadReaderReplacementRules(bookId)
         val requestedReplaceMode = readerUiOptions.replaceMode
         val requestedShowImages = readerUiOptions.showImages
         readerSessionStore.save(bookId, chapterId)
@@ -8601,11 +9084,24 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             ?.trim()
             ?.takeIf { keepWindow && previousState.bookId == bookId }
         val initialBookTitle = readerBookTitle(bookId) ?: retainedBookTitle
+        val savedViewportAnchor = readerProgressStore.load(bookId)
+            ?.takeIf { restoreViewport && it.chapterId == chapterId }
+            ?.viewportItemIndex
+            ?.let { itemIndex ->
+                readerProgressStore.load(bookId)?.viewportItemScrollOffsetPx?.let { offset ->
+                    ReaderViewportAnchor(
+                        chapterId = chapterId,
+                        itemIndexWithinChapter = itemIndex,
+                        itemScrollOffsetPx = offset,
+                    )
+                }
+            }
         readerState = ReaderState(
             bookId = bookId,
             bookTitle = initialBookTitle,
             chapterId = chapterId,
             entryPosition = entryPosition,
+            restoreViewportAnchor = savedViewportAnchor,
             content = LoadResult.Loading,
             chapterContents = if (keepWindow) previousState.chapterContents else emptyList(),
             chapters = LoadResult.Loading,
@@ -9035,6 +9531,61 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             chapterNumber = chapterNumber,
             chapterCountAtLastRead = visibleCatalog?.size?.takeIf { it > 0 },
         )
+    }
+
+    /**
+     * Saves the exact same-chapter viewport locally without turning a normal scroll into repeated
+     * website progress requests.  The source service only understands chapters; item/offset state
+     * is deliberately private to this native reader.
+     */
+    fun recordReaderViewportAnchor(anchor: ReaderViewportAnchor) {
+        val route = currentRoute as? AppRoute.Reader ?: return
+        if (
+            route.bookId != readerState.bookId ||
+            anchor.chapterId <= 0L ||
+            anchor.itemIndexWithinChapter < 0 ||
+            anchor.itemScrollOffsetPx < 0
+        ) return
+
+        val visibleChapter = readerState.chapterContents.firstOrNull { it.chapterId == anchor.chapterId }
+        if (anchor.chapterId != readerState.chapterId && visibleChapter == null) return
+
+        val existing = readerProgressStore.load(route.bookId)
+        if (
+            existing?.chapterId == anchor.chapterId &&
+            existing.viewportItemIndex == anchor.itemIndexWithinChapter &&
+            existing.viewportItemScrollOffsetPx == anchor.itemScrollOffsetPx
+        ) return
+
+        val catalog = (readerState.chapters as? LoadResult.Success)?.value
+        val chapterNumber = catalog?.let { chapters ->
+            val index = chapters.indexOfFirst { it.id == anchor.chapterId }
+            if (index < 0) null else chapters[index].number?.takeIf { it > 0 } ?: (index + 1)
+        }
+        val chapterTitle = visibleChapter?.title?.takeIf { it.isNotBlank() }
+            ?: (readerState.content as? LoadResult.Success)
+                ?.value
+                ?.title
+                ?.takeIf { anchor.chapterId == readerState.chapterId && it.isNotBlank() }
+            ?: existing?.takeIf { it.chapterId == anchor.chapterId }?.chapterTitle
+
+        readerProgressStore.save(
+            bookId = route.bookId,
+            chapterId = anchor.chapterId,
+            chapterTitle = chapterTitle,
+            bookTitle = readerProgressBookTitle(route.bookId) ?: existing?.bookTitle,
+            chapterNumber = chapterNumber,
+            chapterCountAtLastRead = catalog?.size?.takeIf { it > 0 },
+            viewportItemIndex = anchor.itemIndexWithinChapter,
+            viewportItemScrollOffsetPx = anchor.itemScrollOffsetPx,
+        )
+        readerProgress = readerProgressStore.load()
+        recentReaderProgresses = readerProgressStore.loadRecent(limit = READER_PROGRESS_HISTORY_LIMIT)
+        updateLoadedCollectionProgress()
+        readerProgressRevision += 1
+        if (bookDetailState.bookId == route.bookId) {
+            bookDetailState = bookDetailState.copy(readerProgress = readerProgressStore.load(route.bookId))
+        }
     }
 
     private fun clearReaderSessionWhenLeaving() {

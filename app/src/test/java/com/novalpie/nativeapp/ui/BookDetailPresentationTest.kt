@@ -12,6 +12,14 @@ import org.junit.Test
 
 class BookDetailPresentationTest {
     @Test
+    fun bookManagementActionsArePlacedBehindTheDetailMenu() {
+        assertEquals(
+            BookDetailManagementPlacement.BottomMenu,
+            bookDetailManagementPlacement(),
+        )
+    }
+
+    @Test
     fun bookManagementActionsFollowWebsiteFieldPermissions() {
         assertFalse(bookManagementActionsVisible(null))
         assertFalse(bookManagementActionsVisible(BookEditPermissions()))

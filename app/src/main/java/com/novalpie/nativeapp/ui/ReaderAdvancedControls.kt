@@ -163,7 +163,11 @@ internal fun ReaderRadialMenu(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (showTts) {
-                    ReaderRadialAction(Icons.Filled.RecordVoiceOver, if (ttsState == ReaderTtsState.Speaking) "停止" else "听书", onTts)
+                    ReaderRadialAction(
+                        Icons.Filled.RecordVoiceOver,
+                        readerTtsPrimaryActionLabel(ttsState, "听书"),
+                        onTts,
+                    )
                 }
                 ReaderRadialAction(if (favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, if (favorite) "已收藏" else "收藏", onFavorite)
                 FilterChip(selected = false, onClick = onDismiss, label = { Text("关闭") })

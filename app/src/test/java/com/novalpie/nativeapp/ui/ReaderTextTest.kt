@@ -3,6 +3,8 @@ package com.novalpie.nativeapp.ui
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextDecoration
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -81,6 +83,40 @@ class ReaderTextTest {
             2,
             paragraph.spanStyles.count { range -> range.item.fontWeight == FontWeight.Bold },
         )
+    }
+
+    @Test
+    fun formattedReaderParagraphsKeepHtmlItalicUnderlineAndStrikethroughRanges() {
+        val paragraph = readerFormattedParagraphsFromContent(
+            "<p><i>italic</i> <u>under</u> <s>strike</s></p>",
+        ).single()
+
+        assertEquals("italic under strike", paragraph.text)
+        assertTrue(paragraph.spanStyles.any { it.item.fontStyle == FontStyle.Italic })
+        assertTrue(paragraph.spanStyles.any { it.item.textDecoration == TextDecoration.Underline })
+        assertTrue(paragraph.spanStyles.any { it.item.textDecoration == TextDecoration.LineThrough })
+    }
+
+    @Test
+    fun overlappingHtmlStylesKeepOneTextRunAndEveryStyle() {
+        val rendered = readerFormattedParagraphsFromContent(
+            "<p><strong><em>combined</em></strong></p>",
+        ).single().toAnnotatedString()
+
+        assertEquals("combined", rendered.text)
+        assertTrue(rendered.spanStyles.any { it.item.fontWeight == FontWeight.Bold })
+        assertTrue(rendered.spanStyles.any { it.item.fontStyle == FontStyle.Italic })
+    }
+
+    @Test
+    fun formattedReaderParagraphsKeepMarkdownItalicAndStrikethroughWithoutDelimiterText() {
+        val paragraph = readerFormattedParagraphsFromContent(
+            "Normal *italic* and _also italic_ plus ~~removed~~.",
+        ).single()
+
+        assertEquals("Normal italic and also italic plus removed.", paragraph.text)
+        assertEquals(2, paragraph.spanStyles.count { it.item.fontStyle == FontStyle.Italic })
+        assertTrue(paragraph.spanStyles.any { it.item.textDecoration == TextDecoration.LineThrough })
     }
 
     @Test
@@ -209,14 +245,25 @@ class ReaderTextTest {
     }
 
     @Test
-    fun ttsSegmentsStayBoundedAndPreferSentenceBoundaries() {
+    fun ttsSegmentsPackNaturalSentenceGroupsWithinTheLimit() {
         val segments = readerTtsSegments(
             listOf("第一句。 第二句！ 第三句？"),
             maxLength = 8,
         )
 
-        assertEquals(listOf("第一句。", "第二句！", "第三句？"), segments)
+        assertEquals(listOf("第一句。第二句！", "第三句？"), segments)
         assertTrue(segments.all { it.length <= 8 })
+    }
+
+    @Test
+    fun ttsSegmentsKeepParagraphBoundariesForHighlightAndFollowScroll() {
+        assertEquals(
+            listOf("第一段。", "第二段。"),
+            readerTtsSegments(
+                paragraphs = listOf("第一段。", "第二段。"),
+                maxLength = 40,
+            ),
+        )
     }
 
     @Test

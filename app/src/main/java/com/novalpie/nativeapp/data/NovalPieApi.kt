@@ -40,6 +40,10 @@ import com.novalpie.nativeapp.model.SearchPage
 import com.novalpie.nativeapp.model.ShopItem
 import com.novalpie.nativeapp.model.ShopPurchaseResult
 import com.novalpie.nativeapp.model.ReaderContent
+import com.novalpie.nativeapp.model.ReaderReplacementOwner
+import com.novalpie.nativeapp.model.ReaderReplacementRule
+import com.novalpie.nativeapp.model.ReaderReplacementScope
+import com.novalpie.nativeapp.model.ReaderReplacementTarget
 import com.novalpie.nativeapp.model.SiteMessage
 import com.novalpie.nativeapp.model.ParsedEpub
 import com.novalpie.nativeapp.model.TerminologyEntry
@@ -2003,6 +2007,74 @@ class NovalPieApi(
         )
     }
 
+    /** Personal reader glossary entries are editable by their owner only. */
+    suspend fun personalGlossaries(novelId: Long): List<ReaderReplacementRule> = withContext(Dispatchers.IO) {
+        require(novelId > 0L) { "novel id is required" }
+        normalizeReaderReplacementRules(
+            raw = get("/api/users/me/glossaries", mapOf("novel_id" to novelId.toString())),
+            novelId = novelId,
+            owner = ReaderReplacementOwner.Personal,
+        )
+    }
+
+    suspend fun createPersonalGlossary(
+        novelId: Long,
+        source: String,
+        replacement: String,
+    ): ReaderReplacementRule = withContext(Dispatchers.IO) {
+        require(novelId > 0L) { "novel id is required" }
+        require(source.isNotBlank()) { "replacement source is required" }
+        normalizeReaderReplacementRule(
+            raw = post(
+                "/api/users/me/glossaries",
+                JSONObject()
+                    .put("novel_id", novelId)
+                    .put("source_name", source.trim())
+                    .put("target_name", replacement),
+            ),
+            novelId = novelId,
+            owner = ReaderReplacementOwner.Personal,
+        ) ?: throw IOException("Glossary create response is missing a rule")
+    }
+
+    /** Sends literal and regex native rules through the source website's one glossary contract. */
+    suspend fun createPersonalGlossary(rule: ReaderReplacementRule): ReaderReplacementRule =
+        createPersonalGlossary(
+            novelId = rule.novelId,
+            source = encodeWebsiteReaderReplacementSource(rule),
+            replacement = rule.replacement,
+        )
+
+    suspend fun updatePersonalGlossary(
+        ruleId: Long,
+        replacement: String,
+    ): ReaderReplacementRule = withContext(Dispatchers.IO) {
+        require(ruleId > 0L) { "glossary rule id is required" }
+        normalizeReaderReplacementRule(
+            raw = put(
+                "/api/users/me/glossaries/$ruleId",
+                JSONObject().put("target_name", replacement),
+            ),
+            novelId = 0L,
+            owner = ReaderReplacementOwner.Personal,
+        ) ?: throw IOException("Glossary update response is missing a rule")
+    }
+
+    suspend fun deletePersonalGlossary(ruleId: Long) = withContext(Dispatchers.IO) {
+        require(ruleId > 0L) { "glossary rule id is required" }
+        delete("/api/users/me/glossaries/$ruleId")
+    }
+
+    /** Shared glossary rules are intentionally read-only; local visibility is handled on device. */
+    suspend fun sharedGlossaries(novelId: Long): List<ReaderReplacementRule> = withContext(Dispatchers.IO) {
+        require(novelId > 0L) { "novel id is required" }
+        normalizeReaderReplacementRules(
+            raw = get("/api/users/me/novels/$novelId/glossary"),
+            novelId = novelId,
+            owner = ReaderReplacementOwner.Shared,
+        )
+    }
+
     suspend fun bookDetail(bookId: Long): NovelCard = withContext(Dispatchers.IO) {
         normalizeBook(get("/api/novels/$bookId/detail"))
     }
@@ -3773,6 +3845,80 @@ class NovalPieApi(
             isActive = source.firstBooleanOrNull("isActive", "is_active", "active", "enabled"),
             createdAt = source.firstStringOrNull("createdAt", "created_at"),
             updatedAt = source.firstStringOrNull("updatedAt", "updated_at"),
+        )
+    }
+
+    private fun normalizeReaderReplacementRules(
+        raw: Any,
+        novelId: Long,
+        owner: ReaderReplacementOwner,
+    ): List<ReaderReplacementRule> = extractArray(
+        raw,
+        "data",
+        "glossaries",
+        "glossary",
+        "items",
+        "rules",
+        "list",
+    ).mapNotNull { value ->
+        (value as? JSONObject)?.let { source ->
+            normalizeReaderReplacementRule(source, novelId, owner)
+        }
+    }
+
+    private fun normalizeReaderReplacementRule(
+        raw: Any,
+        novelId: Long,
+        owner: ReaderReplacementOwner,
+    ): ReaderReplacementRule? = normalizeReaderReplacementRule(
+        source = unwrapObject(raw, "data", "glossary", "rule", "item", "result"),
+        novelId = novelId,
+        owner = owner,
+    )
+
+    private fun normalizeReaderReplacementRule(
+        source: JSONObject,
+        novelId: Long,
+        owner: ReaderReplacementOwner,
+    ): ReaderReplacementRule? {
+        val serverId = source.longOrNull("id")
+            ?: source.longOrNull("glossary_id")
+            ?: source.longOrNull("glossaryId")
+            ?: return null
+        val sourceName = source.firstStringOrNull(
+            "source_name",
+            "sourceName",
+            "source",
+            "original",
+            "original_name",
+        )?.takeIf(String::isNotBlank) ?: return null
+        val decodedSource = decodeWebsiteReaderReplacementSource(sourceName)
+        val targetName = source.firstStringOrNull(
+            "target_name",
+            "targetName",
+            "target",
+            "translation",
+            "translated_name",
+        ).orEmpty()
+        val resolvedNovelId = source.longOrNull("novel_id")
+            ?: source.longOrNull("novelId")
+            ?: novelId
+        return ReaderReplacementRule(
+            id = "${owner.name.lowercase()}:$serverId",
+            novelId = resolvedNovelId,
+            source = decodedSource.source,
+            replacement = targetName,
+            owner = owner,
+            sharedRuleId = if (owner == ReaderReplacementOwner.Shared) serverId.toString() else null,
+            websiteRuleId = if (owner == ReaderReplacementOwner.Personal) serverId else null,
+            isRegex = decodedSource.isRegex,
+            regexFlags = decodedSource.regexFlags,
+            isEnabled = source.firstBooleanOrNull("is_enabled", "isEnabled", "enabled", "active") ?: true,
+            order = source.intOrNull("order") ?: source.intOrNull("sort_order") ?: 0,
+            target = ReaderReplacementTarget.Content,
+            scope = ReaderReplacementScope.WholeBook,
+            createdAt = source.firstStringOrNull("created_at", "createdAt"),
+            updatedAt = source.firstStringOrNull("updated_at", "updatedAt"),
         )
     }
 

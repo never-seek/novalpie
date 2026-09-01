@@ -574,6 +574,22 @@ internal fun readerTtsFeedbackVisible(
     state: ReaderTtsState,
 ): Boolean = showTts && state != ReaderTtsState.Stopped
 
+/** Keep every TTS entry point honest about the action its next tap will perform. */
+internal fun readerTtsPrimaryActionLabel(
+    state: ReaderTtsState,
+    startLabel: String,
+): String = when (state) {
+    ReaderTtsState.Speaking -> "暂停"
+    ReaderTtsState.Paused -> "继续"
+    ReaderTtsState.Loading -> "准备中"
+    ReaderTtsState.Error -> "听书异常"
+    ReaderTtsState.Stopped -> startLabel
+}
+
+/** Pausing is the primary action; stopping remains available as a separate destructive action. */
+internal fun readerTtsStopActionVisible(state: ReaderTtsState): Boolean =
+    state == ReaderTtsState.Speaking || state == ReaderTtsState.Paused
+
 /** Legacy presentation entry point now maps to the source-style vertical rail. */
 internal fun readerCompactToolbarLabels(fontSizeSp: Int, theme: String): List<String> =
     readerActionRailLabels()
@@ -646,6 +662,77 @@ internal fun readerBodyItemIndexForText(
         }
         itemIndex++ // chapter finish marker
         if (options.showComments) itemIndex++ // this chapter's inline comments section
+    }
+    return null
+}
+
+/** Maps a saved chapter-relative item back to the live LazyColumn item ordering. */
+internal fun readerBodyItemIndexForViewportAnchor(
+    contents: List<com.novalpie.nativeapp.model.ReaderChapterContent>,
+    options: ReaderUiOptions,
+    anchor: com.novalpie.nativeapp.model.ReaderViewportAnchor,
+): Int? {
+    var globalIndex = 0
+    contents.forEach { chapter ->
+        var chapterItemIndex = 0
+        fun consumeItem(): Int? {
+            val result = if (
+                chapter.chapterId == anchor.chapterId &&
+                chapterItemIndex == anchor.itemIndexWithinChapter
+            ) {
+                globalIndex
+            } else {
+                null
+            }
+            chapterItemIndex += 1
+            globalIndex += 1
+            return result
+        }
+        if (!chapter.title.isNullOrBlank()) consumeItem()?.let { return it }
+        readerBlocksForDisplay(readerBlocksForContent(chapter.content), options.removeDuplicateLines).forEach { block ->
+            if (block is ReaderContentBlock.Text || (block is ReaderContentBlock.Image && options.showImages)) {
+                consumeItem()?.let { return it }
+            }
+        }
+        consumeItem()?.let { return it } // chapter-finish
+        if (options.showComments) consumeItem()?.let { return it }
+    }
+    return null
+}
+
+/** Records a stable chapter-relative item instead of a transient global LazyColumn index. */
+internal fun readerViewportAnchorForBodyItem(
+    contents: List<com.novalpie.nativeapp.model.ReaderChapterContent>,
+    options: ReaderUiOptions,
+    globalItemIndex: Int,
+    itemScrollOffsetPx: Int,
+): com.novalpie.nativeapp.model.ReaderViewportAnchor? {
+    if (globalItemIndex < 0) return null
+    var globalIndex = 0
+    contents.forEach { chapter ->
+        var chapterItemIndex = 0
+        fun consumeItem(): com.novalpie.nativeapp.model.ReaderViewportAnchor? {
+            val result = if (globalIndex == globalItemIndex) {
+                com.novalpie.nativeapp.model.ReaderViewportAnchor(
+                    chapterId = chapter.chapterId,
+                    itemIndexWithinChapter = chapterItemIndex,
+                    itemScrollOffsetPx = itemScrollOffsetPx.coerceAtLeast(0),
+                )
+            } else {
+                null
+            }
+            chapterItemIndex += 1
+            globalIndex += 1
+            return result
+        }
+        if (!chapter.title.isNullOrBlank()) consumeItem()?.let { return it }
+        readerBlocksForDisplay(readerBlocksForContent(chapter.content), options.removeDuplicateLines).forEach { block ->
+            if (block is ReaderContentBlock.Text || (block is ReaderContentBlock.Image && options.showImages)) {
+                consumeItem()?.let { return it }
+            }
+        }
+        consumeItem()?.let { return it }
+        if (options.showComments) consumeItem()?.let { return it }
     }
     return null
 }

@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.io.StringReader
+import java.io.StringWriter
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
@@ -19,6 +20,57 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeEpubArchiveWriterTest {
+    @Test
+    fun appliesTheCapturedChapterTransformerToEpubTitleAndBody() = runBlocking {
+        val output = ByteArrayOutputStream()
+
+        NativeEpubArchiveWriter.write(
+            output = output,
+            metadata = NativeEpubMetadata(title = "Replacement", author = "Writer"),
+            source = StringReader("第1章 Alice\nAlice enters."),
+            openAsset = { error("no image should be requested") },
+            transformChapter = { _, title, body ->
+                NativeDownloadChapterText(
+                    title = title.replace("Alice", "艾莉丝"),
+                    body = body.replace("Alice", "艾莉丝"),
+                )
+            },
+        )
+
+        val entries = linkedMapOf<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(output.toByteArray())).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                entries[entry.name] = zip.readBytes()
+            }
+        }
+        val chapter = entries.getValue("OEBPS/chapter-1.xhtml").toString(Charsets.UTF_8)
+        assertTrue(chapter.contains("第1章 艾莉丝"))
+        assertTrue(chapter.contains("艾莉丝 enters."))
+        assertFalse(chapter.contains("Alice enters."))
+    }
+
+    @Test
+    fun appliesTheCapturedChapterTransformerToTxtWithoutChangingPreamble() = runBlocking {
+        val output = StringWriter()
+
+        NativeEpubArchiveWriter.writeTransformedTxt(
+            output = output,
+            source = StringReader("书名：原书\n第1章 Alice\nAlice enters.\n第2章 Alice\nAlice leaves."),
+            transformChapter = { _, title, body ->
+                NativeDownloadChapterText(
+                    title = title.replace("Alice", "艾莉丝"),
+                    body = body.replace("Alice", "艾莉丝"),
+                )
+            },
+        )
+
+        assertTrue(output.toString().contains("书名：原书"))
+        assertTrue(output.toString().contains("第1章 艾莉丝"))
+        assertTrue(output.toString().contains("艾莉丝 leaves."))
+        assertFalse(output.toString().contains("Alice enters."))
+    }
+
     @Test
     fun ignoresDownloadMetadataPreambleBeforeTheFirstChapterHeading() = runBlocking {
         val output = ByteArrayOutputStream()

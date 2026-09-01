@@ -3,12 +3,16 @@ package com.novalpie.nativeapp.ui
 import android.text.Html
 import android.text.Spanned
 import android.text.style.StyleSpan
+import android.text.style.UnderlineSpan
+import android.text.style.StrikethroughSpan
 import android.os.Build
 import android.graphics.Typeface
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import com.novalpie.nativeapp.model.ChapterIllustration
 import com.novalpie.nativeapp.model.ReaderContent
@@ -181,7 +185,7 @@ internal fun readerFormattedParagraphsFromContent(raw: String): List<ReaderForma
     if (source.isBlank()) return emptyList()
     if (!source.contains('<') || !source.contains('>')) {
         return readerParagraphsFromContent(source)
-            .map { paragraph -> applyMarkdownBoldRanges(ReaderFormattedParagraph(paragraph)) }
+            .map { paragraph -> applyMarkdownRanges(ReaderFormattedParagraph(paragraph)) }
     }
     val prepared = source
         .replace(consecutiveBreakTagRegex, PARAGRAPH_BREAK_MARKER)
@@ -197,7 +201,7 @@ internal fun readerFormattedParagraphsFromContent(raw: String): List<ReaderForma
         .replace("\r\n", "\n")
         .replace('\r', '\n')
     return splitReaderFormattedParagraphs(normalizedText, spanned)
-        .map(::applyMarkdownBoldRanges)
+        .map(::applyMarkdownRanges)
 }
 
 /** Applies the website's optional duplicate-line cleanup without altering authored repeats. */
@@ -321,21 +325,32 @@ private fun addReaderFormattedParagraph(
     val paragraphStart = start + leading
     val paragraphEnd = start + trailing + 1
     val paragraphText = text.substring(paragraphStart, paragraphEnd)
-    val styles = original.getSpans(paragraphStart, paragraphEnd, StyleSpan::class.java)
-        .filter { span -> span.style and Typeface.BOLD != 0 }
-        .mapNotNull { span ->
-            val spanStart = original.getSpanStart(span).coerceIn(paragraphStart, paragraphEnd)
-            val spanEnd = original.getSpanEnd(span).coerceIn(paragraphStart, paragraphEnd)
-            if (spanStart >= spanEnd) {
-                null
-            } else {
-                AnnotatedString.Range(
-                    item = SpanStyle(fontWeight = FontWeight.Bold),
-                    start = spanStart - paragraphStart,
-                    end = spanEnd - paragraphStart,
-                )
-            }
+    fun spanRange(span: Any, style: SpanStyle): AnnotatedString.Range<SpanStyle>? {
+        val spanStart = original.getSpanStart(span).coerceIn(paragraphStart, paragraphEnd)
+        val spanEnd = original.getSpanEnd(span).coerceIn(paragraphStart, paragraphEnd)
+        return if (spanStart >= spanEnd) null else {
+            AnnotatedString.Range(
+                item = style,
+                start = spanStart - paragraphStart,
+                end = spanEnd - paragraphStart,
+            )
         }
+    }
+    val styles = buildList {
+        original.getSpans(paragraphStart, paragraphEnd, StyleSpan::class.java).forEach { span ->
+            val style = SpanStyle(
+                fontWeight = FontWeight.Bold.takeIf { span.style and Typeface.BOLD != 0 },
+                fontStyle = FontStyle.Italic.takeIf { span.style and Typeface.ITALIC != 0 },
+            )
+            spanRange(span, style)?.let(::add)
+        }
+        original.getSpans(paragraphStart, paragraphEnd, UnderlineSpan::class.java).forEach { span ->
+            spanRange(span, SpanStyle(textDecoration = TextDecoration.Underline))?.let(::add)
+        }
+        original.getSpans(paragraphStart, paragraphEnd, StrikethroughSpan::class.java).forEach { span ->
+            spanRange(span, SpanStyle(textDecoration = TextDecoration.LineThrough))?.let(::add)
+        }
+    }
     target += ReaderFormattedParagraph(text = paragraphText, spanStyles = styles)
 }
 
@@ -344,9 +359,9 @@ private fun addReaderFormattedParagraph(
  * `<strong>` spans but deliberately leaves `**strong**` and `__strong__` untouched, so normalize
  * the latter after HTML span extraction and remap the existing offsets as delimiters disappear.
  */
-private fun applyMarkdownBoldRanges(paragraph: ReaderFormattedParagraph): ReaderFormattedParagraph {
+private fun applyMarkdownRanges(paragraph: ReaderFormattedParagraph): ReaderFormattedParagraph {
     val source = paragraph.text
-    if (!source.contains("**") && !source.contains("__")) return paragraph
+    if (!source.contains("**") && !source.contains("__") && !source.contains('*') && !source.contains('_') && !source.contains("~~")) return paragraph
 
     val output = StringBuilder(source.length)
     val outputOffsets = IntArray(source.length + 1)
@@ -354,15 +369,15 @@ private fun applyMarkdownBoldRanges(paragraph: ReaderFormattedParagraph): Reader
     var cursor = 0
     while (cursor < source.length) {
         outputOffsets[cursor] = output.length
-        val delimiter = markdownBoldDelimiterAt(source, cursor)
-        val closingIndex = delimiter?.let { markdownBoldClosingIndex(source, cursor + it.length, it) }
+        val delimiter = markdownStyleDelimiterAt(source, cursor)
+        val closingIndex = delimiter?.let { markdownStyleClosingIndex(source, cursor + it.token.length, it.token) }
         if (delimiter == null || closingIndex == null) {
             output.append(source[cursor])
             cursor += 1
             continue
         }
 
-        val delimiterEnd = cursor + delimiter.length
+        val delimiterEnd = cursor + delimiter.token.length
         (cursor until delimiterEnd).forEach { index -> outputOffsets[index] = output.length }
         val boldStart = output.length
         var inner = delimiterEnd
@@ -372,13 +387,13 @@ private fun applyMarkdownBoldRanges(paragraph: ReaderFormattedParagraph): Reader
             inner += 1
         }
         val boldEnd = output.length
-        (closingIndex until (closingIndex + delimiter.length)).forEach { index ->
+        (closingIndex until (closingIndex + delimiter.token.length)).forEach { index ->
             outputOffsets[index] = output.length
         }
-        cursor = closingIndex + delimiter.length
+        cursor = closingIndex + delimiter.token.length
         outputOffsets[cursor] = output.length
         markdownRanges += AnnotatedString.Range(
-            item = SpanStyle(fontWeight = FontWeight.Bold),
+            item = delimiter.style,
             start = boldStart,
             end = boldEnd,
         )
@@ -396,16 +411,24 @@ private fun applyMarkdownBoldRanges(paragraph: ReaderFormattedParagraph): Reader
     )
 }
 
-private fun markdownBoldDelimiterAt(value: String, index: Int): String? {
+private data class ReaderMarkdownStyleDelimiter(
+    val token: String,
+    val style: SpanStyle,
+)
+
+private fun markdownStyleDelimiterAt(value: String, index: Int): ReaderMarkdownStyleDelimiter? {
     if (isMarkdownEscaped(value, index)) return null
     return when {
-        value.startsWith("**", index) -> "**"
-        value.startsWith("__", index) -> "__"
+        value.startsWith("**", index) -> ReaderMarkdownStyleDelimiter("**", SpanStyle(fontWeight = FontWeight.Bold))
+        value.startsWith("__", index) -> ReaderMarkdownStyleDelimiter("__", SpanStyle(fontWeight = FontWeight.Bold))
+        value.startsWith("~~", index) -> ReaderMarkdownStyleDelimiter("~~", SpanStyle(textDecoration = TextDecoration.LineThrough))
+        value.startsWith("*", index) && !value.startsWith("**", index) -> ReaderMarkdownStyleDelimiter("*", SpanStyle(fontStyle = FontStyle.Italic))
+        value.startsWith("_", index) && !value.startsWith("__", index) -> ReaderMarkdownStyleDelimiter("_", SpanStyle(fontStyle = FontStyle.Italic))
         else -> null
     }
 }
 
-private fun markdownBoldClosingIndex(value: String, start: Int, delimiter: String): Int? {
+private fun markdownStyleClosingIndex(value: String, start: Int, delimiter: String): Int? {
     var candidate = value.indexOf(delimiter, start)
     while (candidate >= 0) {
         val content = value.substring(start, candidate)
@@ -426,15 +449,10 @@ private fun isMarkdownEscaped(value: String, index: Int): Boolean {
 }
 
 internal fun ReaderFormattedParagraph.toAnnotatedString(): AnnotatedString = buildAnnotatedString {
-    var cursor = 0
-    spanStyles.sortedBy(AnnotatedString.Range<SpanStyle>::start).forEach { range ->
+    append(text)
+    spanStyles.forEach { range ->
         val start = range.start.coerceIn(0, text.length)
         val end = range.end.coerceIn(start, text.length)
-        if (cursor < start) append(text.substring(cursor, start))
-        if (start < end) {
-            withStyle(range.item) { append(text.substring(start, end)) }
-        }
-        cursor = end
+        if (start < end) addStyle(range.item, start, end)
     }
-    if (cursor < text.length) append(text.substring(cursor))
 }

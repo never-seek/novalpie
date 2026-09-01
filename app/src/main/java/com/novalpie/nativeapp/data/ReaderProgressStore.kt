@@ -26,6 +26,8 @@ class ReaderProgressStore(context: Context) {
             chapterNumber = prefs.getInt(bookKey(bookId, KEY_CHAPTER_NUMBER), 0).takeIf { it > 0 },
             chapterCountAtLastRead = prefs.getInt(bookKey(bookId, KEY_CHAPTER_COUNT_AT_LAST_READ), 0)
                 .takeIf { it > 0 },
+            viewportItemIndex = prefs.getInt(bookKey(bookId, KEY_VIEWPORT_ITEM_INDEX), -1).takeIf { it >= 0 },
+            viewportItemScrollOffsetPx = prefs.getInt(bookKey(bookId, KEY_VIEWPORT_ITEM_OFFSET), -1).takeIf { it >= 0 },
         )
     }
 
@@ -43,6 +45,8 @@ class ReaderProgressStore(context: Context) {
         bookTitle: String? = null,
         chapterNumber: Int? = null,
         chapterCountAtLastRead: Int? = null,
+        viewportItemIndex: Int? = null,
+        viewportItemScrollOffsetPx: Int? = null,
     ) {
         if (bookId <= 0L || chapterId <= 0L) return
         val normalizedTitle = chapterTitle?.trim()?.takeIf { it.isNotBlank() }
@@ -58,6 +62,10 @@ class ReaderProgressStore(context: Context) {
         // and accidentally label an ordinary paused chapter as an update.
         val normalizedChapterCount = chapterCountAtLastRead?.takeIf { it > 0 }
             ?: existing?.takeIf { it.chapterId == chapterId }?.chapterCountAtLastRead
+        val normalizedViewportItemIndex = viewportItemIndex?.takeIf { it >= 0 }
+            ?: existing?.takeIf { it.chapterId == chapterId }?.viewportItemIndex
+        val normalizedViewportItemOffset = viewportItemScrollOffsetPx?.takeIf { it >= 0 }
+            ?: existing?.takeIf { it.chapterId == chapterId }?.viewportItemScrollOffsetPx
         val updatedAt = System.currentTimeMillis()
         val recentBookIds = (listOf(bookId) + loadRecentBookIds().filterNot { it == bookId })
             .take(MAX_RECENT_BOOKS)
@@ -86,6 +94,19 @@ class ReaderProgressStore(context: Context) {
             editor.putInt(KEY_CHAPTER_COUNT_AT_LAST_READ, normalizedChapterCount)
             editor.putInt(bookKey(bookId, KEY_CHAPTER_COUNT_AT_LAST_READ), normalizedChapterCount)
         }
+        if (normalizedViewportItemIndex == null || normalizedViewportItemOffset == null) {
+            editor
+                .remove(KEY_VIEWPORT_ITEM_INDEX)
+                .remove(KEY_VIEWPORT_ITEM_OFFSET)
+                .remove(bookKey(bookId, KEY_VIEWPORT_ITEM_INDEX))
+                .remove(bookKey(bookId, KEY_VIEWPORT_ITEM_OFFSET))
+        } else {
+            editor
+                .putInt(KEY_VIEWPORT_ITEM_INDEX, normalizedViewportItemIndex)
+                .putInt(KEY_VIEWPORT_ITEM_OFFSET, normalizedViewportItemOffset)
+                .putInt(bookKey(bookId, KEY_VIEWPORT_ITEM_INDEX), normalizedViewportItemIndex)
+                .putInt(bookKey(bookId, KEY_VIEWPORT_ITEM_OFFSET), normalizedViewportItemOffset)
+        }
         editor.apply()
     }
 
@@ -105,6 +126,8 @@ class ReaderProgressStore(context: Context) {
             .remove(bookKey(bookId, KEY_CHAPTER_TITLE))
             .remove(bookKey(bookId, KEY_BOOK_TITLE))
             .remove(bookKey(bookId, KEY_UPDATED_AT))
+            .remove(bookKey(bookId, KEY_VIEWPORT_ITEM_INDEX))
+            .remove(bookKey(bookId, KEY_VIEWPORT_ITEM_OFFSET))
 
         if (prefs.getLong(KEY_BOOK_ID, 0L) == bookId) {
             if (replacement == null) {
@@ -132,6 +155,13 @@ class ReaderProgressStore(context: Context) {
                     editor.remove(KEY_CHAPTER_COUNT_AT_LAST_READ)
                 } else {
                     editor.putInt(KEY_CHAPTER_COUNT_AT_LAST_READ, replacement.chapterCountAtLastRead)
+                }
+                if (replacement.viewportItemIndex == null || replacement.viewportItemScrollOffsetPx == null) {
+                    editor.remove(KEY_VIEWPORT_ITEM_INDEX).remove(KEY_VIEWPORT_ITEM_OFFSET)
+                } else {
+                    editor
+                        .putInt(KEY_VIEWPORT_ITEM_INDEX, replacement.viewportItemIndex)
+                        .putInt(KEY_VIEWPORT_ITEM_OFFSET, replacement.viewportItemScrollOffsetPx)
                 }
             }
         }
@@ -200,6 +230,8 @@ class ReaderProgressStore(context: Context) {
             bookTitle = prefs.getString(KEY_BOOK_TITLE, null)?.takeIf { it.isNotBlank() },
             chapterNumber = prefs.getInt(KEY_CHAPTER_NUMBER, 0).takeIf { it > 0 },
             chapterCountAtLastRead = prefs.getInt(KEY_CHAPTER_COUNT_AT_LAST_READ, 0).takeIf { it > 0 },
+            viewportItemIndex = prefs.getInt(KEY_VIEWPORT_ITEM_INDEX, -1).takeIf { it >= 0 },
+            viewportItemScrollOffsetPx = prefs.getInt(KEY_VIEWPORT_ITEM_OFFSET, -1).takeIf { it >= 0 },
         )
     }
 
@@ -229,6 +261,8 @@ class ReaderProgressStore(context: Context) {
         private const val KEY_CHAPTER_TITLE = "chapter_title"
         private const val KEY_BOOK_TITLE = "book_title"
         private const val KEY_UPDATED_AT = "updated_at"
+        private const val KEY_VIEWPORT_ITEM_INDEX = "viewport_item_index"
+        private const val KEY_VIEWPORT_ITEM_OFFSET = "viewport_item_offset"
         private const val KEY_RECENT_BOOK_IDS = "recent_book_ids"
         private const val DEFAULT_RECENT_LIMIT = 5
         private const val MAX_RECENT_BOOKS = 20

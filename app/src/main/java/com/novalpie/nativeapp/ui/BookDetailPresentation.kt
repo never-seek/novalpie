@@ -226,6 +226,13 @@ internal fun bookManagementActionsVisible(permissions: BookEditPermissions?): Bo
             it.sourceUrl || it.language || it.isAdult || it.photoUrl || it.spans || it.tags
     } == true
 
+internal enum class BookDetailManagementPlacement {
+    BottomMenu,
+}
+
+internal fun bookDetailManagementPlacement(): BookDetailManagementPlacement =
+    BookDetailManagementPlacement.BottomMenu
+
 internal fun bookDetailPrimaryActions(hasProgress: Boolean): List<String> =
     if (hasProgress) {
         listOf("继续阅读", "开始阅读", "网页详情")

@@ -95,6 +95,10 @@ internal fun readerSettingsCategories(): List<ReaderSettingsCategory> =
 internal fun readerSettingsCategoryLabels(): List<String> =
     readerSettingsCategories().map { it.label }
 
+/** Content width changes the reader canvas, so it belongs to Layout rather than Typography. */
+internal fun readerSettingsCategoryForContentWidth(): ReaderSettingsCategory =
+    ReaderSettingsCategory.Layout
+
 /** Keeps the settings rail scannable when the reader has more than one kind of preference. */
 internal fun readerSettingsCategoryIcon(category: ReaderSettingsCategory): ImageVector = when (category) {
     ReaderSettingsCategory.Font -> Icons.Filled.FormatSize
@@ -277,14 +281,6 @@ internal fun ReaderSettingsControls(
             onValueChange = { value -> update { options -> options.copy(lineHeight = value.roundTo(1)) } },
         )
         ReaderValueSlider(
-            label = "内容宽度",
-            valueLabel = readerContentWidthControlLabel(options.contentWidthDp),
-            value = options.contentWidthDp.toFloat(),
-            valueRange = ReaderSettingsStore.MIN_CONTENT_WIDTH_DP.toFloat()..ReaderSettingsStore.MAX_CONTENT_WIDTH_DP.toFloat(),
-            steps = 15,
-            onValueChange = { value -> update { options -> options.copy(contentWidthDp = (value / 50f).roundToInt() * 50) } },
-        )
-        ReaderValueSlider(
             label = "字距",
             valueLabel = String.format(java.util.Locale.US, "%.1f sp", options.letterSpacing),
             value = options.letterSpacing,
@@ -419,6 +415,14 @@ internal fun ReaderSettingsControls(
         ReaderToggleRow("音量键翻页", options.volumeKeyPageTurn, textColor, metaColor) {
             update { it.copy(volumeKeyPageTurn = !it.volumeKeyPageTurn) }
         }
+        ReaderValueSlider(
+            label = "内容宽度",
+            valueLabel = readerContentWidthControlLabel(options.contentWidthDp),
+            value = options.contentWidthDp.toFloat(),
+            valueRange = ReaderSettingsStore.MIN_CONTENT_WIDTH_DP.toFloat()..ReaderSettingsStore.MAX_CONTENT_WIDTH_DP.toFloat(),
+            steps = 15,
+            onValueChange = { value -> update { options -> options.copy(contentWidthDp = (value / 50f).roundToInt() * 50) } },
+        )
         Text(
             "关闭后，音量加减键会交还给 Android 系统调节媒体音量。",
             style = MaterialTheme.typography.bodySmall,
