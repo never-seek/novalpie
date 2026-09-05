@@ -30,3 +30,6 @@ qa-screenshots/
 
 # Kotlin compiler error logs
 .kotlin/
+
+# Optional local dependencies of read-only source/feedback audit tooling.
+tools/beta7-audit/node_modules/

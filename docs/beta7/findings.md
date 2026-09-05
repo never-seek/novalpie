@@ -1,0 +1,44 @@
+# Beta 7 已发现事项（不是完成清单）
+
+所有记录均待按 Beta 7 当前 APK 复现/验收。`source-gap` 代表已从网站与 App 源码确认功能缺口，不等同于已修复。
+
+| ID | 来源/证据 | 发现与处理要求 | 状态 |
+|---|---|---|---|
+| GAP-001 | 登录后 `/user/100164` 实际页面含“屏蔽列表”；`BY0xgLBE.js` 的 `getBlockedUsers/block/unblock/blockStatus`；App 源码未找到相应路由/API/界面；浏览器 `/api/v2/users/me/blocks` 返回 200 | 原生个人页补屏蔽列表及个人主页屏蔽/解除功能，按身份与服务端权限；需要验证屏蔽后 feed 变化，不只增加空页面 | read-verified/native-gap |
+| GAP-002 | `DGTbzAP1.js` 的 HTTP wrapper `baseURL=d()`，`d()=>w(2)`，`w(e)=>apiBase+'/v'+e` | 个人新接口属于 `/api/v2/users/...`；不能把源码相对 `/users/...` 误接成旧 `/api/users/...`。静态提取 wrapper 标为 base-unverified，逐条人工解析 | source-confirmed |
+| GAP-003 | 源码 `GET/POST/DELETE /novels/{id}/block`，主页已有“屏蔽列表”但 App 尚无对应业务 | 连同用户屏蔽核对作品屏蔽的 UI 入口、权限和列表影响；最终使用对应 wrapper v2 的真实路径 | source-gap |
+| GAP-004 | 安卓网页搜索“字数”实际为双端范围滑杆，档位 0/5万/30万/50万/100万/200万/500万/1千万/∞ | App 旧五档筛选不能代表任意最小/最大区间；重构时按实际 API 参数映射补齐，保持原生样式 | runtime-contract-observed |
+| FB-1871-4595 | 2026-09-04 醉月摇影：首行与加载提示被页眉截断，章节末页无法续章 | Beta 6 仅有代码/测试补丁，新 Beta 7 真实行分页与非覆盖安全区必须重测 | runtime-pending |
+| FB-1871-4546 | 三台设备复现 `360661` EP49 图片加载后漏末段、EP50 返回截断 | 作为固定 reader 示例，按多宽度、图片迟到和反向翻页验收 | runtime-pending |
+| FB-1871-4549 | 网页已读后 App 卡片章节同步，但更新提示/继续阅读仍旧 | 统一远端章节与本地段落锚点合并；旧补丁保留为参考，新 state/repository 不能丢 | runtime-pending |
+| FB-1871-2387 | 是昔流芳认可逐条屏蔽，但不知道如何添加规则 | 保留屏蔽和手动添加/公共发布入口，优化可发现性；不恢复系统正文复制或不完整轮盘 | design-preserve |
+| FB-1904 | 2026-09-03：每章下载多出重复图片 | 校验源出现次数、正文引用、资源去重和独立封面；禁止仅用 ZIP 条目数量判断正确 | runtime-pending |
+| FB-1895 | 2026-09-01：临时建议规则替换下载才有图 | 必须把原文/替换两模式分别验收；该帖并非证明原文模式仍有 bug | needs-reproduction |
+| FB-1889 | 2382 先报原文无图，2384 后更正为原文也正常 | 保存矛盾回复，不自动认定修复/缺陷；需当前同书和模式对照 | needs-reproduction |
+| FB-1913/1892/1886 | 多条反馈 EPUB 下载图片失败，但阅读可见 | 区分 source marker/URL 与 App HTTP/保存失败；显示可重试失败清单，不静默生成无图成功包 | needs-reproduction |
+| FB-1893 | 同一本书的书评刷屏，想屏蔽某书评论 | 先核对当前网站屏蔽语义，记录客户端可做的本地阅读过滤；不得扩成后台删除内容 | candidate |
+| FB-1878 | 回复消息没有红点 | 核对消息 stats、未读刷新周期、进入/退出会话、后台重开，避免遗漏未读状态 | needs-reproduction |
+| FB-1884/1854 | 书内已更新而搜索更新时间/排序未更新 | 核对数据来源与缓存有效期；App 可刷新过期缓存/提示源站延迟，不伪造排序时间 | needs-source-check |
+| FB-1879 | 工作区重翻加入后“待翻译章节为0” | 校验所选章节、prepare 响应、队列与开始按钮参数；源站无可用正文时显示原因 | needs-reproduction |
+| FB-1917/1920 | 新书未翻出章节/自助翻译缺插画 | 可能为上游内容/服务问题；保留未获取状态与合法重试，不客户端生成虚构正文/图片 | needs-source-check |
+| FB-466 | 追加章节表单显示书 A，确认后追加到 B；回复建议每次刷新 | 高风险目标身份问题：请求必须绑定提交时 bookId 和 draft，切书/返回/迟到回包不能写入另一书 | source-feedback/runtime-pending |
+| FB-482 | 旧 App 连点工具误触相同位置的退出，且重登配置丢失 | 开菜单的同一次手势不能穿透到新按钮；退出独立确认，阅读配置不与会话清除绑定 | source-feedback/runtime-pending |
+| FB-1439/1572/1210 | 评论页码变化但请求仍是 page=1；论坛只有首20条 | 每个 feed/pageId 独立、请求和可见页一致，返回恢复真实页码；不能仅检测 page label | source-feedback/runtime-pending |
+| FB-901/833 | 收藏分组过多时选择区裁切，移动弹窗出现在原分组下方 | 嵌套弹窗正确层级、安全区和可滚动列表；受控临时分组验证后只清理测试组 | source-feedback/runtime-pending |
+| FB-1217 | 多本千万字 TXT 的 `/api/v2/novels/{id}/download?type=txt` 返回 524 | 先区分源站生成超时与传输失败；保留授权检查点，不重扣积分，不宣称网络重试必能解决源站超时 | source-feedback/runtime-pending |
+| FB-1713/447 | 段落空行开关与首行缩进耦合，关空行后缩进失效 | 排版参数独立，组合测试/重排/持久化和实际字符布局验收 | source-feedback/runtime-pending |
+| FB-1221 | 详情收藏与阅读器收藏两入口造成重复 | 收藏仓库统一身份和 in-flight 操作，确认服务器状态，不以 UI 两份布尔值各自切换 | source-feedback/runtime-pending |
+| ENV-001 | 新 MuMu 管理路径、Android 15 实例正常启动，ADB `127.0.0.1:16384` 可用 | 恢复基线/最终安装验证；保留原用户数据 | resolved-environment |
+| ENV-002 | MuMu 已装包 `1d1dcc...`，本地/发布是 `30f07a...` | 基线包须按哈希区分，不把模拟器旧包截图算最新修订验证 | verification-gap |
+| ENV-003 | MuMu `tts_default_synth=null` | 后续配置可信中文系统引擎并真实发声；不能用错误提示验收 TTS | pending |
+
+## 当前线上 wrapper 的人工解析
+
+`BY0xgLBE.js` 导入 `{r as ie}` 自 `DGTbzAP1.js`；后者导出 `T as r`，`T.get/post/delete` 均使用 `baseURL=apiBase+'/v2'`。因此以下为 **source-discovered**，尚未请求/写入验证：
+
+- `GET /api/v2/users/me/blocks`：query `page, limit`，返回 `blocked_users, pagination`。
+- `GET /api/v2/users/{userId}/block`：屏蔽状态。
+- `POST /api/v2/users/{userId}/block`：屏蔽；无请求正文。
+- `DELETE /api/v2/users/{userId}/block`：解除屏蔽；无请求正文。
+
+个人页的本人专属 tab 在源码条件 `m.value` 下追加 `settings/personalization/blocked-users`。不能只按管理员账号一份 UI 推断普通用户入口。

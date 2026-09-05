@@ -1,0 +1,9 @@
+[
+  {
+    "url": "https://novalpie.cc/_nuxt/DGTbzAP1.js",
+    "sha256": "222092ecb4c91dc7d470011f3722bab7d0b4977c8fddf14e27d870d653c78a23",
+    "exportName": "r",
+    "basePath": "/api/v2",
+    "evidence": "Manual source trace: T exported as r; T.get/post/put/patch/delete call i; i created with baseURL=d(); d()=>w(2); w(e)=>apiBase+'/v'+e. Browser GET /api/v2/users/me/blocks returned 200 on 2026-09-05."
+  }
+]

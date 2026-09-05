@@ -1,5 +1,8 @@
 # NovalPie 2.0 — Android client
 
+> 2026-09-05：Beta 7 已开始保留外观的 Kotlin/Compose 深度重构。当前执行入口是
+> [docs/beta7/README.md](docs/beta7/README.md)。以下旧架构说明保留出处，不代替当前功能/设备验收。
+
 A native Android reader for [novalpie.cc](https://novalpie.cc): browsing and searching the catalogue,
 reading chapters, the forum, private messages, uploading and editing EPUBs, and the site's
 administration tools. Kotlin and Jetpack Compose throughout; the WebView is a fallback, not the app.
@@ -223,20 +226,12 @@ description of the app. It records builds passing at commits where the tree did 
 
 ---
 
-## Known gaps
+## Current verification gaps (2026-09-05)
 
-Honest list, so nobody rediscovers these the hard way:
-
-- `NovalPieViewModel.kt` and `NovalPieApi.kt` are far too large.
-- No UI tests.
-- The forum's `全部 / 书评 / 章节 / 动态` tabs are `onClick = {}` although `GET /api/posts` accepts a
-  matching `type` parameter.
-- `/login`, `/register` and `/reset-password` have no native screen; sign-in goes through the
-  WebView fallback, which is also the only way an auth token is captured.
-- Deep links ignore `/forum/{id}`, `/messages` and the admin routes.
-- The auth JWT is stored in plain `SharedPreferences` (excluded from backup, but not encrypted).
-- Layouts assume a phone: grid columns are hardcoded to 2, with no `WindowSizeClass` handling.
-
-More detail, with file and line references, in
-[docs/inventory/07-bugs.md](docs/inventory/07-bugs.md) and
-[docs/inventory/08-design-and-toolchain-audit.md](docs/inventory/08-design-and-toolchain-audit.md).
+- `NovalPieApp.kt`, `NovalPieViewModel.kt` and `NovalPieApi.kt` remain oversized and are the Beta 7 decomposition targets.
+- Native login/registration/reset-password screens, forum categories, deep links, selectable collection/upload grid density and Compose instrumentation now exist. The previous July list claiming that these were all absent was stale.
+- Current UI instrumentation is narrow. A green pure-function or API test does not prove the real reader gestures, publication APK, lifecycle, or all-role workflows.
+- System TTS needs a working Chinese engine for actual playback acceptance; MuMu currently has no default engine. Error-message handling is not speech verification.
+- Reader pagination, background downloads/TTS, source v2 profile/blocking APIs and full live-site parity are being audited; see [Beta 7 findings](docs/beta7/findings.md).
+- Reader body copying/selection is intentionally disabled by the user's later requirement. Do not restore the old selection-based replacement workflow or removed radial menu.
+- Historic files under `docs/inventory/` describe their original commits. Beta 7 must prove its own current source, APK, device and website contracts as recorded in [verification](docs/beta7/verification.md).
