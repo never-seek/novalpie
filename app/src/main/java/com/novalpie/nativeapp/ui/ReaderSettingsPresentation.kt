@@ -328,19 +328,6 @@ internal fun ReaderSettingsControls(
         ReaderToggleRow("显示听书入口", options.showTts, textColor, metaColor) {
             update { it.copy(showTts = !it.showTts) }
         }
-        ReaderToggleRow("显示轮盘菜单", options.showRadialMenu, textColor, metaColor) {
-            update { it.copy(showRadialMenu = !it.showRadialMenu) }
-        }
-        Text("轮盘菜单触发方式", style = MaterialTheme.typography.labelLarge, color = textColor)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("doubleTap" to "双击", "longPress" to "长按").forEach { (key, label) ->
-                FilterChip(
-                    selected = options.radialMenuOpenMode == key,
-                    onClick = { update { it.copy(radialMenuOpenMode = key) } },
-                    label = { Text(label) },
-                )
-            }
-        }
         }
     }
 

@@ -52,6 +52,75 @@ class ReaderPresentationTest {
             readerBodyItemIndexForViewportAnchor(contents, options, anchor!!),
         )
     }
+
+    @Test
+    fun cachedReaderBodyLayoutMapsScrollPositionsWithoutReparsingChapterText() {
+        val first = ReaderChapterContent(
+            chapterId = 10L,
+            title = "第一章",
+            content = ReaderContent(
+                title = "第一章",
+                content = "第一段\n第二段",
+                source = "novelpia",
+            ),
+        )
+        val second = ReaderChapterContent(
+            chapterId = 20L,
+            title = "第二章",
+            content = ReaderContent(
+                title = "第二章",
+                content = "第三段",
+                source = "novelpia",
+            ),
+        )
+        val layout = readerBodyLayoutForContents(
+            contents = listOf(first, second),
+            options = ReaderUiOptions(showComments = true),
+        )
+
+        val secondBodyAnchor = readerViewportAnchorForBodyItem(
+            layout = layout,
+            globalItemIndex = 6,
+            itemScrollOffsetPx = 72,
+        )
+
+        assertEquals(ReaderViewportAnchor(20L, 1, 72), secondBodyAnchor)
+        assertEquals(6, readerBodyItemIndexForViewportAnchor(layout, secondBodyAnchor!!))
+        assertEquals(10L, readerChapterIdForBodyItem(layout, globalItemIndex = 4))
+        assertEquals(20L, readerChapterIdForBodyItem(layout, globalItemIndex = 6))
+    }
+
+    @Test
+    fun readerRequestsTheHighestSupportedRefreshRateAndLeavesUnsupportedDisplaysUntouched() {
+        assertEquals(
+            144f,
+            readerPreferredRefreshRate(listOf(15f, 60f, 90f, 120f, 144f)),
+        )
+        assertEquals(0f, readerPreferredRefreshRate(emptyList()))
+    }
+
+    @Test
+    fun viewportAnchorPersistenceWaitsUntilTheReaderScrollSettles() {
+        assertNull(
+            readerViewportPersistencePosition(
+                isScrollInProgress = true,
+                globalItemIndex = 12,
+                itemScrollOffsetPx = 107,
+            ),
+        )
+        assertEquals(
+            ReaderViewportPersistencePosition(
+                globalItemIndex = 12,
+                itemScrollOffsetPx = 96,
+            ),
+            readerViewportPersistencePosition(
+                isScrollInProgress = false,
+                globalItemIndex = 12,
+                itemScrollOffsetPx = 107,
+            ),
+        )
+    }
+
     @Test
     fun pageModeSideTapInterceptsInteractiveCommentControlsBeforeTurningPage() {
         assertTrue(
@@ -315,6 +384,25 @@ class ReaderPresentationTest {
     }
 
     @Test
+    fun automaticChapterLoadingDoesNotReopenTheReaderActionRailAfterAChapterWasVisible() {
+        assertEquals(
+            true,
+            readerChromeVisible(
+                hasReadableBody = false,
+                controlsRequested = false,
+                hasRenderedReaderBody = false,
+            ),
+        )
+        assertFalse(
+            readerChromeVisible(
+                hasReadableBody = false,
+                controlsRequested = false,
+                hasRenderedReaderBody = true,
+            ),
+        )
+    }
+
+    @Test
     fun readerDoesNotExposeSourceDebugLine() {
         assertNull(readerSourceDebugLine("api"))
         assertNull(readerSourceDebugLine("fallback"))
@@ -524,6 +612,128 @@ class ReaderPresentationTest {
     }
 
     @Test
+    fun terminalShortPageIsShownBeforeTheNextVolumeKeyCanOpenTheNextChapter() {
+        assertEquals(
+            ReaderPageTurnPlan.ScrollWithinChapter(targetIndex = 42),
+            readerPageTurnPlan(
+                direction = 1,
+                pageTargetIndex = 42,
+                reachedBoundaryBeforeTurn = false,
+                hasPrevious = true,
+                hasNext = true,
+            ),
+        )
+        assertEquals(
+            ReaderPageTurnPlan.OpenAdjacentChapter(ReaderPageBoundaryTarget.NextChapter),
+            readerPageTurnPlan(
+                direction = 1,
+                pageTargetIndex = null,
+                reachedBoundaryBeforeTurn = true,
+                hasPrevious = true,
+                hasNext = true,
+            ),
+        )
+    }
+
+    @Test
+    fun terminalPaddingKeepsTheFinalSemanticItemReachableBeforeOpeningTheNextChapter() {
+        assertEquals(
+            2,
+            readerPageScrollTargetIndex(
+                direction = 1,
+                firstVisibleItemIndex = 1,
+                totalItemCount = 3,
+                viewportStartOffset = 0,
+                viewportEndOffset = 1_000,
+                visibleItems = listOf(
+                    ReaderViewportItem(index = 1, offset = 0, size = 320),
+                    ReaderViewportItem(index = 2, offset = 320, size = 280),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun pageTurnAdvancesToTheNextUnmeasuredSemanticItemOnlyAfterTheCurrentPageFullyFits() {
+        assertEquals(
+            2,
+            readerPageScrollTargetIndex(
+                direction = 1,
+                firstVisibleItemIndex = 1,
+                totalItemCount = 4,
+                viewportStartOffset = 0,
+                viewportEndOffset = 1_000,
+                visibleItems = listOf(
+                    ReaderViewportItem(index = 1, offset = 0, size = 600),
+                ),
+            ),
+        )
+        assertNull(
+            readerPageScrollTargetIndex(
+                direction = 1,
+                firstVisibleItemIndex = 1,
+                totalItemCount = 4,
+                viewportStartOffset = 0,
+                viewportEndOffset = 1_000,
+                visibleItems = listOf(
+                    ReaderViewportItem(index = 1, offset = 0, size = 1_200),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun pageTurnTreatsTheLastRealItemBeforeTerminalPaddingAsTheNextChapter() {
+        assertEquals(
+            ReaderPageTurnPlan.OpenAdjacentChapter(ReaderPageBoundaryTarget.NextChapter),
+            readerPageTurnPlan(
+                direction = 1,
+                pageTargetIndex = null,
+                reachedBoundaryBeforeTurn = false,
+                hasPrevious = true,
+                hasNext = true,
+                atLastSemanticItem = true,
+            ),
+        )
+    }
+
+    @Test
+    fun pageModeReservesTerminalPaddingAfterReaderBodyButContinuousModeDoesNot() {
+        assertTrue(readerPageTerminalPaddingRequired(pageTurnEnabled = true, hasReadableBody = true))
+        assertFalse(readerPageTerminalPaddingRequired(pageTurnEnabled = false, hasReadableBody = true))
+        assertFalse(readerPageTerminalPaddingRequired(pageTurnEnabled = true, hasReadableBody = false))
+        assertEquals(
+            1_000,
+            readerPageTerminalPaddingHeightPx(viewportStartOffset = 0, viewportEndOffset = 1_000),
+        )
+    }
+
+    @Test
+    fun previousChapterEntryLandsOnTheLastRealReaderItemWithoutATrailingSpacer() {
+        assertEquals(
+            18,
+            readerChapterEntryScrollIndex(
+                entryPosition = ReaderChapterEntryPosition.End,
+                itemCount = 19,
+            ),
+        )
+    }
+
+    @Test
+    fun settledChapterBoundaryDoesNotReuseAStaleInChapterTarget() {
+        assertEquals(
+            ReaderPageTurnPlan.OpenAdjacentChapter(ReaderPageBoundaryTarget.NextChapter),
+            readerPageTurnPlan(
+                direction = 1,
+                pageTargetIndex = 42,
+                reachedBoundaryBeforeTurn = true,
+                hasPrevious = true,
+                hasNext = true,
+            ),
+        )
+    }
+
+    @Test
     fun readerVisibleChapterUsesArticleAndInlineCommentKeysButIgnoresSentinels() {
         assertEquals(
             20L,
@@ -673,9 +883,9 @@ class ReaderPresentationTest {
     }
 
     @Test
-    fun readerUsesNormalTapToolbarsUnlessRadialControlsAreExplicitlyEnabled() {
+    fun readerUsesNormalTapToolbarsWithoutRestoringTheRetiredRadialMenu() {
         assertFalse(readerUsesRadialMenu(showRadialMenu = false))
-        assertEquals(true, readerUsesRadialMenu(showRadialMenu = true))
+        assertFalse(readerUsesRadialMenu(showRadialMenu = true))
         assertFalse(ReaderUiOptions().showRadialMenu)
     }
 
@@ -907,6 +1117,31 @@ class ReaderPresentationTest {
     }
 
     @Test
+    fun pageViewportGuardCoversOnlyReservedPaddingAndNeverTheFirstReaderGlyph() {
+        assertEquals(
+            48,
+            readerPageLeadingOverflowGuardHeightPx(
+                pageTurnEnabled = true,
+                viewportStartOffset = -48,
+                glyphOverflowGuardPx = 16,
+            ),
+        )
+        assertEquals(
+            0,
+            readerPageLeadingOverflowGuardHeightPx(
+                pageTurnEnabled = false,
+                viewportStartOffset = -48,
+                glyphOverflowGuardPx = 16,
+            ),
+        )
+    }
+
+    @Test
+    fun readerArticleItemsClipChildTextToTheirOwnLazyItemBounds() {
+        assertTrue(readerArticleItemClipsOverflow())
+    }
+
+    @Test
     fun pageHistoryReturnsToTheExactPriorPageInsteadOfEstimatingByVisibleItemCount() {
         assertEquals(
             4,
@@ -931,8 +1166,8 @@ class ReaderPresentationTest {
     }
 
     @Test
-    fun readerTextSelectionUsesOneArticleScopeRatherThanOneScopePerParagraph() {
-        assertEquals(ReaderSelectionScope.Article, readerSelectionScope())
+    fun readerBodyTextSelectionIsDisabledToPreventNativeCopyActions() {
+        assertEquals(ReaderSelectionScope.Disabled, readerSelectionScope())
     }
 
     @Test

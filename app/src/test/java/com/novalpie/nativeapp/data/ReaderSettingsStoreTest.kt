@@ -34,14 +34,13 @@ class ReaderSettingsStoreTest {
     }
 
     @Test
-    fun radialMenuRemainsAvailableWhenExplicitlyEnabled() {
+    fun retiredRadialMenuDoesNotReturnFromAnExplicitLegacyPreference() {
         val store = ReaderSettingsStore(context)
         store.save(ReaderSettingsValues(showRadialMenu = true, radialMenuOpenMode = "longPress"))
 
         val loaded = store.load()
 
-        assertEquals(true, loaded.showRadialMenu)
-        assertEquals("longPress", loaded.radialMenuOpenMode)
+        assertFalse(loaded.showRadialMenu)
     }
 
     @Test
@@ -62,14 +61,14 @@ class ReaderSettingsStoreTest {
     }
 
     @Test
-    fun legacyLongPressRadialMenuRemainsAnExplicitCustomChoice() {
+    fun legacyLongPressRadialMenuIsAlsoRetired() {
         context.getSharedPreferences(ReaderSettingsStore.PREFERENCES_NAME, Context.MODE_PRIVATE)
             .edit()
             .putBoolean("show_radial_menu", true)
             .putString("radial_menu_open_mode", "longPress")
             .commit()
 
-        assertTrue(ReaderSettingsStore(context).load().showRadialMenu)
+        assertFalse(ReaderSettingsStore(context).load().showRadialMenu)
     }
 
     @Test

@@ -547,7 +547,8 @@ class NovalPieApi(
                     // explicit source-sized request back to 100.
                     "limit" to limit.coerceIn(1, 200).toString()
                 )
-            )
+            ),
+            expectedAuthorId = userId,
         )
     }
 
@@ -597,7 +598,8 @@ class NovalPieApi(
                                 "page" to safePage.toString(),
                                 "limit" to safeLimit.toString(),
                             ),
-                        )
+                        ),
+                        expectedAuthorId = userId,
                     )
                 }
             }
@@ -608,7 +610,10 @@ class NovalPieApi(
             }
             val comments = async {
                 captureUserActivityFeed {
-                    normalizeUserPostCommentActivityFeed(get("/api/posts/comments", userFeedParams))
+                    normalizeUserPostCommentActivityFeed(
+                        raw = get("/api/posts/comments", userFeedParams),
+                        expectedAuthorId = userId,
+                    )
                 }
             }
             val reviews = async {
@@ -4485,21 +4490,33 @@ class NovalPieApi(
                 "body",
                 "text"
             ),
-            likeCount = source.intOrNull("like_count")
+            // `/api/posts/{id}` also returns its aggregate `like_count`. The mobile forum feed
+            // exposes the real reaction breakdown, so prefer the explicit source buckets when
+            // they exist; otherwise a 13/1/1/1 post is incorrectly rendered as "赞 16".
+            likeCount = source.intOrNull("helpful_count")
+                ?: source.intOrNull("helpfulCount")
+                ?: source.intOrNull("like_count")
                 ?: source.intOrNull("likeCount")
                 ?: source.intOrNull("likes"),
-            dislikeCount = source.intOrNull("dislike_count")
+            dislikeCount = source.intOrNull("not_helpful_count")
+                ?: source.intOrNull("notHelpfulCount")
+                ?: source.intOrNull("dislike_count")
                 ?: source.intOrNull("dislikeCount")
                 ?: source.intOrNull("down_count")
                 ?: source.intOrNull("downCount")
                 ?: source.intOrNull("dislikes"),
-            reactionCount = source.intOrNull("reaction_count")
+            reactionCount = source.intOrNull("funny_count")
+                ?: source.intOrNull("funnyCount")
+                ?: source.intOrNull("reaction_count")
                 ?: source.intOrNull("reactionCount")
                 ?: source.intOrNull("reactions"),
             awardPoints = source.intOrNull("award_points")
                 ?: source.intOrNull("awardPoints")
                 ?: source.intOrNull("reward_points")
-                ?: source.intOrNull("rewardPoints"),
+                ?: source.intOrNull("rewardPoints")
+                ?: source.intOrNull("award_count")
+                ?: source.intOrNull("awardCount")
+                ?: source.intOrNull("awards"),
             poll = normalizeForumPoll(source.optJSONObject("poll")),
         )
     }
@@ -5007,7 +5024,10 @@ class NovalPieApi(
         )
     }
 
-    private fun normalizeUserActivities(raw: Any): List<UserActivity> {
+    private fun normalizeUserActivities(
+        raw: Any,
+        expectedAuthorId: Long? = null,
+    ): List<UserActivity> {
         val values = extractArray(
             raw,
             "activities",
@@ -5040,6 +5060,9 @@ class NovalPieApi(
         }
         return values.mapNotNull { item ->
             val source = item as? JSONObject ?: return@mapNotNull null
+            if (!userActivityBelongsToProfile(source, expectedAuthorId, allowUnknownAuthor = true)) {
+                return@mapNotNull null
+            }
             val comment = source.optJSONObject("comment")
             val post = source.optJSONObject("post")
             val book = source.optJSONObject("book")
@@ -5098,7 +5121,10 @@ class NovalPieApi(
     }
 
     /** Normalizes the source ActivityTab envelope while preserving optional aggregate counters. */
-    private fun normalizeCanonicalUserActivityFeed(raw: Any): UserContentActivityFeed {
+    private fun normalizeCanonicalUserActivityFeed(
+        raw: Any,
+        expectedAuthorId: Long? = null,
+    ): UserContentActivityFeed {
         val source = raw as? JSONObject
         val nested = source?.optJSONObject("data")
         val counts = source?.optJSONObject("counts") ?: nested?.optJSONObject("counts")
@@ -5111,7 +5137,7 @@ class NovalPieApi(
             .firstOrNull()
 
         return UserContentActivityFeed(
-            activities = normalizeUserActivities(raw),
+            activities = normalizeUserActivities(raw, expectedAuthorId),
             postCount = firstCount("post_count", "posts_count", "postCount", "posts"),
             forumCommentCount = firstCount(
                 "forum_comment_count",
@@ -5159,12 +5185,19 @@ class NovalPieApi(
             postCount = userFeedTotal(raw)
         )
 
-    private fun normalizeUserPostCommentActivityFeed(raw: Any): UserContentActivityFeed =
+    private fun normalizeUserPostCommentActivityFeed(
+        raw: Any,
+        expectedAuthorId: Long,
+    ): UserContentActivityFeed =
         UserContentActivityFeed(
             activities = extractArray(raw, "comments", "items", "records", "list", "data")
             .flatMap { value ->
                 val comment = value as? JSONObject ?: return@flatMap emptyList()
-                flattenUserPostCommentActivities(comment)
+                flattenUserPostCommentActivities(
+                    source = comment,
+                    expectedAuthorId = expectedAuthorId,
+                    isTopLevelUserFilteredEntry = true,
+                )
             },
             forumCommentCount = userFeedTotal(raw)
         )
@@ -5172,7 +5205,9 @@ class NovalPieApi(
     private fun flattenUserPostCommentActivities(
         source: JSONObject,
         fallbackPostId: Long? = null,
-        fallbackTitle: String? = null
+        fallbackTitle: String? = null,
+        expectedAuthorId: Long? = null,
+        isTopLevelUserFilteredEntry: Boolean = false,
     ): List<UserActivity> {
         val post = source.optJSONObject("post") ?: source.optJSONObject("topic")
         val postId = source.longOrNull("post_id")
@@ -5186,7 +5221,13 @@ class NovalPieApi(
         val commentId = source.longOrNull("id")
             ?: source.longOrNull("comment_id")
             ?: source.longOrNull("commentId")
-        val current = commentId?.let { id ->
+        val current = commentId?.takeIf {
+            userActivityBelongsToProfile(
+                source = source,
+                expectedAuthorId = expectedAuthorId,
+                allowUnknownAuthor = isTopLevelUserFilteredEntry,
+            )
+        }?.let { id ->
             UserActivity(
                 id = id,
                 type = "post_comment",
@@ -5210,10 +5251,29 @@ class NovalPieApi(
         val replies = extractArray(source, "replies", "children", "reply_list", "replyList")
             .flatMap { child ->
                 (child as? JSONObject)?.let {
-                    flattenUserPostCommentActivities(it, postId, postTitle)
+                    flattenUserPostCommentActivities(
+                        source = it,
+                        fallbackPostId = postId,
+                        fallbackTitle = postTitle,
+                        expectedAuthorId = expectedAuthorId,
+                        isTopLevelUserFilteredEntry = false,
+                    )
                 }.orEmpty()
             }
         return listOfNotNull(current) + replies
+    }
+
+    /** A profile timeline contains actions by the profile owner, never replies merely addressed to them. */
+    private fun userActivityBelongsToProfile(
+        source: JSONObject,
+        expectedAuthorId: Long?,
+        allowUnknownAuthor: Boolean,
+    ): Boolean {
+        expectedAuthorId ?: return true
+        val authorId = source.firstLongOrNull("author_id", "authorId", "user_id", "userId")
+            ?: source.optJSONObject("author")?.firstLongOrNull("id", "user_id", "userId")
+            ?: source.optJSONObject("user")?.firstLongOrNull("id", "user_id", "userId")
+        return authorId?.let { it == expectedAuthorId } ?: allowUnknownAuthor
     }
 
     private fun normalizeUserBookReviewActivityFeed(raw: Any): UserContentActivityFeed =

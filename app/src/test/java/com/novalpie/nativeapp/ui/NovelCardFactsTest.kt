@@ -187,6 +187,28 @@ class NovelCardFactsTest {
     }
 
     @Test
+    fun searchCoverTopStartBadgeToneFollowsSourceAndAdultClassification() {
+        assertEquals(
+            NovelCoverBadgeTone.NovelPiaAdult,
+            novelCardTopStartBadgeTone(
+                NovelCard(id = 1, title = "NovelPia adult", platform = "novelPia", isAdult = true),
+            ),
+        )
+        assertEquals(
+            NovelCoverBadgeTone.NovelPiaGeneral,
+            novelCardTopStartBadgeTone(
+                NovelCard(id = 2, title = "NovelPia general", platform = "novelPia", isAdult = false),
+            ),
+        )
+        assertEquals(
+            NovelCoverBadgeTone.Upload,
+            novelCardTopStartBadgeTone(
+                NovelCard(id = 3, title = "Uploaded adult", platform = "upload", isAdult = true),
+            ),
+        )
+    }
+
+    @Test
     fun compactMetricFormattingMatchesSourceThousandAndTenThousandNotation() {
         assertEquals("999", formatNovelCardCompactCount(999))
         assertEquals("1k", formatNovelCardCompactCount(1_000))

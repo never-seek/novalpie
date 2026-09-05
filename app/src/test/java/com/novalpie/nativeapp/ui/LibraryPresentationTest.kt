@@ -8,6 +8,7 @@ import com.novalpie.nativeapp.model.ReaderProgress
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -397,6 +398,101 @@ class LibraryPresentationTest {
 
         assertEquals("130/133", card.progressLabel)
         assertEquals("更新 3 章", card.updateLabel)
+    }
+
+    @Test
+    fun remoteFavoriteProgressAheadOfLocalBecomesTheResumeChapterAndDropsViewportAnchor() {
+        val merged = readerProgressAfterRemoteFavoriteProgress(
+            localProgress = ReaderProgress(
+                bookId = 7,
+                chapterId = 70,
+                bookTitle = "Book",
+                chapterNumber = 7,
+                chapterCountAtLastRead = 7,
+                viewportItemIndex = 3,
+                viewportItemScrollOffsetPx = 48,
+            ),
+            entry = FavoriteEntry(
+                book = NovelCard(id = 7, title = "Book"),
+                lastChapterId = 100,
+                lastChapter = 10,
+                chapterCount = 10,
+            ),
+        )
+
+        assertEquals(100L, merged?.chapterId)
+        assertEquals(10, merged?.chapterNumber)
+        assertEquals(10, merged?.chapterCountAtLastRead)
+        assertNull(merged?.viewportItemIndex)
+        assertNull(merged?.viewportItemScrollOffsetPx)
+    }
+
+    @Test
+    fun equalOrOlderRemoteFavoriteProgressCannotOverwriteLocalAnchor() {
+        val local = ReaderProgress(
+            bookId = 7,
+            chapterId = 100,
+            bookTitle = "Book",
+            chapterNumber = 10,
+            viewportItemIndex = 3,
+            viewportItemScrollOffsetPx = 48,
+        )
+
+        assertEquals(
+            local,
+            readerProgressAfterRemoteFavoriteProgress(
+                localProgress = local,
+                entry = FavoriteEntry(
+                    book = NovelCard(id = 7, title = "Book"),
+                    lastChapterId = 99,
+                    lastChapter = 10,
+                    chapterCount = 10,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun partialRemoteFavoriteProgressRetainsTheEarlierCompletedCatalogueBaseline() {
+        val merged = readerProgressAfterRemoteFavoriteProgress(
+            localProgress = ReaderProgress(
+                bookId = 7,
+                chapterId = 70,
+                bookTitle = "Book",
+                chapterNumber = 7,
+                chapterCountAtLastRead = 7,
+            ),
+            entry = FavoriteEntry(
+                book = NovelCard(id = 7, title = "Book"),
+                lastChapterId = 80,
+                lastChapter = 8,
+                chapterCount = 10,
+            ),
+        )
+
+        assertEquals(8, merged?.chapterNumber)
+        assertEquals(7, merged?.chapterCountAtLastRead)
+    }
+
+    @Test
+    fun compactLibraryCardClearsTheUpdateLabelAfterWebsiteProgressFinishesTheCurrentCatalogue() {
+        val card = compactFavoriteBookCardPresentation(
+            entry = FavoriteEntry(
+                book = NovelCard(id = 7, title = "Book", author = "Author"),
+                lastChapterId = 100,
+                lastChapter = 10,
+                chapterCount = 10,
+            ),
+            localProgress = ReaderProgress(
+                bookId = 7,
+                chapterId = 70,
+                chapterNumber = 7,
+                chapterCountAtLastRead = 7,
+            ),
+        )
+
+        assertEquals("10/10", card.progressLabel)
+        assertNull(card.updateLabel)
     }
 
     @Test

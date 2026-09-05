@@ -64,7 +64,7 @@ class ReaderSettingsStore(context: Context) {
         val defaultTapAreas = defaultTapAreas()
         val customThemes = loadCustomThemes()
         val savedPageTurnMode = prefs.getBoolean(KEY_PAGE_TURN_MODE, false)
-        val showRadialMenu = migrateLegacyDefaultRadialMenuPreference()
+        val showRadialMenu = migrateRetiredRadialMenuPreference()
         val showTts = migrateLegacyTtsVisibilityPreference()
         // Builds predating the continuous-scroll switch only persisted page-turn mode. Preserve
         // that user's explicit choice instead of treating a missing new key as "enabled".
@@ -89,9 +89,9 @@ class ReaderSettingsStore(context: Context) {
             showComments = prefs.getBoolean(KEY_SHOW_COMMENTS, true),
             showImages = prefs.getBoolean(KEY_SHOW_IMAGES, true),
             showTts = showTts,
-            // The source reader opens its chrome from a deliberate normal tap. Keep the optional
-            // radial menu opt-in so a fresh native install does not require a surprising double
-            // tap before Catalog, Settings, or Back become visible.
+            // The native reader intentionally has no contextual radial menu. It conflicts with
+            // scrolling and with the no-copy reading surface, and the former double-tap setting
+            // never implemented the website's token-selection behavior.
             showRadialMenu = showRadialMenu,
             radialMenuOpenMode = prefs.getString(KEY_RADIAL_MENU_OPEN_MODE, "doubleTap")
                 .orEmpty().takeIf { it in SUPPORTED_RADIAL_MODES } ?: "doubleTap",
@@ -135,8 +135,8 @@ class ReaderSettingsStore(context: Context) {
             .putBoolean(KEY_SHOW_COMMENTS, values.showComments)
             .putBoolean(KEY_SHOW_IMAGES, values.showImages)
             .putBoolean(KEY_SHOW_TTS, values.showTts)
-            .putBoolean(KEY_SHOW_RADIAL_MENU, values.showRadialMenu)
-            .putString(KEY_RADIAL_MENU_OPEN_MODE, values.radialMenuOpenMode.takeIf { it in SUPPORTED_RADIAL_MODES } ?: "doubleTap")
+            .putBoolean(KEY_SHOW_RADIAL_MENU, false)
+            .putString(KEY_RADIAL_MENU_OPEN_MODE, "longPress")
             .putBoolean(KEY_SHOW_HEADER, values.showHeader)
             .putBoolean(KEY_SHOW_FOOTER, values.showFooter)
             .putBoolean(KEY_SHOW_FAVORITE_BUTTON, values.showFavoriteButton)
@@ -172,24 +172,22 @@ class ReaderSettingsStore(context: Context) {
     }
 
     /**
-     * Older native builds saved an enabled double-tap radial panel as their factory default.  That
-     * made a normal reader action invisible after an upgrade, even though it was never a deliberate
-     * setting for most people.  Migrate that exact legacy default once, while preserving the old
-     * long-press choice as an intentional custom gesture.
+     * Retire every legacy radial-menu preference. The old surface was a navigation card rather
+     * than the website's word-selection wheel, and keeping it reachable caused hidden gestures
+     * and accidental reader chrome. Existing saved settings are repaired once and future loads
+     * always remain toolbar-only.
      */
-    private fun migrateLegacyDefaultRadialMenuPreference(): Boolean {
+    private fun migrateRetiredRadialMenuPreference(): Boolean {
         val currentVersion = prefs.getInt(KEY_READER_CHROME_GESTURE_VERSION, 0)
         val savedRadialMenu = prefs.getBoolean(KEY_SHOW_RADIAL_MENU, false)
-        val savedOpenMode = prefs.getString(KEY_RADIAL_MENU_OPEN_MODE, "doubleTap").orEmpty()
-            .takeIf { it in SUPPORTED_RADIAL_MODES } ?: "doubleTap"
-        if (currentVersion >= READER_CHROME_GESTURE_VERSION) return savedRadialMenu
-
-        val migratedRadialMenu = savedRadialMenu && savedOpenMode != "doubleTap"
-        prefs.edit()
-            .putBoolean(KEY_SHOW_RADIAL_MENU, migratedRadialMenu)
-            .putInt(KEY_READER_CHROME_GESTURE_VERSION, READER_CHROME_GESTURE_VERSION)
-            .apply()
-        return migratedRadialMenu
+        if (currentVersion < READER_CHROME_GESTURE_VERSION || savedRadialMenu) {
+            prefs.edit()
+                .putBoolean(KEY_SHOW_RADIAL_MENU, false)
+                .putString(KEY_RADIAL_MENU_OPEN_MODE, "longPress")
+                .putInt(KEY_READER_CHROME_GESTURE_VERSION, READER_CHROME_GESTURE_VERSION)
+                .apply()
+        }
+        return false
     }
 
     /**
@@ -288,7 +286,7 @@ class ReaderSettingsStore(context: Context) {
         const val MAX_SCREEN_PADDING_DP = 100
         const val DEFAULT_REPLACE_MODE = "india"
         private val SUPPORTED_THEMES = setOf("system", "light", "sepia", "dark", "green", "gray", "high_contrast")
-        private val SUPPORTED_RADIAL_MODES = setOf("doubleTap", "longPress")
+        private val SUPPORTED_RADIAL_MODES = setOf("longPress")
         private val SUPPORTED_PAGE_TURN_EFFECTS = setOf("none", "fade", "cover", "slide", "simulated")
         private val SUPPORTED_REPLACE_MODES = setOf(
             "", "korea", "india", "europe", "usa", "hyrule", "azeroth", "tamriel",
@@ -324,7 +322,7 @@ class ReaderSettingsStore(context: Context) {
         private const val KEY_PAGE_TURN_EFFECT = "page_turn_effect"
         private const val KEY_VOLUME_KEY_PAGE_TURN = "volume_key_page_turn"
         private const val KEY_TAP_AREAS = "tap_areas"
-        private const val READER_CHROME_GESTURE_VERSION = 2
+        private const val READER_CHROME_GESTURE_VERSION = 3
         private const val READER_TTS_VISIBILITY_VERSION = 1
 
         private fun defaultTapAreas(): List<ReaderTapArea> = listOf(

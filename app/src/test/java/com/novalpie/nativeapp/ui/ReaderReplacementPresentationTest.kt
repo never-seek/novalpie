@@ -234,6 +234,19 @@ class ReaderReplacementPresentationTest {
     }
 
     @Test
+    fun websiteCompatibleReplacementAppliesLiteralRulesBeforeRegexRules() {
+        val result = applyReaderReplacementRules(
+            original = "AB",
+            rules = listOf(
+                rule(id = "regex", source = "AB", replacement = "R", isRegex = true),
+                rule(id = "literal", source = "A", replacement = "L"),
+            ),
+        )
+
+        assertEquals("LB", result.text)
+    }
+
+    @Test
     fun malformedRegexIsReportedAndDoesNotChangeText() {
         val result = applyReaderReplacementRules(
             "正文",
@@ -415,6 +428,43 @@ class ReaderReplacementPresentationTest {
         assertTrue(readerSharedRulesEnabled(defaultEnabled = true, bookOverride = null))
         assertFalse(readerSharedRulesEnabled(defaultEnabled = true, bookOverride = false))
         assertTrue(readerSharedRulesEnabled(defaultEnabled = false, bookOverride = true))
+    }
+
+    @Test
+    fun allRulesOffersWebsiteCompatiblePublicRulePublication() {
+        val localOnly = rule(
+            id = "local",
+            source = "Alice",
+            replacement = "艾莉丝",
+        ).copy(
+            target = ReaderReplacementTarget.Both,
+            scope = ReaderReplacementScope.CurrentChapter(3),
+        )
+
+        val published = readerReplacementWebsitePublicationRule(localOnly)
+
+        assertEquals("添加替换规则", readerReplacementCreateActionLabel(ReaderReplacementRuleSource.Personal))
+        assertEquals("发布公共替换规则", readerReplacementCreateActionLabel(ReaderReplacementRuleSource.All))
+        assertEquals(ReaderReplacementOwner.Personal, published.owner)
+        assertEquals(ReaderReplacementTarget.Content, published.target)
+        assertEquals(ReaderReplacementScope.WholeBook, published.scope)
+        assertTrue(published.isEnabled)
+        assertEquals(
+            ReaderReplacementRemoteSyncAction.Create(published),
+            readerReplacementSaveSyncAction(previous = null, saved = published),
+        )
+    }
+
+    @Test
+    fun blankPublicReplacementNeverCreatesAnInvalidWebsiteGlossaryRow() {
+        val published = readerReplacementWebsitePublicationRule(
+            rule(id = "blank-public", source = "Alice", replacement = ""),
+        )
+
+        assertEquals(
+            ReaderReplacementRemoteSyncAction.None,
+            readerReplacementSaveSyncAction(previous = null, saved = published),
+        )
     }
 
     @Test

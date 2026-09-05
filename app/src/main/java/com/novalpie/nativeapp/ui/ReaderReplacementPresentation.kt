@@ -34,6 +34,27 @@ enum class ReaderReplacementRuleSource {
     All,
 }
 
+/** Source-faithful labels: the website exposes the same creator in both rule-list views. */
+internal fun readerReplacementCreateActionLabel(source: ReaderReplacementRuleSource): String = when (source) {
+    ReaderReplacementRuleSource.Personal -> "添加替换规则"
+    ReaderReplacementRuleSource.All -> "发布公共替换规则"
+}
+
+/**
+ * The website glossary API can publish only one book-wide body rule.  Keep richer title/range
+ * rules local rather than claiming that they were made public when the source cannot represent
+ * them.  Ownership stays Personal because the website still permits the creator to edit/delete
+ * their published row from the combined rule list.
+ */
+internal fun readerReplacementWebsitePublicationRule(
+    rule: ReaderReplacementRule,
+): ReaderReplacementRule = rule.copy(
+    owner = ReaderReplacementOwner.Personal,
+    isEnabled = true,
+    target = ReaderReplacementTarget.Content,
+    scope = ReaderReplacementScope.WholeBook,
+)
+
 /**
  * The server glossary can represent only an enabled whole-book rule applied to both title and
  * body.  Richer native scopes deliberately remain device-local rather than silently changing
@@ -337,7 +358,14 @@ internal fun applyReaderReplacementRules(
 ): ReaderReplacementApplyResult {
     var transformed = original
     val invalidRuleIds = mutableListOf<String>()
-    rules.forEach { rule ->
+    // The current website first applies its literal glossary entries from longest source to
+    // shortest source, then runs regular expressions.  Keeping that boundary here avoids a
+    // broad regex consuming a phrase before a more specific literal website rule can match.
+    val orderedRules = rules
+        .filterNot(ReaderReplacementRule::isRegex)
+        .sortedWith(compareByDescending<ReaderReplacementRule> { it.source.trim().length }.thenBy { it.id }) +
+        rules.filter(ReaderReplacementRule::isRegex)
+    orderedRules.forEach { rule ->
         if (!rule.isEnabled || !ruleAppliesTo(rule, chapterOrder, target)) return@forEach
         val validation = validateReaderReplacementRule(rule)
         if (!validation.isValid) {
@@ -581,6 +609,10 @@ private val readerDownloadImageMarker = Regex("\\[图片(?:[:：]|\\s)*?.*?\\]")
 private fun ReaderReplacementRule.canSyncReaderReplacementToWebsite(): Boolean =
     owner == ReaderReplacementOwner.Personal &&
         isEnabled &&
+        // The website's creator disables submission until both source and target are present.
+        // Empty local replacements remain a useful native-only extension, but must never create
+        // a malformed public glossary entry that other readers receive.
+        replacement.isNotBlank() &&
         // The webpage applies its glossary during body rendering. Title/both rules are useful
         // native extensions, but must stay local instead of being misrepresented remotely.
         target == ReaderReplacementTarget.Content &&

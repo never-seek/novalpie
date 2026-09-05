@@ -110,6 +110,60 @@ class ReaderProgressStore(context: Context) {
         editor.apply()
     }
 
+    /**
+     * Stores a website-derived chapter without promoting every refreshed favorite into the local
+     * "continue reading" order. Existing native order and precise paragraph anchors remain
+     * intact; an unseen remotely-read book is appended after native recent entries.
+     */
+    fun saveRemoteProgress(progress: ReaderProgress): Boolean {
+        if (progress.bookId <= 0L || progress.chapterId <= 0L) return false
+        val existing = load(progress.bookId)
+        if (existing == progress) return false
+        val stableProgress = progress.copy(
+            updatedAtMillis = existing?.updatedAtMillis ?: progress.updatedAtMillis,
+        )
+        val existingRecentBookIds = loadRecentBookIds()
+        val reconciledRecentBookIds = if (progress.bookId in existingRecentBookIds) {
+            existingRecentBookIds
+        } else {
+            (existingRecentBookIds + progress.bookId).take(MAX_RECENT_BOOKS)
+        }
+        val editor = prefs.edit()
+            .putLong(bookKey(progress.bookId, KEY_CHAPTER_ID), stableProgress.chapterId)
+            .putLong(bookKey(progress.bookId, KEY_UPDATED_AT), stableProgress.updatedAtMillis)
+            .putString(KEY_RECENT_BOOK_IDS, reconciledRecentBookIds.joinToString(","))
+        putNullableString(editor, bookKey(progress.bookId, KEY_CHAPTER_TITLE), stableProgress.chapterTitle)
+        putNullableString(editor, bookKey(progress.bookId, KEY_BOOK_TITLE), stableProgress.bookTitle)
+        putNullableInt(editor, bookKey(progress.bookId, KEY_CHAPTER_NUMBER), stableProgress.chapterNumber)
+        putNullableInt(
+            editor,
+            bookKey(progress.bookId, KEY_CHAPTER_COUNT_AT_LAST_READ),
+            stableProgress.chapterCountAtLastRead,
+        )
+        putNullableInt(editor, bookKey(progress.bookId, KEY_VIEWPORT_ITEM_INDEX), stableProgress.viewportItemIndex)
+        putNullableInt(
+            editor,
+            bookKey(progress.bookId, KEY_VIEWPORT_ITEM_OFFSET),
+            stableProgress.viewportItemScrollOffsetPx,
+        )
+
+        // Only mirror into the legacy/current slot when this is already the active recent book.
+        // Do not replace KEY_BOOK_ID or KEY_RECENT_BOOK_IDS during a background shelf refresh.
+        if (prefs.getLong(KEY_BOOK_ID, 0L) == progress.bookId) {
+            editor
+                .putLong(KEY_CHAPTER_ID, stableProgress.chapterId)
+                .putLong(KEY_UPDATED_AT, stableProgress.updatedAtMillis)
+            putNullableString(editor, KEY_CHAPTER_TITLE, stableProgress.chapterTitle)
+            putNullableString(editor, KEY_BOOK_TITLE, stableProgress.bookTitle)
+            putNullableInt(editor, KEY_CHAPTER_NUMBER, stableProgress.chapterNumber)
+            putNullableInt(editor, KEY_CHAPTER_COUNT_AT_LAST_READ, stableProgress.chapterCountAtLastRead)
+            putNullableInt(editor, KEY_VIEWPORT_ITEM_INDEX, stableProgress.viewportItemIndex)
+            putNullableInt(editor, KEY_VIEWPORT_ITEM_OFFSET, stableProgress.viewportItemScrollOffsetPx)
+        }
+        editor.apply()
+        return true
+    }
+
     fun clear() {
         prefs.edit().clear().apply()
     }
@@ -251,6 +305,14 @@ class ReaderProgressStore(context: Context) {
         value: String?,
     ) {
         if (value == null) editor.remove(key) else editor.putString(key, value)
+    }
+
+    private fun putNullableInt(
+        editor: android.content.SharedPreferences.Editor,
+        key: String,
+        value: Int?,
+    ) {
+        if (value == null) editor.remove(key) else editor.putInt(key, value)
     }
 
     companion object {

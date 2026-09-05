@@ -57,11 +57,47 @@ internal fun favoriteEntriesWithLocalReaderProgress(
     }
 }
 
+/**
+ * The website persists only a chapter, while the native reader also owns a paragraph anchor.
+ * Adopt source progress only when it is strictly farther ahead; equal or older source data must
+ * never erase a more precise native resume point.
+ */
+internal fun readerProgressAfterRemoteFavoriteProgress(
+    localProgress: ReaderProgress?,
+    entry: FavoriteEntry,
+): ReaderProgress? {
+    if (localProgress != null && localProgress.bookId != entry.book.id) return localProgress
+    val remoteChapterId = entry.lastChapterId?.takeIf { it > 0L } ?: return localProgress
+    val remoteChapterNumber = entry.lastChapter?.takeIf { it > 0 } ?: return localProgress
+    val localChapterNumber = localProgress?.chapterNumber?.takeIf { it > 0 }
+    if (localChapterNumber != null && remoteChapterNumber <= localChapterNumber) return localProgress
+
+    val sourceChapterCount = (entry.chapterCount ?: entry.book.chapterCount)?.takeIf { it > 0 }
+    val remoteCompletedCurrentCatalogue = sourceChapterCount != null && remoteChapterNumber >= sourceChapterCount
+    val sameChapter = localProgress?.chapterId == remoteChapterId
+    return ReaderProgress(
+        bookId = entry.book.id,
+        chapterId = remoteChapterId,
+        chapterTitle = localProgress?.chapterTitle?.takeIf { sameChapter },
+        updatedAtMillis = localProgress?.updatedAtMillis ?: 0L,
+        bookTitle = entry.book.title.trim().takeIf { it.isNotBlank() } ?: localProgress?.bookTitle,
+        chapterNumber = remoteChapterNumber,
+        chapterCountAtLastRead = if (remoteCompletedCurrentCatalogue) {
+            sourceChapterCount
+        } else {
+            localProgress?.chapterCountAtLastRead
+        },
+        viewportItemIndex = localProgress?.viewportItemIndex?.takeIf { sameChapter },
+        viewportItemScrollOffsetPx = localProgress?.viewportItemScrollOffsetPx?.takeIf { sameChapter },
+    )
+}
+
 internal fun compactFavoriteBookCardPresentation(
     entry: FavoriteEntry,
     localProgress: ReaderProgress? = null,
 ): CompactLibraryBookCardPresentation {
-    val effectiveEntry = favoriteEntryWithLocalReaderProgress(entry, localProgress)
+    val effectiveProgress = readerProgressAfterRemoteFavoriteProgress(localProgress, entry) ?: localProgress
+    val effectiveEntry = favoriteEntryWithLocalReaderProgress(entry, effectiveProgress)
     val total = (effectiveEntry.chapterCount ?: effectiveEntry.book.chapterCount)?.coerceAtLeast(0)
     val read = effectiveEntry.lastChapter?.coerceAtLeast(0)
     val visibleRead = total?.let { (read ?: 0).coerceAtMost(it) }
@@ -69,7 +105,7 @@ internal fun compactFavoriteBookCardPresentation(
         title = effectiveEntry.book.title,
         author = effectiveEntry.book.author?.trim().takeUnless { it.isNullOrBlank() } ?: "未知作者",
         progressLabel = total?.let { "$visibleRead/$it" },
-        updateLabel = favoriteBookUpdateLabel(entry, localProgress),
+        updateLabel = favoriteBookUpdateLabel(entry, effectiveProgress),
     )
 }
 

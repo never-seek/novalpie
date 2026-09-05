@@ -161,6 +161,7 @@ import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
@@ -176,6 +177,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalViewConfiguration
@@ -389,6 +391,18 @@ fun NovalPieApp(
 ) {
     val route = viewModel.currentRoute
     val context = LocalContext.current
+    val activity = context as? MainActivity
+
+    // Keep expensive high-refresh rendering scoped to the immersive reading route. The host saves
+    // and restores the existing window preference, so normal browsing keeps the user's system
+    // policy and the reader can request 90/120/144Hz wherever that display actually supports it.
+    DisposableEffect(activity, route is AppRoute.Reader) {
+        val readerVisible = route is AppRoute.Reader
+        activity?.setReaderHighRefreshRateEnabled(readerVisible)
+        onDispose {
+            if (readerVisible) activity?.setReaderHighRefreshRateEnabled(false)
+        }
+    }
 
     LaunchedEffect(route is AppRoute.Reader) {
         if (route !is AppRoute.Reader) viewModel.updateReaderFullscreen(false)
@@ -6204,14 +6218,12 @@ internal fun ReaderScreen(
     val readerHelpVisible = remember { mutableStateOf(false) }
     val readerNavigationVisible = remember { mutableStateOf(false) }
     val readerSettingsCategory = remember { mutableStateOf<ReaderSettingsCategory?>(null) }
-    var replacementPrefillSource by remember { mutableStateOf<String?>(null) }
     val toolbarsVisible = remember { mutableStateOf(false) }
     var pendingChapterEntryPosition by remember { mutableStateOf(ReaderChapterEntryPosition.Start) }
     // Auto-next needs to survive the route's loading phase, but must not hijack a later manual
     // navigation to some other chapter.
     var pendingTtsContinuationChapterId by remember(state.bookId) { mutableStateOf<Long?>(null) }
     var pendingTtsContinuationSourceChapterId by remember(state.bookId) { mutableStateOf<Long?>(null) }
-    val radialMenuVisible = remember { mutableStateOf(false) }
     var lastReaderChromeTapUptime by remember { mutableLongStateOf(0L) }
     var lastReaderChromeTapXFraction by remember { mutableFloatStateOf(-1f) }
     var lastReaderChromeTapYFraction by remember { mutableFloatStateOf(-1f) }
@@ -6236,13 +6248,23 @@ internal fun ReaderScreen(
             )
         }
     }
+    // The body parser is comparatively expensive for long HTML/Markdown chapters. Keep its
+    // rendered block order stable for this content/options revision so scroll observation can use
+    // a precomputed item index instead of reparsing every scroll position.
+    val readerBodyLayout = remember(
+        chapterContents,
+        options.removeDuplicateLines,
+        options.showImages,
+        options.showComments,
+    ) {
+        readerBodyLayoutForContents(chapterContents, options)
+    }
     // Keep the viewport observer alive while the infinite-scroll window grows.  Restarting it on
     // every append can lose the one layout transition where the first item changes from chapter N
     // to chapter N+1, leaving the footer stuck on the route's opening chapter.
-    val latestChapterContents by rememberUpdatedState(chapterContents)
     val latestVisibleChapterChanged by rememberUpdatedState(onVisibleChapterChanged)
     val latestViewportAnchorChanged by rememberUpdatedState(onViewportAnchorChanged)
-    val latestReaderOptions by rememberUpdatedState(options)
+    val latestReaderBodyLayout by rememberUpdatedState(readerBodyLayout)
     // The route remains anchored to the opening chapter during continuous scroll, while the
     // footer follows the article that actually occupies the viewport.
     var visibleReaderChapterId by remember(state.bookId, state.chapterId) {
@@ -6326,10 +6348,22 @@ internal fun ReaderScreen(
     // therefore not optional while there is nothing to read: it is forced on for Idle, Loading and
     // Error, and only becomes tap-to-toggle once a body has actually arrived.
     val hasReadableBody = state.content is LoadResult.Success
+    // A page-boundary route replacement briefly changes `state.content` to Loading. Keep the
+    // reader immersive in that transient state: forcing the rail open causes the visible side-menu
+    // flash reported when automatic next/previous chapter loading starts. A cold reader still gets
+    // navigation chrome while it has never displayed any readable body.
+    var hasRenderedReaderBody by remember(state.bookId) { mutableStateOf(false) }
+    if (hasReadableBody && !hasRenderedReaderBody) {
+        SideEffect { hasRenderedReaderBody = true }
+    }
     // Continuous scroll takes precedence for legacy preferences that accidentally saved both
     // modes. ReaderSettingsStore and the settings sheet repair that state for future launches.
     val continuousScrollEnabled = options.useInfiniteScroll
     val pageTurnEnabled = options.pageTurnMode && !continuousScrollEnabled
+    val pageTerminalPaddingRequired = readerPageTerminalPaddingRequired(
+        pageTurnEnabled = pageTurnEnabled,
+        hasReadableBody = hasReadableBody,
+    )
     var pageStartHistory by remember(state.bookId, state.chapterId) { mutableStateOf(emptyList<Int>()) }
     LaunchedEffect(pageTurnEnabled) {
         if (!pageTurnEnabled && pageStartHistory.isNotEmpty()) {
@@ -6358,7 +6392,40 @@ internal fun ReaderScreen(
             }
         }
     }
-    val chromeVisible = readerChromeVisible(hasReadableBody, toolbarsVisible.value)
+    val pageLeadingGlyphOverflowPx = with(LocalDensity.current) { 8.dp.toPx().toInt() }
+    val pageLeadingOverflowGuardPx by remember(
+        pageTurnEnabled,
+        listState,
+        pageLeadingGlyphOverflowPx,
+    ) {
+        derivedStateOf {
+            readerPageLeadingOverflowGuardHeightPx(
+                pageTurnEnabled = pageTurnEnabled,
+                viewportStartOffset = listState.layoutInfo.viewportStartOffset,
+                glyphOverflowGuardPx = pageLeadingGlyphOverflowPx,
+            )
+        }
+    }
+    val pageTerminalPaddingHeightPx by remember(pageTerminalPaddingRequired, listState) {
+        derivedStateOf {
+            if (!pageTerminalPaddingRequired) {
+                0
+            } else {
+                readerPageTerminalPaddingHeightPx(
+                    viewportStartOffset = listState.layoutInfo.viewportStartOffset,
+                    viewportEndOffset = listState.layoutInfo.viewportEndOffset,
+                )
+            }
+        }
+    }
+    val pageTerminalPaddingHeight = with(LocalDensity.current) {
+        pageTerminalPaddingHeightPx.toDp()
+    }
+    val chromeVisible = readerChromeVisible(
+        hasReadableBody = hasReadableBody,
+        controlsRequested = toolbarsVisible.value,
+        hasRenderedReaderBody = hasRenderedReaderBody,
+    )
 
     // A new chapter replaces the reader route in-place, so the LazyColumn survives by design.
     // Reset its viewport explicitly; otherwise a user who was near the end of chapter A can land
@@ -6379,7 +6446,6 @@ internal fun ReaderScreen(
         readerHelpVisible.value = false
         readerNavigationVisible.value = false
         toolbarsVisible.value = false
-        radialMenuVisible.value = false
         inlineCommentInteractionActive.set(false)
         lastReaderChromeTapUptime = 0L
         lastReaderChromeTapXFraction = -1f
@@ -6404,12 +6470,11 @@ internal fun ReaderScreen(
             return@LaunchedEffect
         }
         withFrameNanos { }
-        listState.scrollToItem(
-            readerChapterEntryScrollIndex(
-                entryPosition = pendingChapterEntryPosition,
-                itemCount = listState.layoutInfo.totalItemsCount,
-            )
+        val entryIndex = readerChapterEntryScrollIndex(
+            entryPosition = pendingChapterEntryPosition,
+            itemCount = listState.layoutInfo.totalItemsCount,
         )
+        listState.scrollToItem(entryIndex)
         pendingChapterEntryPosition = ReaderChapterEntryPosition.Start
     }
 
@@ -6431,8 +6496,7 @@ internal fun ReaderScreen(
         }
         withFrameNanos { }
         readerBodyItemIndexForViewportAnchor(
-            contents = chapterContents,
-            options = options,
+            layout = readerBodyLayout,
             anchor = anchor,
         )?.let { itemIndex ->
             listState.scrollToItem(itemIndex, anchor.itemScrollOffsetPx)
@@ -6440,38 +6504,46 @@ internal fun ReaderScreen(
         pendingViewportAnchor = null
     }
 
-    // Infinite scrolling appends bodies without replacing the route. Save a chapter only after
-    // one of its article items becomes visible, never merely because it was prefetched.
+    // Infinite scrolling appends bodies without replacing the route. Update the visible chapter
+    // immediately for the footer/progress model, but avoid disk work unless that chapter changes.
     LaunchedEffect(listState) {
         snapshotFlow {
-            // firstVisibleItemIndex/offset are observable state even when LazyColumn reuses an
-            // existing layout-info object.  Include them in the observation so crossing from one
-            // body group to the next cannot be missed during an append/re-measure race.
-            Triple(
-                readerFirstVisibleChapterId(
-                    listState.layoutInfo.visibleItemsInfo
-                        .sortedBy { item -> item.index }
-                        .map { item -> item.key },
-                ),
-                listState.firstVisibleItemIndex,
-                listState.firstVisibleItemScrollOffset,
+            listState.firstVisibleItemIndex
+        }.collect { visibleItemIndex ->
+            val bodyLayout = latestReaderBodyLayout
+            val visibleChapterId = readerChapterIdForBodyItem(
+                layout = bodyLayout,
+                globalItemIndex = visibleItemIndex,
             )
-        }.collect { observation ->
-            val visibleChapterId = observation.first
             if (visibleChapterId != null && visibleReaderChapterId != visibleChapterId) {
                 visibleReaderChapterId = visibleChapterId
                 latestVisibleChapterChanged(
                     visibleChapterId,
-                    latestChapterContents.firstOrNull { it.chapterId == visibleChapterId }?.title,
+                    bodyLayout.chapters.firstOrNull { it.chapter.chapterId == visibleChapterId }
+                        ?.chapter
+                        ?.title,
                 )
             }
+        }
+    }
+
+    // The first optimization removed HTML/Markdown parsing from the scroll hot path. Persist the
+    // local paragraph anchor only once touch/fling activity settles so SharedPreferences and the
+    // root ViewModel do not recompose the reader during every 24px of a high-refresh drag.
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            readerViewportPersistencePosition(
+                isScrollInProgress = listState.isScrollInProgress,
+                globalItemIndex = listState.firstVisibleItemIndex,
+                itemScrollOffsetPx = listState.firstVisibleItemScrollOffset,
+            )
+        }.collect { position ->
+            position ?: return@collect
+            val bodyLayout = latestReaderBodyLayout
             readerViewportAnchorForBodyItem(
-                contents = latestChapterContents,
-                options = latestReaderOptions,
-                globalItemIndex = observation.second,
-                // Persist in a 24px bucket.  This keeps a close same-paragraph restore without
-                // writing SharedPreferences for every individual scroll pixel.
-                itemScrollOffsetPx = (observation.third / 24) * 24,
+                layout = bodyLayout,
+                globalItemIndex = position.globalItemIndex,
+                itemScrollOffsetPx = position.itemScrollOffsetPx,
             )?.let(latestViewportAnchorChanged)
         }
     }
@@ -6560,7 +6632,6 @@ internal fun ReaderScreen(
             readerSettingsVisible.value ||
             readerHelpVisible.value ||
             readerNavigationVisible.value ||
-            radialMenuVisible.value ||
             readerFullscreen ||
             toolbarsVisible.value,
     ) {
@@ -6570,7 +6641,6 @@ internal fun ReaderScreen(
             readerHelpVisible.value -> readerHelpVisible.value = false
             readerNavigationVisible.value -> readerNavigationVisible.value = false
             readerFullscreen -> onReaderFullscreenChange(false)
-            radialMenuVisible.value -> radialMenuVisible.value = false
             toolbarsVisible.value -> toolbarsVisible.value = false
         }
     }
@@ -6580,11 +6650,12 @@ internal fun ReaderScreen(
         readerSettingsVisible.value ||
         readerHelpVisible.value ||
         readerNavigationVisible.value
-    // The source keeps its compact title/status rails visible while reading. Only the full side
-    // panel replaces them; the action rail itself remains a tap-to-toggle immersive overlay.
-    val headerVisible = options.showHeader && !sidePanelVisible
-    val statusVisible = options.showFooter && !sidePanelVisible
-    val actionRailVisible = chromeVisible && !radialMenuVisible.value
+    // The compact rails are overlays, not permanent masks. Keep them in the same visibility
+    // contract as the action controls: cold loading/error states remain navigable, while a loaded
+    // immersive page has no persistent header/footer that can clip the first or final line.
+    val headerVisible = chromeVisible && options.showHeader && !sidePanelVisible
+    val statusVisible = chromeVisible && options.showFooter && !sidePanelVisible
+    val actionRailVisible = chromeVisible
     val pageAlpha = remember { Animatable(1f) }
     val pageOffset = remember { Animatable(0f) }
     val simulatedPageCoverOffset = remember { Animatable(0f) }
@@ -6626,38 +6697,47 @@ internal fun ReaderScreen(
                 ReaderViewportItem(index = item.index, offset = item.offset, size = item.size)
             },
         )
+        val atLastSemanticItem = pageTerminalPaddingRequired &&
+            viewportInfo.totalItemsCount > 0 &&
+            listState.firstVisibleItemIndex >= viewportInfo.totalItemsCount - 1
         val alreadyAtBoundary = if (direction < 0) !listState.canScrollBackward else !listState.canScrollForward
-        val immediateTarget = readerPageBoundaryTarget(
+        val plannedPageTargetIndex = when (val plan = readerPageTurnPlan(
             direction = direction,
-            reachedBoundary = alreadyAtBoundary,
+            pageTargetIndex = pageTargetIndex,
+            reachedBoundaryBeforeTurn = alreadyAtBoundary,
             hasPrevious = adjacent.previous != null,
             hasNext = adjacent.next != null,
-        )
-        if (immediateTarget != ReaderPageBoundaryTarget.None) {
-            val canStart = gestureId?.let {
-                readerPageTurnGestureCanStart(
-                    inProgress = pageTurnInProgress,
-                    target = immediateTarget,
-                    gestureId = it,
-                    lastHandledGestureId = lastHandledReaderGestureId,
-                )
-            } ?: readerBoundaryNavigationCanStart(pageTurnInProgress, immediateTarget)
-            if (!canStart) return
-            // Boundary navigation replaces the route immediately. Keep the same in-flight guard
-            // used by animated turns so an unconsumed release cannot be replayed by the newly
-            // composed chapter and skip over multiple adjacent chapters.
-            pageTurnInProgress = true
-            if (gestureId != null) lastHandledReaderGestureId = gestureId
-            openReaderPageBoundary(immediateTarget)
-            return
+            atLastSemanticItem = atLastSemanticItem,
+        )) {
+            is ReaderPageTurnPlan.OpenAdjacentChapter -> {
+                val immediateTarget = plan.target
+                val canStart = gestureId?.let {
+                    readerPageTurnGestureCanStart(
+                        inProgress = pageTurnInProgress,
+                        target = immediateTarget,
+                        gestureId = it,
+                        lastHandledGestureId = lastHandledReaderGestureId,
+                    )
+                } ?: readerBoundaryNavigationCanStart(pageTurnInProgress, immediateTarget)
+                if (!canStart) return
+                // Boundary navigation replaces the route immediately. Keep the same in-flight guard
+                // used by animated turns so an unconsumed release cannot be replayed by the newly
+                // composed chapter and skip over multiple adjacent chapters.
+                pageTurnInProgress = true
+                if (gestureId != null) lastHandledReaderGestureId = gestureId
+                openReaderPageBoundary(immediateTarget)
+                return
+            }
+            is ReaderPageTurnPlan.ScrollWithinChapter -> plan.targetIndex
+            ReaderPageTurnPlan.NoOp -> return
         }
         // A single block taller than the viewport cannot be advanced without cutting its content.
         // Keep it stationary rather than silently skipping its unread middle; normal chapter text
         // and illustrations always resolve to a later item boundary above.
         val targetIndex = if (direction < 0) {
-            readerPageBackwardTargetIndex(pageStartHistory, pageTargetIndex)
+            readerPageBackwardTargetIndex(pageStartHistory, plannedPageTargetIndex)
         } else {
-            pageTargetIndex
+            plannedPageTargetIndex
         } ?: return
         val consumesHistoryEntry = direction < 0 && pageStartHistory.isNotEmpty()
         pageTurnInProgress = true
@@ -6706,15 +6786,9 @@ internal fun ReaderScreen(
                     consumesHistoryEntry -> pageStartHistory.dropLast(1)
                     else -> pageStartHistory
                 }
-                val reachedBoundary = if (direction < 0) !listState.canScrollBackward else !listState.canScrollForward
-                openReaderPageBoundary(
-                    readerPageBoundaryTarget(
-                        direction = direction,
-                        reachedBoundary = reachedBoundary,
-                        hasPrevious = adjacent.previous != null,
-                        hasNext = adjacent.next != null,
-                    ),
-                )
+                // A scroll can finish at the physical list edge while producing a short terminal
+                // page. Do not replace the chapter in that same key press or side tap: the next
+                // turn observes the settled edge and then performs adjacent-chapter navigation.
             } finally {
                 simulatedPageCoverVisible.value = false
                 simulatedPageCoverOffset.snapTo(0f)
@@ -6758,38 +6832,6 @@ internal fun ReaderScreen(
         readerSettingsCategory.value = category
         readerSettingsVisible.value = true
         toolbarsVisible.value = true
-    }
-
-    // Compose's built-in SelectionContainer owns the Android selection action mode. Observe only
-    // the resulting copy event and validate it against the current effective chapter window; this
-    // gives the same “select text → open replacement form prefilled” flow as the website without
-    // replacing native long-press selection or intercepting reader scroll gestures.
-    DisposableEffect(context, readerView) {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        if (clipboard == null) {
-            onDispose { }
-        } else {
-            val listener = ClipboardManager.OnPrimaryClipChangedListener {
-                readerView.post {
-                    val copied = runCatching {
-                        clipboard.primaryClip
-                            ?.takeIf { it.itemCount > 0 }
-                            ?.getItemAt(0)
-                            ?.coerceToText(context)
-                    }.getOrNull()
-                    val source = readerReplacementPrefillSource(
-                        clipboardText = copied,
-                        contents = latestChapterContents,
-                    )
-                    if (source != null) {
-                        replacementPrefillSource = source
-                        openReaderSettings(ReaderSettingsCategory.Replacement)
-                    }
-                }
-            }
-            clipboard.addPrimaryClipChangedListener(listener)
-            onDispose { clipboard.removePrimaryClipChangedListener(listener) }
-        }
     }
 
     fun openReaderCatalog() {
@@ -7029,8 +7071,7 @@ internal fun ReaderScreen(
             .fillMaxHeight()
             .fillMaxWidth(readerSidePanelWidthFraction())
             .widthIn(max = readerSidePanelMaxWidthDp().dp)
-        SelectionContainer {
-            LazyColumn(
+        LazyColumn(
                 state = listState,
                 userScrollEnabled = !pageTurnEnabled,
                 modifier = Modifier
@@ -7046,17 +7087,18 @@ internal fun ReaderScreen(
                     mask = pageTrailingMask,
                     color = palette.background,
                 )
+                .readerPageLeadingOverflowGuard(
+                    guardHeightPx = pageLeadingOverflowGuardPx,
+                    color = palette.background,
+                )
                 .pointerInput(
                     options.tapAreas,
-                    options.showRadialMenu,
-                    options.radialMenuOpenMode,
                     pageTurnEnabled,
                     readerTouchSlop,
                 ) {
-                    // Observe the initial pointer pass without consuming it. SelectionContainer
-                    // consumes a final-pass release inside article text; observing earlier keeps
-                    // an ordinary short body tap available for the reader chrome while leaving
-                    // LazyColumn drags and long-press text selection untouched.
+                    // Observe the initial pointer pass without consuming it. Reader prose has no
+                    // selection action mode; regular drags remain LazyColumn scrolling gestures
+                    // and stationary taps are reserved for the stable reader toolbar controls.
                     awaitPointerEventScope {
                         var active = false
                         var moved = false
@@ -7109,12 +7151,7 @@ internal fun ReaderScreen(
                                     durationMillis = duration,
                                     longPressTimeoutMillis = viewConfiguration.longPressTimeoutMillis,
                                 )
-                                val opensRadialMenu = !toolbarsVisible.value &&
-                                    readerUsesRadialMenu(options.showRadialMenu) &&
-                                    options.radialMenuOpenMode == "longPress" &&
-                                    action == "sidebar" &&
-                                    duration >= 500L
-                                val readerGestureEligible = isShortBodyTap || opensRadialMenu
+                                val readerGestureEligible = isShortBodyTap
                                 val inlineInteractionInProgress = inlineCommentInteractionActive.get()
                                 if (
                                     readerBodyTapCanHandle(
@@ -7123,17 +7160,12 @@ internal fun ReaderScreen(
                                     ) &&
                                     (action != null || toolbarsVisible.value)
                                 ) {
-                                    if (opensRadialMenu) {
-                                        radialMenuVisible.value = true
-                                        toolbarsVisible.value = false
-                                    } else {
-                                        currentReaderTapHandler.value(
-                                            fraction,
-                                            verticalFraction,
-                                            change.uptimeMillis,
-                                            activeReaderGestureId,
-                                        )
-                                    }
+                                    currentReaderTapHandler.value(
+                                        fraction,
+                                        verticalFraction,
+                                        change.uptimeMillis,
+                                        activeReaderGestureId,
+                                    )
                                 }
                                 active = false
                                 pageZoneGesture = false
@@ -7143,7 +7175,9 @@ internal fun ReaderScreen(
                     },
                 contentPadding = PaddingValues(
                 top = (if (headerVisible) chromeLayout.headerHeightDp else 0f).dp + options.screenPaddingTopDp.dp,
-                bottom = (if (statusVisible) chromeLayout.statusHeightDp else 0f).dp + options.screenPaddingBottomDp.dp,
+                bottom = (if (statusVisible) chromeLayout.statusHeightDp else 0f).dp +
+                    options.screenPaddingBottomDp.dp +
+                    if (pageTerminalPaddingRequired) pageTerminalPaddingHeight else 0.dp,
             ),
                 verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
@@ -7155,27 +7189,29 @@ internal fun ReaderScreen(
                         retryLabel = retryActionLabel("正文"),
                         onRetry = onRetry,
                     ) }
-                    is LoadResult.Success -> readerBodyItems(
-                        contents = chapterContents,
-                        options = options,
-                    highlightedText = ttsHighlightText,
-                    chapterCommentStates = state.chapterCommentStates,
-                    fallbackCommentState = state,
-                    onRetryChapterComments = onRetryChapterComments,
-                        onDraftChange = onCommentDraftChange,
-                        onSubmit = onSubmitComment,
-                        onReply = onReplyComment,
-                        onCancelReply = onCancelCommentReply,
-                        onLike = onCommentLike,
-                        onDislike = onCommentDislike,
-                        onEmoji = onCommentEmoji,
-                        onAward = onCommentAward,
-                        onOpenUser = onOpenUser,
-                        onOpenLink = onOpenLink,
-                        onOpenWeb = onOpenWeb,
-                        onPreviewImage = onPreviewImage,
-                        inlineCommentInteractionActive = inlineCommentInteractionActive,
-                    )
+                    is LoadResult.Success -> {
+                        readerBodyItems(
+                            layout = readerBodyLayout,
+                            options = options,
+                            highlightedText = ttsHighlightText,
+                            chapterCommentStates = state.chapterCommentStates,
+                            fallbackCommentState = state,
+                            onRetryChapterComments = onRetryChapterComments,
+                            onDraftChange = onCommentDraftChange,
+                            onSubmit = onSubmitComment,
+                            onReply = onReplyComment,
+                            onCancelReply = onCancelCommentReply,
+                            onLike = onCommentLike,
+                            onDislike = onCommentDislike,
+                            onEmoji = onCommentEmoji,
+                            onAward = onCommentAward,
+                            onOpenUser = onOpenUser,
+                            onOpenLink = onOpenLink,
+                            onOpenWeb = onOpenWeb,
+                            onPreviewImage = onPreviewImage,
+                            inlineCommentInteractionActive = inlineCommentInteractionActive,
+                        )
+                    }
             }
                 if (hasReadableBody && continuousScrollEnabled) {
                     item(key = readerEndSentinelKey) {
@@ -7189,7 +7225,6 @@ internal fun ReaderScreen(
                     }
                 }
             }
-        }
 
         if (simulatedPageCoverVisible.value) {
             Box(
@@ -7213,38 +7248,6 @@ internal fun ReaderScreen(
                 chapters = chapters,
                 options = options,
                 chromeLayout = chromeLayout,
-            )
-        }
-
-        if (radialMenuVisible.value) {
-            ReaderRadialMenu(
-                state = state,
-                chapters = chapters,
-                favoriteStatus = state.favoriteStatus,
-                ttsState = readerTtsState,
-                showTts = options.showTts,
-                onPrevious = {
-                    adjacentReaderChapters(state.chapterId, chapters).previous?.let { onOpenReader(state.bookId, it.id) }
-                    radialMenuVisible.value = false
-                },
-                onNext = {
-                    adjacentReaderChapters(state.chapterId, chapters).next?.let { onOpenReader(state.bookId, it.id) }
-                    radialMenuVisible.value = false
-                },
-                onCatalog = {
-                    radialMenuVisible.value = false
-                    openReaderCatalog()
-                },
-                onTts = {
-                    toggleTts()
-                    radialMenuVisible.value = false
-                },
-                onFavorite = {
-                    onToggleFavorite()
-                    radialMenuVisible.value = false
-                },
-                onDismiss = { radialMenuVisible.value = false },
-                modifier = Modifier.align(Alignment.Center),
             )
         }
 
@@ -7323,7 +7326,7 @@ internal fun ReaderScreen(
                 onTtsSettingsChange = onReaderTtsSettingsChange,
                 replacementState = replacementState,
                 currentChapterOrder = readerChapterOrderForId(state.chapterId, chapters),
-                replacementPrefillSource = replacementPrefillSource,
+                replacementPrefillSource = null,
                 onReplacementSourceChange = onReaderReplacementSourceChange,
                 onSaveReplacementRule = onSaveReaderReplacementRule,
                 onDeleteReplacementRule = onDeleteReaderReplacementRule,
@@ -7332,7 +7335,7 @@ internal fun ReaderScreen(
                  onSharedRulesEnabledChange = onReaderSharedRulesEnabledChange,
                  onDefaultSharedRulesEnabledChange = onDefaultReaderSharedRulesEnabledChange,
                  onResetSharedRulesOverride = onResetReaderSharedRulesOverride,
-                 onReplacementPrefillConsumed = { replacementPrefillSource = null },
+                onReplacementPrefillConsumed = {},
                 onDismiss = { readerSettingsVisible.value = false },
                 sidebar = true,
                 modifier = readerSidePanelModifier,
@@ -7361,7 +7364,6 @@ internal fun ReaderScreen(
                 fullscreen = readerFullscreen,
                 onClose = {
                     closeReaderSidePanel()
-                    radialMenuVisible.value = false
                     toolbarsVisible.value = false
                 },
                 onOpenHelp = ::openReaderHelp,
@@ -7464,6 +7466,22 @@ private fun Modifier.readerPageTrailingItemMask(
                 topLeft = Offset(0f, top),
                 size = Size(size.width, bottom - top),
             )
+        }
+    }
+}
+
+/** Covers only the title-rail padding above a paged article, never a body item itself. */
+private fun Modifier.readerPageLeadingOverflowGuard(
+    guardHeightPx: Int,
+    color: Color,
+): Modifier = if (guardHeightPx <= 0) {
+    this
+} else {
+    drawWithContent {
+        drawContent()
+        val bottom = guardHeightPx.toFloat().coerceIn(0f, size.height)
+        if (bottom > 0f) {
+            drawRect(color = color, size = Size(size.width, bottom))
         }
     }
 }
@@ -9640,7 +9658,7 @@ internal fun NovelCardItem(
                     NovelCoverBadge(
                         label = category,
                         modifier = Modifier.align(Alignment.TopStart).padding(NovalPieSpacing.xs),
-                        containerColor = Color(0xFF15803D)
+                        containerColor = novelCardTopStartBadgeColor(book),
                     )
                 }
                 coverBadges.status?.let { status ->
@@ -9856,7 +9874,7 @@ internal fun NovelSearchListItem(
                     NovelCoverBadge(
                         label = category,
                         modifier = Modifier.align(Alignment.TopStart).padding(NovalPieSpacing.xxs),
-                        containerColor = Color(0xFF15803D)
+                        containerColor = novelCardTopStartBadgeColor(book),
                     )
                 }
                 coverBadges.status?.let { status ->
@@ -9920,6 +9938,12 @@ private fun NovelCoverBadge(label: String, modifier: Modifier, containerColor: C
             overflow = TextOverflow.Ellipsis
         )
     }
+}
+
+private fun novelCardTopStartBadgeColor(book: NovelCard): Color = when (novelCardTopStartBadgeTone(book)) {
+    NovelCoverBadgeTone.NovelPiaAdult -> Color(0xFFDC2626)
+    NovelCoverBadgeTone.NovelPiaGeneral -> Color(0xFF2563EB)
+    NovelCoverBadgeTone.Upload -> Color(0xFF15803D)
 }
 
 @Composable
@@ -11394,7 +11418,7 @@ private fun CatalogFilterField(value: String, onValueChange: (String) -> Unit) {
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.readerBodyItems(
-    contents: List<ReaderChapterContent>,
+    layout: ReaderBodyLayout,
     options: ReaderUiOptions,
     highlightedText: String? = null,
     chapterCommentStates: Map<Long, ReaderChapterCommentState>,
@@ -11416,9 +11440,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readerBodyItems(
 ) {
     val textLayout = readerTextLayout(options)
     var imageOrdinal = 0
-    contents.forEachIndexed { chapterIndex, chapter ->
-        val blocks = readerBlocksForContent(chapter.content)
-        val visibleBlocks = readerBlocksForDisplay(blocks, options.removeDuplicateLines)
+    layout.chapters.forEachIndexed { chapterIndex, chapterLayout ->
+        val chapter = chapterLayout.chapter
+        val visibleBlocks = chapterLayout.visibleBlocks
         chapter.title?.takeIf(String::isNotBlank)?.let { title ->
             item(key = "reader-title-${chapter.chapterId}") {
                 ReaderArticleItem(
@@ -11571,7 +11595,14 @@ private fun ReaderArticleItem(
     bottomPadding: Dp = 0.dp,
     content: @Composable () -> Unit,
 ) {
-    Box(modifier = Modifier.fillMaxWidth()) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            // A previous LazyColumn item can retain a glyph descender just past its measured
+            // boundary. Clip at the item itself so a previous-page line cannot leak into the next
+            // page's title/header area during backward paging.
+            .clipToBounds(),
+    ) {
         Box(
             modifier = Modifier
                 .widthIn(max = contentWidthDp.dp)

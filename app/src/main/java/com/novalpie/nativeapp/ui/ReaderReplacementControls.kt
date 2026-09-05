@@ -71,9 +71,14 @@ internal fun ReaderReplacementSettingsControls(
 ) {
     val context = LocalContext.current
     var editingRule by remember { mutableStateOf<ReaderReplacementRule?>(null) }
+    var publishingToWebsite by remember { mutableStateOf(false) }
     var clipboardMessage by remember { mutableStateOf<String?>(null) }
 
-    fun createRule(source: String = "") {
+    fun createRule(
+        source: String = "",
+        publishToWebsite: Boolean = false,
+    ) {
+        publishingToWebsite = publishToWebsite
         editingRule = ReaderReplacementRule(
             id = "local-${UUID.randomUUID()}",
             novelId = state.novelId,
@@ -181,9 +186,9 @@ internal fun ReaderReplacementSettingsControls(
         if (state.source == ReaderReplacementRuleSource.Personal) {
             OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
-                onClick = {
-                    clipboardMessage = null
-                    createRule()
+                    onClick = {
+                        clipboardMessage = null
+                        createRule()
                 },
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null)
@@ -227,6 +232,22 @@ internal fun ReaderReplacementSettingsControls(
                 }
             }
         } else {
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    clipboardMessage = null
+                    createRule(publishToWebsite = true)
+                },
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text(readerReplacementCreateActionLabel(ReaderReplacementRuleSource.All))
+            }
+            Text(
+                "发布后会同步到网站，并出现在本书全部规则中；其他读者是否应用由各自设置决定。",
+                style = MaterialTheme.typography.labelSmall,
+                color = metaColor,
+            )
             when (val shared = state.sharedRules) {
                 LoadResult.Idle, LoadResult.Loading -> Text("正在加载公共规则…", style = MaterialTheme.typography.bodySmall, color = metaColor)
                 is LoadResult.Error -> Text(shared.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
@@ -266,10 +287,17 @@ internal fun ReaderReplacementSettingsControls(
         ReaderReplacementRuleEditor(
             initial = rule,
             currentChapterOrder = currentChapterOrder,
-            onDismiss = { editingRule = null },
-            onSave = { saved ->
-                onSaveRule(saved)
+            publishToWebsite = publishingToWebsite,
+            onDismiss = {
                 editingRule = null
+                publishingToWebsite = false
+            },
+            onSave = { saved ->
+                onSaveRule(
+                    if (publishingToWebsite) readerReplacementWebsitePublicationRule(saved) else saved,
+                )
+                editingRule = null
+                publishingToWebsite = false
             },
         )
     }
@@ -324,6 +352,7 @@ private fun ReaderReplacementRuleRow(
 private fun ReaderReplacementRuleEditor(
     initial: ReaderReplacementRule,
     currentChapterOrder: Int?,
+    publishToWebsite: Boolean,
     onDismiss: () -> Unit,
     onSave: (ReaderReplacementRule) -> Unit,
 ) {
@@ -349,9 +378,24 @@ private fun ReaderReplacementRuleEditor(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial.source.isBlank()) "添加替换规则" else "编辑替换规则") },
+        title = {
+            Text(
+                when {
+                    publishToWebsite -> "发布公共替换规则"
+                    initial.source.isBlank() -> "添加替换规则"
+                    else -> "编辑替换规则"
+                },
+            )
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (publishToWebsite) {
+                    Text(
+                        "将同步到网站并进入本书全部规则。公共发布仅支持全书正文规则，替换后不能为空。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 OutlinedTextField(
                     value = source,
                     onValueChange = { source = it; validationMessage = null },
@@ -402,59 +446,61 @@ private fun ReaderReplacementRuleEditor(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Text("作用位置", style = MaterialTheme.typography.labelLarge)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ReaderReplacementTarget.entries.forEach { option ->
-                        FilterChip(
-                            selected = target == option,
-                            onClick = { target = option },
-                            label = { Text(readerReplacementTargetLabel(option)) },
-                        )
-                    }
-                }
-                Text("作用范围", style = MaterialTheme.typography.labelLarge)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    val availableScopes = buildList {
-                        add(ReaderReplacementScope.WholeBook to "全书")
-                        currentChapterOrder?.let { order ->
-                            add(ReaderReplacementScope.CurrentChapter(order) to "当前章")
-                            add(ReaderReplacementScope.ChapterRange(order, order) to "章节范围")
+                if (!publishToWebsite) {
+                    Text("作用位置", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        ReaderReplacementTarget.entries.forEach { option ->
+                            FilterChip(
+                                selected = target == option,
+                                onClick = { target = option },
+                                label = { Text(readerReplacementTargetLabel(option)) },
+                            )
                         }
                     }
-                    availableScopes.forEach { (candidate, label) ->
-                        FilterChip(
-                            selected = scope::class == candidate::class,
-                            onClick = { scope = candidate },
-                            label = { Text(label) },
+                    Text("作用范围", style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val availableScopes = buildList {
+                            add(ReaderReplacementScope.WholeBook to "全书")
+                            currentChapterOrder?.let { order ->
+                                add(ReaderReplacementScope.CurrentChapter(order) to "当前章")
+                                add(ReaderReplacementScope.ChapterRange(order, order) to "章节范围")
+                            }
+                        }
+                        availableScopes.forEach { (candidate, label) ->
+                            FilterChip(
+                                selected = scope::class == candidate::class,
+                                onClick = { scope = candidate },
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+                    if (currentChapterOrder == null) {
+                        Text(
+                            "正在同步章节目录，当前章和章节范围暂不可选",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                }
-                if (currentChapterOrder == null) {
-                    Text(
-                        "正在同步章节目录，当前章和章节范围暂不可选",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (scope is ReaderReplacementScope.ChapterRange) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedTextField(
-                            value = rangeStart,
-                            onValueChange = { rangeStart = it; validationMessage = null },
-                            label = { Text("起始章") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                        )
-                        OutlinedTextField(
-                            value = rangeEnd,
-                            onValueChange = { rangeEnd = it; validationMessage = null },
-                            label = { Text("结束章") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                        )
+                    if (scope is ReaderReplacementScope.ChapterRange) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedTextField(
+                                value = rangeStart,
+                                onValueChange = { rangeStart = it; validationMessage = null },
+                                label = { Text("起始章") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                            )
+                            OutlinedTextField(
+                                value = rangeEnd,
+                                onValueChange = { rangeEnd = it; validationMessage = null },
+                                label = { Text("结束章") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                            )
+                        }
                     }
                 }
                 validationMessage?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall) }
@@ -462,22 +508,35 @@ private fun ReaderReplacementRuleEditor(
         },
         confirmButton = {
             Button(onClick = {
-                val resolvedScope = readerReplacementScopeForEditor(scope, rangeStart, rangeEnd)
+                if (publishToWebsite && replacement.isBlank()) {
+                    validationMessage = "网站公共规则的替换后不能为空"
+                    return@Button
+                }
+                val resolvedScope = if (publishToWebsite) {
+                    ReaderReplacementScope.WholeBook
+                } else {
+                    readerReplacementScopeForEditor(scope, rangeStart, rangeEnd)
+                }
                 if (resolvedScope == null) {
                     validationMessage = "请输入有效的起始章和结束章"
                 } else {
-                    val candidate = initial.copy(
+                    val rawCandidate = initial.copy(
                         source = source.trim(),
                         replacement = replacement,
                         isRegex = isRegex,
                         regexFlags = if (isRegex) regexFlags else emptySet(),
-                        target = target,
+                        target = if (publishToWebsite) ReaderReplacementTarget.Content else target,
                         scope = resolvedScope,
                     )
+                    val candidate = if (publishToWebsite) {
+                        readerReplacementWebsitePublicationRule(rawCandidate)
+                    } else {
+                        rawCandidate
+                    }
                     val validation = validateReaderReplacementRule(candidate)
                     if (validation.isValid) onSave(candidate) else validationMessage = validation.message
                 }
-            }) { Text("保存") }
+            }) { Text(if (publishToWebsite) "发布" else "保存") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )

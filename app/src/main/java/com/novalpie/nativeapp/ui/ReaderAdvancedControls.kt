@@ -6,31 +6,15 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.NavigateBefore
-import androidx.compose.material.icons.automirrored.filled.NavigateNext
-import androidx.compose.material.icons.automirrored.filled.MenuBook
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.novalpie.nativeapp.data.ReaderSettingsStore
 import com.novalpie.nativeapp.data.ReaderTtsSettings
 import com.novalpie.nativeapp.data.ReaderTtsSettingsStore
-import com.novalpie.nativeapp.model.FavoriteStatus
-import com.novalpie.nativeapp.model.LoadResult
 
 private val readerTtsLanguageChoices = listOf(
     "zh-CN" to "中文（简体）",
@@ -123,68 +107,4 @@ internal fun ReaderTtsSettingsControls(
             onChange { it.copy(enableHighlight = !it.enableHighlight) }
         }
     }
-}
-
-@Composable
-internal fun ReaderRadialMenu(
-    state: ReaderState,
-    chapters: List<com.novalpie.nativeapp.model.Chapter>,
-    favoriteStatus: LoadResult<FavoriteStatus>,
-    ttsState: ReaderTtsState,
-    showTts: Boolean,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-    onCatalog: () -> Unit,
-    onTts: () -> Unit,
-    onFavorite: () -> Unit,
-    onDismiss: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val favorite = (favoriteStatus as? LoadResult.Success)?.value?.isFavorited == true
-    Surface(
-        modifier = modifier.padding(20.dp),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
-        tonalElevation = 8.dp,
-        shadowElevation = 12.dp,
-        color = MaterialTheme.colorScheme.surface,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text("阅读工具", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text("再次点击正文关闭", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ReaderRadialAction(Icons.AutoMirrored.Filled.NavigateBefore, "上一章", onPrevious)
-                ReaderRadialAction(Icons.AutoMirrored.Filled.MenuBook, "目录", onCatalog)
-                ReaderRadialAction(Icons.AutoMirrored.Filled.NavigateNext, "下一章", onNext)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (showTts) {
-                    ReaderRadialAction(
-                        Icons.Filled.RecordVoiceOver,
-                        readerTtsPrimaryActionLabel(ttsState, "听书"),
-                        onTts,
-                    )
-                }
-                ReaderRadialAction(if (favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, if (favorite) "已收藏" else "收藏", onFavorite)
-                FilterChip(selected = false, onClick = onDismiss, label = { Text("关闭") })
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReaderRadialAction(icon: ImageVector, label: String, onClick: () -> Unit) {
-    FilterChip(
-        selected = false,
-        onClick = onClick,
-        label = { Text(label) },
-        leadingIcon = { Icon(icon, contentDescription = null) },
-        colors = FilterChipDefaults.filterChipColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
-    )
 }

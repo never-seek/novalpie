@@ -7685,6 +7685,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 if (!isFreshRequestSerial(requestSerial, homeRequestSerial)) return@launch
                 val page = result.getOrNull()
                 if (page != null) {
+                    reconcileRemoteReaderProgress(page.items)
                     // ReaderProgressStore gained the completed-catalogue baseline after earlier
                     // versions had already saved local chapter positions.  Repair only legacy
                     // entries that both the source shelf and the local reader prove completed,
@@ -7743,6 +7744,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 val result = history.await()
                 if (!isFreshRequestSerial(requestSerial, homeRequestSerial)) return@launch
                 val page = result.getOrNull()
+                page?.let { reconcileRemoteReaderProgress(it.items) }
                 homeState = HomeState(
                     user = tokenProfile?.let { LoadResult.Success(it) } ?: LoadResult.Loading,
                     groups = LoadResult.Loading,
@@ -7800,6 +7802,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             if (!isFreshRequestSerial(requestSerial, homeRequestSerial)) return@launch
             homeState = result.fold(
                 onSuccess = { nextPageResult ->
+                    reconcileRemoteReaderProgress(nextPageResult.items)
                     if (options.tab == FavoritesContentTab.Favorites) {
                         val currentEntries = (homeState.favoriteEntries as? LoadResult.Success)?.value.orEmpty()
                         val merged = favoriteEntriesWithLocalReaderProgress(
@@ -9456,6 +9459,31 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             favorites = LoadResult.Success(updatedEntries.map(FavoriteEntry::book)),
             favoriteEntries = LoadResult.Success(updatedEntries),
         )
+    }
+
+    /**
+     * Shelf/history responses contain the chapter saved by the website. Apply only a strictly
+     * newer source chapter to its per-book native record; this never writes a website progress
+     * request and never promotes a remote book over existing native recent-reading entries.
+     */
+    private fun reconcileRemoteReaderProgress(entries: List<FavoriteEntry>) {
+        var changed = false
+        entries.forEach { entry ->
+            val existing = readerProgressStore.load(entry.book.id)
+            val merged = readerProgressAfterRemoteFavoriteProgress(existing, entry)
+            if (merged != null && merged != existing) {
+                changed = readerProgressStore.saveRemoteProgress(merged) || changed
+            }
+        }
+        if (!changed) return
+        readerProgress = readerProgressStore.load()
+        recentReaderProgresses = readerProgressStore.loadRecent(limit = READER_PROGRESS_HISTORY_LIMIT)
+        updateLoadedCollectionProgress()
+        if (bookDetailState.bookId > 0L) {
+            bookDetailState = bookDetailState.copy(
+                readerProgress = readerProgressStore.load(bookDetailState.bookId),
+            )
+        }
     }
 
     /** Repairs older local progress records that predate persisted book titles. */

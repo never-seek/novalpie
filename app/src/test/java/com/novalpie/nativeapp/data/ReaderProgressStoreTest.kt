@@ -3,8 +3,10 @@ package com.novalpie.nativeapp.data
 import androidx.test.core.app.ApplicationProvider
 import com.novalpie.nativeapp.model.FavoriteEntry
 import com.novalpie.nativeapp.model.NovelCard
+import com.novalpie.nativeapp.model.ReaderProgress
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -64,6 +66,26 @@ class ReaderProgressStoreTest {
         assertEquals(listOf(101L, 202L), recent.map { it.bookId })
         assertEquals(1002L, recent.first().chapterId)
         assertEquals("A-2", recent.first().chapterTitle)
+    }
+
+    @Test
+    fun remoteProgressAddsAnUnseenBookWithoutPromotingItOverNativeRecentReading() {
+        store.save(101, 1001, "A-1")
+        store.save(202, 2002, "B-2")
+
+        assertTrue(
+            store.saveRemoteProgress(
+                ReaderProgress(
+                    bookId = 303,
+                    chapterId = 3003,
+                    chapterTitle = "C-3",
+                    chapterNumber = 3,
+                ),
+            ),
+        )
+
+        assertEquals(listOf(202L, 101L, 303L), store.loadRecent(limit = 5).map { it.bookId })
+        assertEquals(3003L, store.load(bookId = 303)?.chapterId)
     }
 
     @Test

@@ -91,6 +91,21 @@ internal fun readerPageTrailingMaskStartOffset(
         ?.offset
 }
 
+/**
+ * The page-mode content padding above body items is reserved for the title rail. Individual
+ * reader blocks already clip their glyph overflow, so this guard must never extend into the first
+ * body line on a narrow phone viewport.
+ */
+internal fun readerPageLeadingOverflowGuardHeightPx(
+    pageTurnEnabled: Boolean,
+    viewportStartOffset: Int,
+    @Suppress("UNUSED_PARAMETER") glyphOverflowGuardPx: Int = 0,
+): Int = if (pageTurnEnabled) {
+    (-viewportStartOffset).coerceAtLeast(0)
+} else {
+    0
+}
+
 /** Backward turns reuse the exact page starts seen during forward turns when available. */
 internal fun readerPageBackwardTargetIndex(
     pageStartHistory: List<Int>,
@@ -120,15 +135,22 @@ internal fun readerPageScrollTargetIndex(
     return if (direction > 0) {
         if (current >= totalItemCount - 1) return null
         val laterItems = visible.filter { it.index > current }
+        val currentItem = visible.firstOrNull { it.index == current }
+        if (laterItems.isEmpty()) {
+            val currentPageFullyFits = currentItem != null &&
+                currentItem.offset >= viewportStartOffset &&
+                currentItem.offset + currentItem.size <= viewportEndOffset
+            return (current + 1).takeIf { currentPageFullyFits && it < totalItemCount }
+        }
         // A reader page must finish before the first block that will not entirely fit.  The
         // previous 85%-viewport target avoided mid-block starts, but it also repeated fully
         // visible paragraphs on the next page.  Start the next page with the first overflowing
         // item instead; if all measured items fit, LazyColumn can still position the next index.
         laterItems.firstOrNull { item -> item.offset + item.size > viewportEndOffset }?.index
-            ?: laterItems.lastOrNull()
-                ?.index
-                ?.plus(1)
-                ?.takeIf { it < totalItemCount }
+            // Content padding after the final item is physical scroll room, not another semantic
+            // reader item. Land on the last real item first; the following turn can then open the
+            // next chapter instead of producing a no-op while that padding is still scrollable.
+            ?: laterItems.lastOrNull()?.index
     } else {
         if (current <= 0) return null
         val visibleWindowSize = visible.count { it.index >= current }.coerceAtLeast(2)
@@ -139,10 +161,10 @@ internal fun readerPageScrollTargetIndex(
 /** Fullscreen hides bars normally, but their swipe-revealed state must still inset the article. */
 internal fun readerFullscreenArticleUsesSystemBarInsets(isFullscreen: Boolean): Boolean = isFullscreen
 
-/** The reader registers a single selectable article so a drag can continue across paragraphs. */
-internal enum class ReaderSelectionScope { Article }
+/** Reader prose deliberately has no selection action mode or copy affordance. */
+internal enum class ReaderSelectionScope { Disabled }
 
-internal fun readerSelectionScope(): ReaderSelectionScope = ReaderSelectionScope.Article
+internal fun readerSelectionScope(): ReaderSelectionScope = ReaderSelectionScope.Disabled
 
 /** The website starts every reader chapter with its discussion panel collapsed. */
 internal fun readerChapterCommentsDefaultCollapsed(
@@ -358,8 +380,11 @@ internal fun readerSidePanelMaxWidthDp(): Float = 440f
  * A loaded chapter is immersive by default. Loading and error states keep navigation visible so
  * the reader never traps someone behind an empty canvas.
  */
-internal fun readerChromeVisible(hasReadableBody: Boolean, controlsRequested: Boolean): Boolean =
-    controlsRequested || !hasReadableBody
+internal fun readerChromeVisible(
+    hasReadableBody: Boolean,
+    controlsRequested: Boolean,
+    hasRenderedReaderBody: Boolean = false,
+): Boolean = controlsRequested || (!hasReadableBody && !hasRenderedReaderBody)
 
 /** The article only reserves space for the overlaid top rail while that rail is visible. */
 internal fun readerContentTopPaddingDp(
@@ -638,6 +663,128 @@ internal fun String.readerReplaceModeLabel(): String =
 
 private val READER_CATALOG_MONTH = Regex("""\d{4}[-/](\d{1,2})[-/]\d{1,2}""")
 
+/**
+ * Reader prose is a continuously animated, touch-driven surface. Ask Android for the highest
+ * display rate available on this device; the OS remains free to cap it for battery or thermal
+ * policy. A zero result intentionally leaves displays with no advertised modes untouched.
+ */
+internal fun readerPreferredRefreshRate(supportedRates: Iterable<Float>): Float =
+    supportedRates
+        .filter { rate -> rate.isFinite() && rate > 0f }
+        .maxOrNull()
+        ?: 0f
+
+/** A stable Reader viewport sample to persist after touch/scroll work has settled. */
+internal data class ReaderViewportPersistencePosition(
+    val globalItemIndex: Int,
+    val itemScrollOffsetPx: Int,
+)
+
+/**
+ * Reading progress remains accurate at paragraph level, but disk and root-state writes must not
+ * compete with every drag frame. The same 24px restore bucket is emitted once scrolling ends.
+ */
+internal fun readerViewportPersistencePosition(
+    isScrollInProgress: Boolean,
+    globalItemIndex: Int,
+    itemScrollOffsetPx: Int,
+): ReaderViewportPersistencePosition? {
+    if (isScrollInProgress || globalItemIndex < 0) return null
+    return ReaderViewportPersistencePosition(
+        globalItemIndex = globalItemIndex,
+        itemScrollOffsetPx = (itemScrollOffsetPx.coerceAtLeast(0) / 24) * 24,
+    )
+}
+
+/**
+ * Immutable reader-body structure shared by LazyColumn rendering, viewport restore and scroll
+ * observation. Parsing chapter HTML is deliberately performed once when content/options change,
+ * never inside the hot scroll observer.
+ */
+internal data class ReaderBodyLayout(
+    val chapters: List<ReaderBodyLayoutChapter>,
+    val itemLocations: List<ReaderBodyItemLocation>,
+)
+
+internal data class ReaderBodyLayoutChapter(
+    val chapter: com.novalpie.nativeapp.model.ReaderChapterContent,
+    val visibleBlocks: List<ReaderContentBlock>,
+)
+
+internal data class ReaderBodyItemLocation(
+    val chapterId: Long,
+    val itemIndexWithinChapter: Int,
+)
+
+/** Builds the exact LazyColumn item order for the current rendered reader body. */
+internal fun readerBodyLayoutForContents(
+    contents: List<com.novalpie.nativeapp.model.ReaderChapterContent>,
+    options: ReaderUiOptions,
+): ReaderBodyLayout {
+    val chapters = contents.map { chapter ->
+        ReaderBodyLayoutChapter(
+            chapter = chapter,
+            visibleBlocks = readerBlocksForDisplay(
+                readerBlocksForContent(chapter.content),
+                options.removeDuplicateLines,
+            ),
+        )
+    }
+    val itemLocations = buildList {
+        chapters.forEach { chapterLayout ->
+            val chapter = chapterLayout.chapter
+            var itemIndexWithinChapter = 0
+            fun addBodyItem() {
+                add(
+                    ReaderBodyItemLocation(
+                        chapterId = chapter.chapterId,
+                        itemIndexWithinChapter = itemIndexWithinChapter,
+                    ),
+                )
+                itemIndexWithinChapter += 1
+            }
+
+            if (!chapter.title.isNullOrBlank()) addBodyItem()
+            chapterLayout.visibleBlocks.forEach { block ->
+                if (block is ReaderContentBlock.Text || (block is ReaderContentBlock.Image && options.showImages)) {
+                    addBodyItem()
+                }
+            }
+            addBodyItem() // chapter finish marker
+            if (options.showComments) addBodyItem()
+        }
+    }
+    return ReaderBodyLayout(chapters = chapters, itemLocations = itemLocations)
+}
+
+/** O(1) global LazyColumn index to the persisted chapter-local viewport anchor. */
+internal fun readerViewportAnchorForBodyItem(
+    layout: ReaderBodyLayout,
+    globalItemIndex: Int,
+    itemScrollOffsetPx: Int,
+): com.novalpie.nativeapp.model.ReaderViewportAnchor? =
+    layout.itemLocations.getOrNull(globalItemIndex)?.let { location ->
+        com.novalpie.nativeapp.model.ReaderViewportAnchor(
+            chapterId = location.chapterId,
+            itemIndexWithinChapter = location.itemIndexWithinChapter,
+            itemScrollOffsetPx = itemScrollOffsetPx.coerceAtLeast(0),
+        )
+    }
+
+/** Restore lookup runs only on reader entry, but still reuses the already parsed body layout. */
+internal fun readerBodyItemIndexForViewportAnchor(
+    layout: ReaderBodyLayout,
+    anchor: com.novalpie.nativeapp.model.ReaderViewportAnchor,
+): Int? = layout.itemLocations.indexOfFirst { location ->
+    location.chapterId == anchor.chapterId && location.itemIndexWithinChapter == anchor.itemIndexWithinChapter
+}.takeIf { it >= 0 }
+
+/** Provides the current reader footer/progress chapter without inspecting LazyColumn layout info. */
+internal fun readerChapterIdForBodyItem(
+    layout: ReaderBodyLayout,
+    globalItemIndex: Int,
+): Long? = layout.itemLocations.getOrNull(globalItemIndex)?.chapterId
+
 /** Returns the LazyColumn item containing a TTS segment, using the same item ordering as the body. */
 internal fun readerBodyItemIndexForText(
     contents: List<com.novalpie.nativeapp.model.ReaderChapterContent>,
@@ -671,34 +818,10 @@ internal fun readerBodyItemIndexForViewportAnchor(
     contents: List<com.novalpie.nativeapp.model.ReaderChapterContent>,
     options: ReaderUiOptions,
     anchor: com.novalpie.nativeapp.model.ReaderViewportAnchor,
-): Int? {
-    var globalIndex = 0
-    contents.forEach { chapter ->
-        var chapterItemIndex = 0
-        fun consumeItem(): Int? {
-            val result = if (
-                chapter.chapterId == anchor.chapterId &&
-                chapterItemIndex == anchor.itemIndexWithinChapter
-            ) {
-                globalIndex
-            } else {
-                null
-            }
-            chapterItemIndex += 1
-            globalIndex += 1
-            return result
-        }
-        if (!chapter.title.isNullOrBlank()) consumeItem()?.let { return it }
-        readerBlocksForDisplay(readerBlocksForContent(chapter.content), options.removeDuplicateLines).forEach { block ->
-            if (block is ReaderContentBlock.Text || (block is ReaderContentBlock.Image && options.showImages)) {
-                consumeItem()?.let { return it }
-            }
-        }
-        consumeItem()?.let { return it } // chapter-finish
-        if (options.showComments) consumeItem()?.let { return it }
-    }
-    return null
-}
+): Int? = readerBodyItemIndexForViewportAnchor(
+    layout = readerBodyLayoutForContents(contents, options),
+    anchor = anchor,
+)
 
 /** Records a stable chapter-relative item instead of a transient global LazyColumn index. */
 internal fun readerViewportAnchorForBodyItem(
@@ -706,36 +829,11 @@ internal fun readerViewportAnchorForBodyItem(
     options: ReaderUiOptions,
     globalItemIndex: Int,
     itemScrollOffsetPx: Int,
-): com.novalpie.nativeapp.model.ReaderViewportAnchor? {
-    if (globalItemIndex < 0) return null
-    var globalIndex = 0
-    contents.forEach { chapter ->
-        var chapterItemIndex = 0
-        fun consumeItem(): com.novalpie.nativeapp.model.ReaderViewportAnchor? {
-            val result = if (globalIndex == globalItemIndex) {
-                com.novalpie.nativeapp.model.ReaderViewportAnchor(
-                    chapterId = chapter.chapterId,
-                    itemIndexWithinChapter = chapterItemIndex,
-                    itemScrollOffsetPx = itemScrollOffsetPx.coerceAtLeast(0),
-                )
-            } else {
-                null
-            }
-            chapterItemIndex += 1
-            globalIndex += 1
-            return result
-        }
-        if (!chapter.title.isNullOrBlank()) consumeItem()?.let { return it }
-        readerBlocksForDisplay(readerBlocksForContent(chapter.content), options.removeDuplicateLines).forEach { block ->
-            if (block is ReaderContentBlock.Text || (block is ReaderContentBlock.Image && options.showImages)) {
-                consumeItem()?.let { return it }
-            }
-        }
-        consumeItem()?.let { return it }
-        if (options.showComments) consumeItem()?.let { return it }
-    }
-    return null
-}
+): com.novalpie.nativeapp.model.ReaderViewportAnchor? = readerViewportAnchorForBodyItem(
+    layout = readerBodyLayoutForContents(contents, options),
+    globalItemIndex = globalItemIndex,
+    itemScrollOffsetPx = itemScrollOffsetPx,
+)
 
 /**
  * Start the safe read-only append while a few article items are still visible. Every chapter owns
@@ -799,6 +897,65 @@ internal enum class ReaderPageBoundaryTarget {
     NextChapter,
 }
 
+/**
+ * One physical reader page-turn may either move inside the current chapter or replace the chapter
+ * route, never both.  In particular, a short final page must remain visible until the reader
+ * explicitly turns once more.
+ */
+internal sealed interface ReaderPageTurnPlan {
+    data class ScrollWithinChapter(val targetIndex: Int) : ReaderPageTurnPlan
+    data class OpenAdjacentChapter(val target: ReaderPageBoundaryTarget) : ReaderPageTurnPlan
+    object NoOp : ReaderPageTurnPlan
+}
+
+/** Extra bottom content space lets the final real reader item top-align without a fake blank item. */
+internal fun readerPageTerminalPaddingRequired(
+    pageTurnEnabled: Boolean,
+    hasReadableBody: Boolean,
+): Boolean = pageTurnEnabled && hasReadableBody
+
+/** Bottom padding must at least match one viewport to make the final real item top-alignable. */
+internal fun readerPageTerminalPaddingHeightPx(
+    viewportStartOffset: Int,
+    viewportEndOffset: Int,
+): Int = (viewportEndOffset - viewportStartOffset).coerceAtLeast(1)
+
+/**
+ * Prefer a measured in-chapter item target while the current page can still advance. A settled
+ * physical edge wins over a stale LazyColumn target, so the next input can cross chapters instead
+ * of repeatedly attempting an already-rendered terminal page.
+ */
+internal fun readerPageTurnPlan(
+    direction: Int,
+    pageTargetIndex: Int?,
+    reachedBoundaryBeforeTurn: Boolean,
+    hasPrevious: Boolean,
+    hasNext: Boolean,
+    atLastSemanticItem: Boolean = false,
+): ReaderPageTurnPlan {
+    if (direction > 0 && atLastSemanticItem) {
+        return if (hasNext) {
+            ReaderPageTurnPlan.OpenAdjacentChapter(ReaderPageBoundaryTarget.NextChapter)
+        } else {
+            ReaderPageTurnPlan.NoOp
+        }
+    }
+    if (!reachedBoundaryBeforeTurn) {
+        pageTargetIndex?.let { return ReaderPageTurnPlan.ScrollWithinChapter(it) }
+    }
+    val boundaryTarget = readerPageBoundaryTarget(
+        direction = direction,
+        reachedBoundary = reachedBoundaryBeforeTurn,
+        hasPrevious = hasPrevious,
+        hasNext = hasNext,
+    )
+    return if (boundaryTarget == ReaderPageBoundaryTarget.None) {
+        ReaderPageTurnPlan.NoOp
+    } else {
+        ReaderPageTurnPlan.OpenAdjacentChapter(boundaryTarget)
+    }
+}
+
 /** The concrete adjacent chapter selected from the reader's currently visible route. */
 internal data class ReaderAdjacentBoundaryRequest(
     val sourceChapterId: Long,
@@ -844,6 +1001,14 @@ internal fun readerChapterEntryScrollIndex(
     ReaderChapterEntryPosition.Start -> 0
     ReaderChapterEntryPosition.End -> (itemCount - 1).coerceAtLeast(0)
 }
+
+/**
+ * `scrollToItem(last)` is clamped to the physical tail of a LazyColumn. That can leave the prior
+ * paragraph partly above the viewport. Re-align that intersecting paragraph to the top so an
+ * automatic previous-chapter page never starts on a clipped line.
+ */
+/** Every reader body LazyColumn item clips child glyph overflow to its own page boundary. */
+internal fun readerArticleItemClipsOverflow(): Boolean = true
 
 internal fun readerPageBoundaryTarget(
     direction: Int,
@@ -906,12 +1071,8 @@ internal fun readerContinuousScrollCanRequestNext(
         !nextChapterWaitingForCatalog &&
         !nextChapterExhausted
 
-/**
- * A normal center tap is the reader's default route to its toolbars.  Radial controls remain an
- * explicit opt-in for people who prefer them; making it the default previously turned a simple
- * reader action into a fragile double-tap that could be confused with a scroll ending.
- */
-internal fun readerUsesRadialMenu(showRadialMenu: Boolean): Boolean = showRadialMenu
+/** Legacy preferences must never restore the removed radial-card gesture. */
+internal fun readerUsesRadialMenu(showRadialMenu: Boolean): Boolean = false
 
 /**
  * The sentinel is replaced whenever the continuous window grows. A static key can remain marked

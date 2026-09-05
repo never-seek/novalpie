@@ -16,6 +16,7 @@ import com.novalpie.nativeapp.data.NetworkConfigStore
 import com.novalpie.nativeapp.data.configureNovalPieImageLoader
 import com.novalpie.nativeapp.ui.NovalPieApp
 import com.novalpie.nativeapp.ui.ReaderVolumeKeyAction
+import com.novalpie.nativeapp.ui.readerPreferredRefreshRate
 import com.novalpie.nativeapp.ui.readerVolumeKeyAction
 
 /**
@@ -38,6 +39,38 @@ class MainActivity : ComponentActivity() {
     }
 
     private var readerVolumeKeyHandler: ((Int) -> Unit)? = null
+    private var readerOriginalPreferredRefreshRate: Float? = null
+
+    /**
+     * Requests the highest rate the active physical display advertises while the immersive reader
+     * is on screen. Android can still choose a lower rate for battery saver, thermal limits or a
+     * device policy; leaving the reader restores the window's prior system preference.
+     */
+    @Suppress("DEPRECATION")
+    internal fun setReaderHighRefreshRateEnabled(enabled: Boolean) {
+        val params = window.attributes
+        if (!enabled) {
+            val original = readerOriginalPreferredRefreshRate ?: return
+            if (params.preferredRefreshRate != original) {
+                params.preferredRefreshRate = original
+                window.attributes = params
+            }
+            readerOriginalPreferredRefreshRate = null
+            return
+        }
+
+        val targetRate = readerPreferredRefreshRate(
+            window.decorView.display?.supportedModes?.map { mode -> mode.refreshRate }.orEmpty(),
+        )
+        if (targetRate <= 0f) return
+        if (readerOriginalPreferredRefreshRate == null) {
+            readerOriginalPreferredRefreshRate = params.preferredRefreshRate
+        }
+        if (params.preferredRefreshRate != targetRate) {
+            params.preferredRefreshRate = targetRate
+            window.attributes = params
+        }
+    }
 
     /** Installs a short-lived page-turn callback owned by the currently composed reader route. */
     internal fun setReaderVolumeKeyHandler(handler: ((Int) -> Unit)?) {

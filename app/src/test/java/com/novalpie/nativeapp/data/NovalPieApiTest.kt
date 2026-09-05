@@ -675,17 +675,51 @@ class NovalPieApiTest {
         val feed = api.userContentActivityFeed(userId = 100000, limit = 20)
         val activities = feed.activities
 
-        assertEquals(listOf(30L, 21L, 20L, 10L), activities.map { it.id })
-        assertEquals(listOf("novel_comment", "post_comment", "post_comment", "post"), activities.map { it.type })
+        assertEquals(listOf(30L, 20L, 10L), activities.map { it.id })
+        assertEquals(listOf("novel_comment", "post_comment", "post"), activities.map { it.type })
         assertEquals("Review book", activities.first().title)
         assertEquals(354491L, activities.first().bookId)
         assertEquals("Forum thread", activities[1].title)
         assertEquals(1422L, activities[1].postId)
-        assertEquals("Nested reply", activities[1].content)
+        assertEquals("Forum reply", activities[1].content)
         assertEquals("http://${server.hostName}:${server.port}/covers/review.jpg", activities.first().coverUrl)
         assertEquals(null, feed.postCount)
         assertEquals(null, feed.forumCommentCount)
         assertEquals(null, feed.bookReviewCount)
+    }
+
+    @Test
+    fun userContentActivitiesExcludeOtherPeopleRepliesNestedUnderTheCurrentUsersComment() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl?.encodedPath) {
+                "/api/posts" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody("""{"posts":[]}""")
+                "/api/posts/comments" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody(
+                        """
+                        {"comments":[{
+                          "id":20,"author_id":100000,"post_id":1422,"post":{"title":"Forum thread"},
+                          "content":"My root reply","created_at":"2026-08-12T13:00:00Z",
+                          "replies":[
+                            {"id":21,"author_id":100001,"content":"Other persons reply","created_at":"2026-08-12T14:00:00Z"},
+                            {"id":22,"author_id":100000,"content":"My nested reply","created_at":"2026-08-12T15:00:00Z"}
+                          ]
+                        }]}
+                        """.trimIndent(),
+                    )
+                "/api/comments/book-reviews" -> MockResponse()
+                    .setHeader("content-type", "application/json")
+                    .setBody("""{"posts":[]}""")
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+
+        val activities = api.userContentActivityFeed(userId = 100000, limit = 20).activities
+
+        assertEquals(listOf(22L, 20L), activities.map { it.id })
+        assertFalse(activities.any { it.content == "Other persons reply" })
     }
 
     @Test
@@ -3304,6 +3338,39 @@ class NovalPieApiTest {
         assertTrue(detail.post.pinned)
         assertTrue(detail.post.featured)
         assertEquals("/api/posts/91", server.takeRequest().requestUrl?.encodedPath)
+    }
+
+    @Test
+    fun forumPostDetailUsesReactionBreakdownInsteadOfTheAggregateReactionCount() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setHeader("content-type", "application/json")
+                .setBody(
+                    """
+                    {
+                      "data": {
+                        "post": {
+                          "id": 1742,
+                          "type": "discussion",
+                          "title": "Reaction breakdown",
+                          "like_count": 16,
+                          "helpful_count": 13,
+                          "not_helpful_count": 1,
+                          "funny_count": 1,
+                          "award_count": 1
+                        }
+                      }
+                    }
+                    """.trimIndent(),
+                ),
+        )
+
+        val detail = api.forumPostDetail(1742)
+
+        assertEquals(13, detail.likeCount)
+        assertEquals(1, detail.dislikeCount)
+        assertEquals(1, detail.reactionCount)
+        assertEquals(1, detail.awardPoints)
     }
 
     @Test

@@ -21,6 +21,13 @@ internal data class NovelCardCoverBadges(
     val status: String?
 )
 
+/** Search-card top-start badge semantics: source takes precedence over a work's age rating. */
+internal enum class NovelCoverBadgeTone {
+    NovelPiaAdult,
+    NovelPiaGeneral,
+    Upload,
+}
+
 internal enum class NovelCardMetricKind {
     Favorite,
     Read,
@@ -83,6 +90,13 @@ internal fun novelCardCoverBadges(book: NovelCard): NovelCardCoverBadges {
         category = category,
         status = novelStatusBadge(book.status) ?: tags.firstNotNullOfOrNull(::sourceStatusLabel)
     )
+}
+
+/** Uploads always use the upload tone; NovelPia then distinguishes adult and general works. */
+internal fun novelCardTopStartBadgeTone(book: NovelCard): NovelCoverBadgeTone = when {
+    book.platform.equals("upload", ignoreCase = true) -> NovelCoverBadgeTone.Upload
+    book.isAdult == true -> NovelCoverBadgeTone.NovelPiaAdult
+    else -> NovelCoverBadgeTone.NovelPiaGeneral
 }
 
 /** Status remains visible in the cover badge, so the content tag rail only carries actual topics. */
