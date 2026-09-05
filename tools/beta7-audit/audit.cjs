@@ -1,8 +1,7 @@
 'use strict';
-const ts = require('typescript');
 
 const ORIGIN = 'https://novalpie.cc';
-const API_PREFIX = /^\/(?:api\/)?(?:v\d+\/)?(?:admin|sessions|users|posts|comments|novels|chapters|reader|favorites|tags|messages|workspace|shop|downloads|translations|recommendations|reports|verification-codes|password-resets|political-exam|health|uploads)(?:\/|\?|$)/;
+const API_PREFIX = /^\/(?:api\/)?(?:v\d+\/)?(?:admin|sessions|users|posts|comments|novels|chapters|reader|favorites|search|tags|messages|workspace|shop|downloads|translations|recommendations|reports|verification-codes|password-resets|political-exam|health|uploads)(?:\/|\?|$)/;
 
 function assertPublicReadUrl(value, method = 'GET') {
   const url = new URL(value);
@@ -122,6 +121,7 @@ function classifyFeedbackCandidate(text) {
 }
 
 function analyzeChunk(url, source, {verifiedBases={}}={}) {
+  const ts = require('typescript');
   const file = ts.createSourceFile(url, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const dependencies = new Set();
   const routes = [];
@@ -169,17 +169,17 @@ function analyzeChunk(url, source, {verifiedBases={}}={}) {
   };
   const valueOf = (node, key) => { const p = props(node).get(key); return p?.initializer ?? (p && ts.isShorthandPropertyAssignment(p) ? p.name : null); };
   const literal = node => ts.isStringLiteralLike(node ?? {}) ? node.text : undefined;
-  const expressionTemplate = node => {
+  const expressionTemplate = (node, seen = new Set()) => {
     if (!node) return '';
-    if(ts.isIdentifier(node)) {
+    if(ts.isIdentifier(node) && !seen.has(node)) {
       const expanded=resolve(node);
-      if(expanded!==node && ts.isStringLiteralLike(expanded)) return expanded.text;
+      if(expanded!==node) return expressionTemplate(expanded,new Set([...seen,node]));
     }
     if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node)) return node.text;
-    if (ts.isTemplateExpression(node)) return node.head.text + node.templateSpans.map(span => expressionTemplate(span.expression) + span.literal.text).join('');
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) return expressionTemplate(node.left) + expressionTemplate(node.right);
+    if (ts.isTemplateExpression(node)) return node.head.text + node.templateSpans.map(span => expressionTemplate(span.expression,seen) + span.literal.text).join('');
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) return expressionTemplate(node.left,seen) + expressionTemplate(node.right,seen);
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'concat') {
-      return expressionTemplate(node.expression.expression) + node.arguments.map(expressionTemplate).join('');
+      return expressionTemplate(node.expression.expression,seen) + node.arguments.map(arg=>expressionTemplate(arg,seen)).join('');
     }
     return `{${node.getText(file).slice(0, 100)}}`;
   };
@@ -271,10 +271,15 @@ function analyzeChunk(url, source, {verifiedBases={}}={}) {
       const resolvedPath=verifiedBase&&!hasExplicitApi?verifiedBase+pathTemplate.slice(4):pathTemplate;
       apiCalls.push({pathTemplate:resolvedPath,method:wrapperMethod,baseResolution:verifiedBase?'verified-import-base':hasExplicitApi?'explicit-api-prefix':'wrapper-base-unverified',queryFields:wrapperMethod==='GET'?fields.fields:[],bodyFields:wrapperMethod==='GET'?[]:fields.fields,unresolvedQuerySpreads:wrapperMethod==='GET'?fields.unresolvedSpreads:[],unresolvedBodySpreads:wrapperMethod==='GET'?[]:fields.unresolvedSpreads,functionName:functionName(node),callExpression:textOf(node,1400),sourceUrl:url,offset:node.pos,evidenceLevel:'source-discovered'});
     }
-    if (pathTemplate && ['method', 'headers', 'body', 'query', 'params'].some(key => optionProps.has(key))) {
+    const nativeFetch = ts.isIdentifier(node.expression) && ['fetch','$fetch'].includes(node.expression.text);
+    if (pathTemplate && (nativeFetch || ['method', 'headers', 'body', 'query', 'params'].some(key => optionProps.has(key)))) {
       const methodNode = valueOf(options, 'method');
       const method = methodNode ? literal(methodNode) ?? 'dynamic' : 'GET';
       const query=requestFields(valueOf(options,'query') ?? valueOf(options,'params'));
+      for(const part of (pathTemplate.split('?')[1]??'').split('&')) {
+        const key=part.split('=')[0];
+        if(part.includes('=') && /^[a-zA-Z_][\w.-]*$/.test(key) && !query.fields.includes(key)) query.fields.push(key);
+      }
       const body=requestFields(valueOf(options,'body'));
       apiCalls.push({pathTemplate, method: method.toUpperCase() === 'DYNAMIC' ? 'dynamic' : method.toUpperCase(), queryFields:query.fields, bodyFields:body.fields, unresolvedQuerySpreads:query.unresolvedSpreads, unresolvedBodySpreads:body.unresolvedSpreads, queryExpression: textOf(valueOf(options, 'query')), bodyExpression: textOf(valueOf(options, 'body')), functionName: functionName(node), callExpression: textOf(node, 1400), sourceUrl: url, offset: node.pos, evidenceLevel: 'source-discovered'});
     }
@@ -292,4 +297,13 @@ function analyzeChunk(url, source, {verifiedBases={}}={}) {
   return {sourceUrl: url, dependencies: [...dependencies].sort(), routes, apiCalls, controls, parseErrors: file.parseDiagnostics.map(d => ({offset:d.start,message:ts.flattenDiagnosticMessageText(d.messageText, ' ')}))};
 }
 
-module.exports = { ORIGIN, assertPublicReadUrl, sanitizeText, safePost, flattenComments, collectPages, analyzeChunk, classifyFeedbackCandidate };
+function matchReadEvidence(contract, observed) {
+  if (contract.method !== 'GET') return [];
+  const normalize = value => value.split('?')[0].replace(/\{[^}]+\}/g, '{param}').replace(/\/\d+(?=\/|$)/g, '/{param}');
+  const literalQueries=[...new URLSearchParams(contract.pathTemplate.split('?')[1]??'')].filter(([,value])=>value&&!value.includes('{'));
+  return observed.filter(item => item.method === 'GET' && item.status >= 200 && item.status < 300 &&
+    normalize(new URL(item.url).pathname) === normalize(contract.pathTemplate) &&
+    literalQueries.every(([key,value])=>(item.queryValues?.[key]??new URL(item.url).searchParams.get(key))===value));
+}
+
+module.exports = { ORIGIN, assertPublicReadUrl, sanitizeText, safePost, flattenComments, collectPages, analyzeChunk, classifyFeedbackCandidate, matchReadEvidence };

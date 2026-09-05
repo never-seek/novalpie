@@ -2,6 +2,8 @@
 
 当前：**NOT READY TO RELEASE**。Beta 7 业务代码尚未替换，以下门禁没有完成。
 
+续接更新（2026-09-05）：少量缺陷修复已接到旧业务入口（TTS查询、文本节点替换、共享本地开关和search freshness）；其余新模块仍未接线。当前全量单测100 suites/888 tests/0失败，lint已通过，构建仍在执行。MuMu开发包`2e3d244f...eaa6f`的TTS2项、章评/长按/繁体/宽度5项通过并有`agent-bridge/artifacts/beta7-device/`日志；这些不是最终Beta7全量/优化包证据。见[执行记录](execution-log.md)。
+
 ## 记录格式
 
 每份证据至少给出：需求/控件/反馈 ID、源码 commit（或 dirty diff hash）、构建 variant、APK SHA-256、设备 SDK/尺寸/density/fontScale、前置状态、实际操作、可见结果、请求回执/截图路径，以及是否恢复测试状态。

@@ -2,7 +2,7 @@
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const crypto=require('node:crypto');
-const {sanitizeText}=require('./audit.cjs');
+const {sanitizeText,matchReadEvidence}=require('./audit.cjs');
 const sourceRoot=path.resolve(process.argv[2]);
 const browserRoot=path.resolve(process.argv[3]);
 (async()=>{
@@ -26,9 +26,8 @@ const browserRoot=path.resolve(process.argv[3]);
     pages.push({file:name,url:page.url,intendedRoute:page.intendedRoute??null,title:page.title,sessionState:page.sessionState,viewport:page.viewport,controls:page.controls.length,visibleControls:page.controls.filter(c=>c.inViewport).length,unlabelledControls:page.controls.filter(c=>!c.label).length,networkStatuses:page.networkStatusEvidence??[],screenshot:page.screenshot??null,capturedAt:page.capturedAt,scope:'page shell or named panel only; full interaction coverage pending'});
   }
   const observed=pages.flatMap(page=>page.networkStatuses).filter(item=>item.method==='GET'&&item.status>=200&&item.status<300);
-  const normalize=value=>value.replace(/\{[^}]+\}/g,'{param}').replace(/\b\d+\b/g,'{param}').split('?')[0];
   const apiLedger=contracts.map(contract=>{
-    const matched=observed.filter(item=>normalize(new URL(item.url).pathname)===normalize(contract.pathTemplate));
+    const matched=matchReadEvidence(contract,observed);
     return {id:'API-'+crypto.createHash('sha256').update(contract.key).digest('hex').slice(0,10),...contract,readEvidence:matched,writeEvidence:[],status:matched.length?'read-status-observed-schema-pending':'source-discovered',appMapping:'pending'};
   });
   const feedback=JSON.parse(await fs.readFile(path.join(sourceRoot,'feedback/summary.json'),'utf8'));

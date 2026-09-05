@@ -31,6 +31,10 @@
 | ENV-001 | 新 MuMu 管理路径、Android 15 实例正常启动，ADB `127.0.0.1:16384` 可用 | 恢复基线/最终安装验证；保留原用户数据 | resolved-environment |
 | ENV-002 | MuMu 已装包 `1d1dcc...`，本地/发布是 `30f07a...` | 基线包须按哈希区分，不把模拟器旧包截图算最新修订验证 | verification-gap |
 | ENV-003 | MuMu `tts_default_synth=null` | 后续配置可信中文系统引擎并真实发声；不能用错误提示验收 TTS | pending |
+| FB-1871-4620 | 2026-09-05 18:50:29 新回复：应显示尖括号内容，却显示`&lt;例子1&gt;` | ReaderText纯文本快速路径没有解码HTML实体；复现测试已添加，待修复/实机；不把尖括号中内容当标签删掉 | reproduced-in-source/test-pending |
+| GAP-TTS-QUERY | MuMu装好eSpeak后App的TTS初始化-1；日志AppsFilter BLOCKED | Manifest增加TTS_SERVICE查询后，真实中文PCM/播放与原生Controller连续两段均通过 | runtime-verified-development-apk |
+| GAP-SHARED-LOCAL | 原生规则canSync=false会删除已上传规则，All视图对自己的停用规则硬编码开启 | 本机启停/范围不删公共规则；共享副本按server ID去重；All行展示isEnabled | unit-verified/runtime-pending |
+| GAP-HTML-REPLACE | 旧reader在HTML字符串全局替换，URL/属性被人名规则破坏；导出只保一种图片标记 | 共用文本节点派生管线，回归覆盖HTML/Markdown链接/图片/实体/br/非法正则 | unit-verified/runtime-pending |
 
 ## 当前线上 wrapper 的人工解析
 

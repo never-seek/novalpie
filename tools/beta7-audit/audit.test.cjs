@@ -128,3 +128,36 @@ test('manually verified imported HTTP base overrides only the matching receiver'
   assert.equal(calls[0].baseResolution,'verified-import-base');
   assert.equal(calls[1].baseResolution,'wrapper-base-unverified');
 });
+
+test('GET status evidence never verifies a write on the same path or another API version', () => {
+  const { matchReadEvidence } = require('./audit.cjs');
+  const observed = [
+    {method:'GET',url:'https://novalpie.cc/api/v2/users/me',status:200},
+    {method:'GET',url:'https://novalpie.cc/api/posts/1871',status:200},
+    {method:'GET',url:'https://novalpie.cc/api/posts/1872',status:403},
+  ];
+  assert.equal(matchReadEvidence({method:'PATCH',pathTemplate:'/api/v2/users/me'},observed).length,0);
+  assert.equal(matchReadEvidence({method:'dynamic',pathTemplate:'/api/v2/users/me'},observed).length,0);
+  assert.equal(matchReadEvidence({method:'GET',pathTemplate:'/api/users/me'},observed).length,0);
+  assert.equal(matchReadEvidence({method:'GET',pathTemplate:'/api/v2/users/me'},observed).length,1);
+  assert.equal(matchReadEvidence({method:'GET',pathTemplate:'/api/posts/{id}'},observed).length,1);
+});
+
+test('native fetch without options and a local URL alias retain search/tag contracts', () => {
+  const js = 'async function query(q){const url=`${config.apiBase}/search?${q}`;return fetch(url,{signal:controller.signal})}fetch(`${base}/tags?limit=100&offset=0`);fetch(`${base}/search/suggestions?kw=${kw}`)';
+  const calls = analyzeChunk('https://novalpie.cc/_nuxt/Search.js',js).apiCalls;
+  assert.equal(calls.length,3);
+  assert.equal(calls[0].method,'GET');
+  assert.ok(calls[0].pathTemplate.startsWith('/api/search?'));
+  assert.deepEqual(calls[1].queryFields,['limit','offset']);
+  assert.ok(calls[2].pathTemplate.startsWith('/api/search/suggestions?'));
+});
+
+test('a query-specific operation needs evidence of its fixed action, not merely the same path', () => {
+  const {matchReadEvidence}=require('./audit.cjs');
+  const contract={method:'GET',pathTemplate:'/api/tags/management?action=export'};
+  const pathOnly={method:'GET',url:'https://novalpie.cc/api/tags/management',status:200};
+  assert.equal(matchReadEvidence(contract,[pathOnly]).length,0);
+  assert.equal(matchReadEvidence(contract,[{...pathOnly,queryValues:{action:'groups'}}]).length,0);
+  assert.equal(matchReadEvidence(contract,[{...pathOnly,queryValues:{action:'export'}}]).length,1);
+});
