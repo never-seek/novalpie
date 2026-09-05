@@ -16,6 +16,22 @@ import org.junit.Test
 
 class ReaderReplacementPresentationTest {
     @Test
+    fun readerAndExportBothPreserveHtmlAttributesAndEveryImageMarkerDuringReplacement() {
+        val rules=listOf(rule(id="rename",source="Alice",replacement="艾丽丝"))
+        val source="<p title='Alice'>Alice</p><img src='https://image.test/Alice.webp'> [[img:1]] [图片1:https://image.test/Alice.png]"
+        val expected="<p title='Alice'>艾丽丝</p><img src='https://image.test/Alice.webp'> [[img:1]] [图片1:https://image.test/Alice.png]"
+        val reader=effectiveReaderText("标题",source,rules,1,1)
+        val exported=applyReaderReplacementRulesToDownloadBody(source,rules,1)
+        assertEquals(expected,reader.content)
+        assertEquals(expected,exported.text)
+        val raw=ReaderContent(title="标题",content=source,source="test")
+        val state=ReaderReplacementState(novelId=12,personalRules=rules)
+        val chapter=effectiveReaderChapterContent(ReaderChapterContent(1,"标题",raw),1,state)
+        assertEquals(expected,chapter.content.content)
+        assertEquals(source,raw.content)
+    }
+
+    @Test
     fun personalRuleOverridesSharedRuleWithTheSameSource() {
         val shared = rule(
             id = "shared-alice",
@@ -120,7 +136,7 @@ class ReaderReplacementPresentationTest {
     }
 
     @Test
-    fun changingAnExistingWebsiteRuleToChapterScopeRemovesItsGlobalServerCopy() {
+    fun changingAnExistingWebsiteRuleToChapterScopeIsLocalAndDoesNotDeleteItsPublicCopy() {
         val previous = rule(
             id = "personal:42",
             source = "Alice",
@@ -129,9 +145,22 @@ class ReaderReplacementPresentationTest {
         val scoped = previous.copy(scope = ReaderReplacementScope.CurrentChapter(3))
 
         assertEquals(
-            ReaderReplacementRemoteSyncAction.Delete(serverRuleId = 42L),
+            ReaderReplacementRemoteSyncAction.None,
             readerReplacementSaveSyncAction(previous = previous, saved = scoped),
         )
+    }
+
+    @Test
+    fun disablingMyPublishedRuleNeverDeletesItOrReenablesItsSharedDuplicate() {
+        val published=rule("personal:42","Alice","A").copy(websiteRuleId=42)
+        val disabled=published.copy(isEnabled=false)
+        val shared=published.copy(id="shared:42",owner=ReaderReplacementOwner.Shared)
+        assertEquals(ReaderReplacementRemoteSyncAction.None,readerReplacementSaveSyncAction(published,disabled))
+        val effective=effectiveReaderReplacementRules(listOf(shared),listOf(disabled),emptySet(),1,ReaderReplacementTarget.Content)
+        assertTrue(effective.isEmpty())
+        assertFalse(readerReplacementRowEnabled(disabled,emptySet()))
+        assertTrue(readerReplacementRowEnabled(shared,emptySet()))
+        assertFalse(readerReplacementRowEnabled(shared,setOf("shared:42")))
     }
 
     @Test

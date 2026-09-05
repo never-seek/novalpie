@@ -11,6 +11,16 @@ import android.os.Environment
 import android.provider.OpenableColumns
 import android.provider.MediaStore
 import android.webkit.CookieManager
+import com.novalpie.nativeapp.core.AppContainer
+import com.novalpie.nativeapp.feature.download.DownloadTask
+import com.novalpie.nativeapp.feature.download.DownloadFormat
+import com.novalpie.nativeapp.feature.download.DownloadPhase
+import com.novalpie.nativeapp.feature.download.NativeDownloadService
+import com.novalpie.nativeapp.feature.download.downloadStatusText
+import com.novalpie.nativeapp.feature.search.SearchViewModel
+import com.novalpie.nativeapp.feature.search.WebsiteSearchRepository
+import com.novalpie.nativeapp.feature.search.StoredSearchPreferences
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -1031,6 +1041,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     )
 
     private val startupReaderSession: ReaderSession? = readerSessionStore.load()
+    private val searchFeature = SearchViewModel(
+        WebsiteSearchRepository(api),StoredSearchPreferences(searchSettingsStore,searchHistoryStore),
+    )
     private val routes = mutableStateListOf<AppRoute>().apply {
         addAll(readerSessionRouteStack(startupReaderSession))
     }
@@ -1062,31 +1075,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private var uploadRequestSerial = 0L
     private var editorRequestSerial = 0L
     private var editorProcessorRequestSerial = 0L
-    private var searchRequestSerial = 0L
     private var authRequestSerial = 0L
     private var readerRequestSerial = 0L
     private var readerCatalogRequestSerial = 0L
     private val readerProgressSyncMutex = Mutex()
     private var readerProgressSyncRevision = 0L
     private var imagePreviewRequestSerial = 0L
-    /**
-     * Native downloads are long-running and must have an explicit lifecycle.  Keeping the job and
-     * a generation token prevents a cancelled/stale worker from putting `busy=true` back into the
-     * current screen after the user has already cancelled or started a different download.
-     */
-    private var nativeDownloadJob: Job? = null
-    /** Cooperative gate shared by the EPUB/TXT worker and its UI controls. */
-    private var nativeDownloadControl: NativeDownloadControl? = null
-    private var nativeDownloadGeneration = 0L
-    private data class NativeDownloadRetry(
-        val bookId: Long,
-        val format: NativeBookDownloadFormat,
-        val ticket: EpubDownloadTicket,
-        val replacementMode: NativeDownloadReplacementMode,
-        val replacementSnapshot: ReaderDownloadReplacementSnapshot?,
-    )
-    /** Reuse a granted ticket on retry so a transport failure cannot charge the user twice. */
-    private var nativeDownloadRetry: NativeDownloadRetry? = null
     /** One in-flight source detail lookup prevents home refreshes from duplicating legacy repair. */
     private var readerProgressTitleLookupBookId: Long? = null
     private val initialFavoritesSettings = favoritesSettingsStore.load()
@@ -1151,31 +1145,20 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         private set
     // History is an explicit choice below the field. Pre-filling the last value made a new
     // search session look active even though no request had run for that text.
-    var searchKeyword by mutableStateOf("")
-        private set
-    var searchHistory by mutableStateOf(searchHistoryStore.load())
-        private set
-    var searchOptions by mutableStateOf(searchSettingsStore.load().toSearchOptions())
-        private set
-    var searchResults by mutableStateOf<LoadResult<List<NovelCard>>>(LoadResult.Idle)
-        private set
-    var searchTags by mutableStateOf<LoadResult<List<NovelTag>>>(LoadResult.Idle)
-        private set
-    var searchPage by mutableIntStateOf(1)
-        private set
+    val searchKeyword get() = searchFeature.state.keyword
+    val searchHistory get() = searchFeature.state.history
+    val searchOptions get() = searchFeature.state.options
+    val searchResults get() = searchFeature.state.results
+    val searchTags get() = searchFeature.state.tags
+    val searchPage get() = searchFeature.state.page
     /** Last successful source search envelope, used for source-style direct page navigation. */
-    var searchResultPage by mutableStateOf<SearchPage?>(null)
-        private set
-    var searchCanLoadMore by mutableStateOf(false)
-        private set
-    var searchLoadingMore by mutableStateOf(false)
-        private set
+    val searchResultPage get() = searchFeature.state.envelope
+    val searchCanLoadMore get() = searchFeature.state.canLoadMore
+    val searchLoadingMore get() = searchFeature.state.loadingPage
 
     /** See [HomeState.favoritesLoadMoreError]; search had the identical defect. */
-    var searchLoadMoreError by mutableStateOf<String?>(null)
-        private set
-    internal var searchGridScrollPosition by mutableStateOf(GridScrollPosition())
-        private set
+    val searchLoadMoreError get() = searchFeature.state.pageError
+    internal val searchGridScrollPosition get() = searchFeature.state.scroll
     var bookCatalogQuery by mutableStateOf("")
         private set
     var bookDetailState by mutableStateOf(BookDetailState())
@@ -1227,11 +1210,36 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     init {
         configureNovalPieImageLoader(application, proxySettings)
-        // A process death can happen after MediaStore creates an IS_PENDING row but before the
-        // native publisher commits it. Reclaim only old rows that match this app's strict native
-        // filename contract; completed user downloads and unrelated app files remain untouched.
-        viewModelScope.launch(Dispatchers.IO) {
-            cleanupOrphanedNativeDownloadEntries(application)
+        viewModelScope.launch {
+            snapshotFlow {currentRoute==AppRoute.Search}.collect {visible->
+                if(visible)searchFeature.enter() else searchFeature.leave()
+            }
+        }
+        viewModelScope.launch {
+            var previous=authToken to proxySettings
+            snapshotFlow {authToken to proxySettings}.collect {next->
+                if(next!=previous){previous=next;searchFeature.environmentChanged()}
+            }
+        }
+        viewModelScope.launch {
+            AppContainer.from(application).downloads.state.collect { state ->
+                val task=state.task ?: return@collect
+                nativeEpubDownloadState=NativeEpubDownloadState(
+                    bookId=task.bookId,format=if(task.format==DownloadFormat.Epub)NativeBookDownloadFormat.Epub else NativeBookDownloadFormat.Txt,
+                    replacementMode=if(task.applyReplacement)NativeDownloadReplacementMode.EffectiveReaderRules else NativeDownloadReplacementMode.Source,
+                    busy=state.busy,paused=task.phase==DownloadPhase.Paused,
+                    progress=NativeEpubExportProgress(completedChapters=task.completedChapters,completedImages=task.completedAssets),
+                    message=downloadStatusText(state),canRetry=task.phase in setOf(DownloadPhase.Failed,DownloadPhase.NeedsRetry,DownloadPhase.Cancelled),
+                )
+            }
+        }
+        viewModelScope.launch {
+            val account=authToken?.let(::decodeAuthTokenProfile)?.id
+            if(account!=null) {
+                val container=AppContainer.from(application)
+                val recovered=withContext(Dispatchers.IO){container.downloadStore.recover(account)}
+                recovered.tasks.filter {it.phase!=DownloadPhase.Completed}.maxByOrNull {it.updatedAt}?.let(container.downloads::restore)
+            }
         }
         // The app opens on Collection. Loading an unseen forum feed here competes with the
         // authenticated shelf requests through the same proxy/CDN route; Forum loads on tab or
@@ -1445,20 +1453,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun updateSearchKeyword(value: String) {
-        if (searchKeyword == value) return
-        invalidateSearchRequests()
-        resetSearchGridScrollPosition()
-        searchKeyword = value
-        // A result grid belongs to the submitted query, not the text currently being edited.
-        // Leaving prior cards below an empty or different field made it too easy to open the
-        // wrong book while a request was intentionally invalidated.
-        searchResults = LoadResult.Idle
-        searchPage = 1
-        searchResultPage = null
-        searchCanLoadMore = false
-        searchLoadingMore = false
-        searchLoadMoreError = null
-        if (value.isBlank() && currentRoute == AppRoute.Search) loadDefaultSearchResultsIfNeeded()
+        searchFeature.setVisible(currentRoute==AppRoute.Search)
+        searchFeature.updateKeyword(value)
     }
 
     fun useSearchHistory(keyword: String) {
@@ -1480,125 +1476,62 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun openBookDetailSearch(target: BookDetailSearchTarget) {
-        val options = bookDetailSearchOptions(searchOptions, target)
-        if (searchOptions != options) {
-            invalidateSearchRequests()
-            searchOptions = options
-            saveSearchOptions()
-        }
-        // A tag link is deliberately a blank-keyword search; it must not retain a previously typed
-        // title and accidentally turn the source's tag filter into an AND query.
-        searchKeyword = target.keyword
-        resetSearchGridScrollPosition()
         val stack = routes.toList()
         routes.replaceWith(pushDistinctRoute(stack, AppRoute.Search))
         currentTab = BottomTab.Discover
-        performSearch(target.keyword)
+        searchFeature.openTarget(target)
     }
 
     fun clearSearchHistory() {
-        searchHistoryStore.clear()
-        searchHistory = emptyList()
+        searchFeature.clearHistory()
     }
 
     /** Mirrors the source toolbar: keep the active filters, but opt in/out of retaining them locally. */
     fun toggleSearchSettingsCache() {
-        val nextEnabled = !searchOptions.cacheEnabled
-        searchOptions = searchOptions.copy(cacheEnabled = nextEnabled)
-        searchSettingsStore.setCacheEnabled(nextEnabled)
-        if (nextEnabled) saveSearchOptions()
+        searchFeature.toggleCache()
     }
 
     /** Clears local search-option state only; no source API request or search history is changed. */
     fun clearSearchSettingsCache() {
-        invalidateSearchRequests()
-        val cacheEnabled = searchOptions.cacheEnabled
-        searchSettingsStore.clearCachedSettings()
-        searchOptions = SearchOptions(cacheEnabled = cacheEnabled)
-        searchResults = LoadResult.Idle
-        searchPage = 1
-        searchResultPage = null
-        searchCanLoadMore = false
-        searchLoadingMore = false
-        searchLoadMoreError = null
+        searchFeature.setVisible(currentRoute==AppRoute.Search)
+        searchFeature.clearOptions()
     }
 
     fun updateSearchSortBy(value: String) {
-        val changed = searchOptions.sortBy != value
-        if (changed) invalidateSearchRequests()
-        searchOptions = searchOptions.copy(sortBy = value)
-        saveSearchOptions()
-        refreshSearchAfterFilterChange(changed)
+        updateSearchOptions(searchOptions.copy(sortBy=value))
     }
 
     fun updateSearchSortOrder(value: String) {
-        val changed = searchOptions.sortOrder != value
-        if (changed) invalidateSearchRequests()
-        searchOptions = searchOptions.copy(sortOrder = value)
-        saveSearchOptions()
-        refreshSearchAfterFilterChange(changed)
+        updateSearchOptions(searchOptions.copy(sortOrder=value))
     }
 
     fun updateSearchScope(value: String) {
-        val changed = searchOptions.scope != value
-        if (changed) invalidateSearchRequests()
-        searchOptions = searchOptions.copy(scope = value)
-        saveSearchOptions()
-        refreshSearchAfterFilterChange(changed)
+        updateSearchOptions(searchOptions.copy(scope=value))
     }
 
     fun updateSearchMatchType(value: String) {
-        val next = searchOptionsAfterMatchTypeChange(searchOptions, value)
-        val changed = searchOptions != next
-        if (changed) invalidateSearchRequests()
-        searchOptions = next
-        saveSearchOptions()
-        refreshSearchAfterFilterChange(changed)
+        updateSearchOptions(searchOptionsAfterMatchTypeChange(searchOptions,value))
     }
 
     fun updateSearchAdultFilter(value: String) {
-        val changed = searchOptions.adultFilter != value
-        if (changed) invalidateSearchRequests()
-        searchOptions = searchOptions.copy(adultFilter = value)
-        saveSearchOptions()
-        refreshSearchAfterFilterChange(changed)
+        updateSearchOptions(searchOptions.copy(adultFilter=value))
     }
 
     fun updateSearchSource(value: String) {
-        val changed = searchOptions.source != value
-        if (changed) invalidateSearchRequests()
-        searchOptions = searchOptions.copy(source = value)
-        saveSearchOptions()
-        refreshSearchAfterFilterChange(changed)
+        updateSearchOptions(searchOptions.copy(source=value))
     }
 
     fun updateSearchWordCountRange(value: String) {
-        val changed = searchOptions.wordCountRange != value
-        if (changed) invalidateSearchRequests()
-        searchOptions = searchOptions.copy(wordCountRange = value)
-        saveSearchOptions()
-        refreshSearchAfterFilterChange(changed)
+        updateSearchOptions(searchOptions.copy(wordCountRange=value))
     }
 
     fun updateSearchAdvancedSyntaxEnabled(value: Boolean) {
-        val changed = searchOptions.advancedSyntaxEnabled != value
-        if (changed) invalidateSearchRequests()
-        searchOptions = searchOptions.copy(advancedSyntaxEnabled = value)
-        saveSearchOptions()
-        refreshSearchAfterFilterChange(changed)
+        updateSearchOptions(searchOptions.copy(advancedSyntaxEnabled=value))
     }
 
     /** Source search toggles its local view mode without rerunning or invalidating the query. */
     fun toggleSearchViewMode() {
-        resetSearchGridScrollPosition()
-        searchOptions = searchOptions.copy(
-            viewMode = if (searchOptions.viewMode == SearchViewMode.Grid) {
-                SearchViewMode.List
-            } else {
-                SearchViewMode.Grid
-            }
-        )
-        saveSearchOptions()
+        searchFeature.toggleViewMode()
     }
 
     fun applyRequiredSearchTag(tagName: String) {
@@ -1610,38 +1543,19 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun removeSearchTag(tagName: String) {
-        val (requiredTags, blockedTags) = removeSearchTagFilter(
-            requiredTags = searchOptions.requiredTags,
-            blockedTags = searchOptions.blockedTags,
-            tagName = tagName
-        )
-        updateSearchTagsAndRun(requiredTags, blockedTags)
+        searchFeature.removeTag(tagName)
     }
 
     fun clearSearchTags() {
-        updateSearchTagsAndRun(emptyList(), emptyList())
+        searchFeature.clearTags()
     }
 
     private fun applySearchTag(tagName: String, mode: SearchTagFilterMode) {
-        val (requiredTags, blockedTags) = toggleSearchTagFilters(
-            requiredTags = searchOptions.requiredTags,
-            blockedTags = searchOptions.blockedTags,
-            input = tagName,
-            mode = mode
-        )
-        updateSearchTagsAndRun(requiredTags, blockedTags)
+        searchFeature.tag(tagName,mode)
     }
 
-    private fun updateSearchTagsAndRun(requiredTags: List<String>, blockedTags: List<String>) {
-        val next = searchOptions.copy(
-            requiredTags = normalizeSearchTagList(requiredTags),
-            blockedTags = normalizeSearchTagList(blockedTags)
-        )
-        if (next == searchOptions) return
-        invalidateSearchRequests()
-        searchOptions = next
-        saveSearchOptions()
-        performSearch()
+    private fun updateSearchOptions(options:SearchOptions) {
+        searchFeature.updateOptions(options,refresh=currentRoute==AppRoute.Search)
     }
 
     fun updateBookCatalogQuery(value: String) {
@@ -2387,6 +2301,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         proxyHost = next.host
         proxyPortText = next.port.toString()
         networkConfigStore.saveProxySettings(next)
+        AppContainer.from(getApplication()).refreshEnvironmentFromStores()
         configureNovalPieImageLoader(getApplication(), next)
         loadHome()
     }
@@ -2399,12 +2314,14 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         sanitizeAdminSurfaceIfNeeded(isAdmin = false)
         authSessionStore.saveToken(normalized)
         authToken = normalized
+        AppContainer.from(getApplication()).refreshEnvironmentFromStores()
         loadHome()
     }
 
     fun clearAuthToken() {
         authSessionStore.clearToken()
         authToken = null
+        AppContainer.from(getApplication()).refreshEnvironmentFromStores()
         profileRequestSerial++
         profileState = ProfileState()
         sanitizeAdminSurfaceIfNeeded(isAdmin = false)
@@ -5030,6 +4947,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 examResult.token?.takeIf(String::isNotBlank)?.let { replacementToken ->
                     authSessionStore.saveToken(replacementToken)
                     authToken = replacementToken
+                    AppContainer.from(getApplication()).refreshEnvironmentFromStores()
                     loadHome()
                 }
             }.onFailure { failure ->
@@ -7329,6 +7247,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 onSuccess = { session ->
                     authSessionStore.saveToken(session.token)
                     authToken = session.token
+                    AppContainer.from(getApplication()).refreshEnvironmentFromStores()
                     authState = AuthState()
                     currentTab = BottomTab.Collection
                     routes.clear()
@@ -7625,8 +7544,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun saveSearchGridScrollPosition(firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int) {
-        val next = GridScrollPosition.from(firstVisibleItemIndex, firstVisibleItemScrollOffset)
-        if (searchGridScrollPosition != next) searchGridScrollPosition = next
+        searchFeature.saveScroll(firstVisibleItemIndex,firstVisibleItemScrollOffset)
     }
 
     fun loadHome(actionMessage: String? = null) {
@@ -7849,57 +7767,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun performSearch(submittedKeyword: String? = null) {
-        val keyword = searchKeywordForSubmission(searchKeyword, submittedKeyword)
-        if (searchKeyword != keyword) searchKeyword = keyword
-        val requestSerial = ++searchRequestSerial
-        resetSearchGridScrollPosition()
-        searchResults = LoadResult.Loading
-        searchPage = 1
-        searchResultPage = null
-        searchCanLoadMore = false
-        searchLoadingMore = false
-        searchLoadMoreError = null
-        val options = searchOptions
-        val resolved = resolveSearchRequest(keyword, options)
-        val request = SearchRequestSnapshot(
-            serial = requestSerial,
-            keyword = keyword,
-            options = options,
-            page = 1
-        )
-        if (keyword.isNotBlank()) {
-            searchHistoryStore.saveKeyword(keyword)
-            searchHistory = searchHistoryStore.load()
-        }
-        if (resolved.errors.isNotEmpty()) {
-            searchResults = LoadResult.Error("高级语法：${resolved.errors.joinToString("；")}")
-            return
-        }
-        viewModelScope.launch {
-            val result = runCatching {
-                requestSearchPage(resolved = resolved, page = 1)
-            }
-            if (
-                !isFreshSearchResult(
-                    request = request,
-                    activeSerial = searchRequestSerial,
-                    currentKeyword = searchKeyword,
-                    currentOptions = searchOptions,
-                    expectedPage = 1
-                )
-            ) return@launch
-            result.fold(
-                onSuccess = { response ->
-                    searchResults = LoadResult.Success(response.items)
-                    searchPage = response.page
-                    searchResultPage = response
-                    searchCanLoadMore = response.canLoadMore()
-                },
-                onFailure = {
-                    searchResults = LoadResult.Error(apiFailureMessage(VisibleUiLabels.Search, it))
-                }
-            )
-        }
+        searchFeature.submit(submittedKeyword)
     }
 
     fun loadMoreSearch() {
@@ -7908,100 +7776,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     /** Source parity: result pages replace the current grid instead of appending an endless list. */
     fun goToSearchPage(requestedPage: Int) {
-        val currentPage = searchResultPage ?: return
-        if (searchLoadingMore) return
-        val totalPages = currentPage.totalPages
-            ?: currentPage.total?.let { count ->
-                ((count.toLong() + currentPage.pageSize - 1L) / currentPage.pageSize).toInt()
-            }
-        val targetPage = totalPages?.let { requestedPage.coerceIn(1, it.coerceAtLeast(1)) }
-            ?: requestedPage.coerceAtLeast(1)
-        if (targetPage == searchPage && searchResults is LoadResult.Success) return
-
-        resetSearchGridScrollPosition()
-
-        val keyword = searchKeyword
-        val options = searchOptions
-        val resolved = resolveSearchRequest(keyword, options)
-        if (resolved.errors.isNotEmpty()) {
-            searchLoadMoreError = "高级语法：${resolved.errors.joinToString("；")}"
-            return
-        }
-        val requestSerial = ++searchRequestSerial
-        val request = SearchRequestSnapshot(
-            serial = requestSerial,
-            keyword = keyword,
-            options = options,
-            page = targetPage
-        )
-        searchPage = targetPage
-        // Keep the attempted page in metadata so an error-state retry targets the same source page.
-        searchResultPage = currentPage.copy(page = targetPage)
-        searchResults = LoadResult.Loading
-        searchCanLoadMore = false
-        searchLoadingMore = true
-        searchLoadMoreError = null
-        viewModelScope.launch {
-            val result = runCatching {
-                requestSearchPage(resolved = resolved, page = targetPage)
-            }
-            if (
-                !isFreshSearchResult(
-                    request = request,
-                    activeSerial = searchRequestSerial,
-                    currentKeyword = searchKeyword,
-                    currentOptions = searchOptions,
-                    expectedPage = targetPage
-                )
-            ) return@launch
-            result.fold(
-                onSuccess = { response ->
-                    searchResults = LoadResult.Success(response.items)
-                    searchPage = response.page
-                    searchResultPage = response
-                    searchCanLoadMore = response.canLoadMore()
-                    searchLoadMoreError = null
-                },
-                onFailure = {
-                    searchResults = LoadResult.Error(apiFailureMessage(VisibleUiLabels.Search, it))
-                }
-            )
-            searchLoadingMore = false
-        }
+        searchFeature.goToPage(requestedPage)
     }
 
-    private suspend fun requestSearchPage(
-        resolved: ResolvedSearchRequest,
-        page: Int
-    ): SearchPage = api.searchPage(
-        keyword = resolved.keyword,
-        page = page,
-        limit = SEARCH_PAGE_SIZE,
-        sortBy = resolved.sortBy,
-        sortOrder = resolved.sortOrder,
-        scope = resolved.scope,
-        matchType = resolved.matchType,
-        adultFilter = resolved.adultFilter,
-        source = resolved.source,
-        minWordCount = resolved.minWordCount,
-        maxWordCount = resolved.maxWordCount,
-        requiredTags = resolved.requiredTags,
-        blockedTags = resolved.blockedTags,
-        tagsAny = resolved.tagsAny,
-        tagsExpression = resolved.tagsExpression,
-        blockedTerms = resolved.blockedTerms,
-        platform = resolved.platform,
-        novelType = resolved.type,
-        status = resolved.status
-    )
-
     fun loadSearchTags() {
-        if (searchTags is LoadResult.Loading) return
-        searchTags = LoadResult.Loading
-        viewModelScope.launch {
-            val result = runCatching { api.tags(sort = "count", limit = SEARCH_TAG_SUGGESTION_LIMIT) }
-            searchTags = result.toLoadResult("标签")
-        }
+        searchFeature.loadTags()
     }
 
     /** Populate Discover with the source's unfiltered work feed before the first typed search. */
@@ -8269,468 +8048,52 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private data class NativeDownloadDestination(
-        val displayName: String,
-        val mimeType: String,
-        val uri: Uri? = null,
-        val file: File? = null,
-    )
 
-    private fun beginNativeDownload(
-        bookId: Long,
-        format: NativeBookDownloadFormat,
-        replacementMode: NativeDownloadReplacementMode,
-        message: String,
-    ): Long {
-        nativeDownloadGeneration += 1
-        nativeDownloadControl?.resume()
-        nativeDownloadJob?.cancel()
-        nativeDownloadJob = null
-        nativeDownloadControl = NativeDownloadControl()
-        nativeEpubDownloadState = NativeEpubDownloadState(
-            bookId = bookId,
-            format = format,
-            replacementMode = replacementMode,
-            busy = true,
-            message = message,
-        )
-        return nativeDownloadGeneration
-    }
+    fun downloadBookEpub(bookId:Long,replacementMode:NativeDownloadReplacementMode=NativeDownloadReplacementMode.Source) =
+        startNativeDownloadTask(bookId,DownloadFormat.Epub,replacementMode)
 
-    private fun updateNativeDownload(
-        generation: Long,
-        update: (NativeEpubDownloadState) -> NativeEpubDownloadState,
-    ) {
-        if (generation == nativeDownloadGeneration) {
-            nativeEpubDownloadState = update(nativeEpubDownloadState)
-        }
-    }
+    fun downloadBookTxt(bookId:Long,replacementMode:NativeDownloadReplacementMode=NativeDownloadReplacementMode.Source) =
+        startNativeDownloadTask(bookId,DownloadFormat.Txt,replacementMode)
 
-    private fun reusableNativeDownloadRetry(
-        bookId: Long,
-        format: NativeBookDownloadFormat,
-        replacementMode: NativeDownloadReplacementMode,
-    ): NativeDownloadRetry? = nativeDownloadRetry
-        ?.takeIf {
-            it.bookId == bookId &&
-                it.format == format &&
-                it.replacementMode == replacementMode
-        }
-
-    /**
-     * Build a detached export snapshot before requesting/download-streaming content. A server
-     * glossary fetch is required only when the user elected to apply rules; source exports remain
-     * completely streaming and do not wait on reader configuration APIs.
-     */
-    private suspend fun resolveDownloadReplacementSnapshot(
-        bookId: Long,
-        replacementMode: NativeDownloadReplacementMode,
-    ): ReaderDownloadReplacementSnapshot? {
-        if (replacementMode == NativeDownloadReplacementMode.Source) return null
-        val localRules = readerReplacementRulesStore.loadPersonalRules(bookId)
-        val defaultSharedRulesEnabled = readerReplacementRulesStore.loadDefaultSharedRulesEnabled()
-        val sharedRulesEnabledOverride = readerReplacementRulesStore.loadSharedRulesEnabledOverride(bookId)
-        val sharedRulesEnabled = readerSharedRulesEnabled(
-            defaultEnabled = defaultSharedRulesEnabled,
-            bookOverride = sharedRulesEnabledOverride,
-        )
-        val personal = api.personalGlossaries(bookId)
-        val mergedPersonal = mergeReaderReplacementPersonalRules(
-            localRules = localRules,
-            remoteRules = personal,
-        )
-        val shared = if (sharedRulesEnabled) api.sharedGlossaries(bookId) else emptyList()
-        val snapshotState = ReaderReplacementState(
-            novelId = bookId,
-            source = if (sharedRulesEnabled) ReaderReplacementRuleSource.All else ReaderReplacementRuleSource.Personal,
-            personalRules = mergedPersonal,
-            sharedRules = LoadResult.Success(shared),
-            hiddenSharedRuleIds = readerReplacementRulesStore.loadHiddenSharedRuleIds(bookId),
-            defaultSharedRulesEnabled = defaultSharedRulesEnabled,
-            sharedRulesEnabledOverride = sharedRulesEnabledOverride,
-        )
-        return readerDownloadReplacementSnapshot(applyRules = true, state = snapshotState)
-    }
-
-    /** Cancels only the active native job and leaves its authorization ticket available to retry. */
-    fun cancelNativeBookDownload(bookId: Long) {
-        val state = nativeEpubDownloadState
-        if (!state.busy || state.bookId != bookId) return
-        nativeDownloadGeneration += 1
-        nativeDownloadControl?.resume()
-        nativeDownloadJob?.cancel()
-        nativeDownloadJob = null
-        nativeDownloadControl = null
-        nativeEpubDownloadState = state.copy(
-            busy = false,
-            paused = false,
-            message = "下载已取消，可重试",
-            canRetry = true,
-        )
-    }
-
-    /** Pauses at the next bounded stream/chapter checkpoint without discarding the authorization. */
-    fun pauseNativeBookDownload(bookId: Long) {
-        val state = nativeEpubDownloadState
-        if (!state.busy || state.bookId != bookId || state.paused) return
-        nativeDownloadControl?.pause()
-        nativeEpubDownloadState = state.copy(
-            paused = true,
-            message = "下载已暂停，可继续或取消",
-        )
-    }
-
-    /** Releases a paused native download; the active job continues with the same ticket. */
-    fun resumeNativeBookDownload(bookId: Long) {
-        val state = nativeEpubDownloadState
-        if (!state.busy || state.bookId != bookId || !state.paused) return
-        nativeDownloadControl?.resume()
-        nativeEpubDownloadState = state.copy(
-            paused = false,
-            message = if (state.format == NativeBookDownloadFormat.Txt) {
-                "正在原生保存 TXT…"
-            } else {
-                "正在生成 EPUB…"
-            },
-        )
-    }
-
-    fun toggleNativeBookDownloadPause(bookId: Long) {
-        if (nativeEpubDownloadState.paused) {
-            resumeNativeBookDownload(bookId)
-        } else {
-            pauseNativeBookDownload(bookId)
-        }
-    }
-
-    /** Reuses a previously granted ticket whenever possible, avoiding a second points charge. */
-    fun retryNativeBookDownload(bookId: Long) {
-        val state = nativeEpubDownloadState
-        if (state.busy || !state.canRetry || state.bookId != bookId) return
-        when (state.format) {
-            NativeBookDownloadFormat.Epub -> downloadBookEpub(
-                bookId = bookId,
-                replacementMode = state.replacementMode,
-            )
-            NativeBookDownloadFormat.Txt -> downloadBookTxt(
-                bookId = bookId,
-                replacementMode = state.replacementMode,
-            )
-            null -> Unit
-        }
-    }
-
-    /** Downloads the source-authorized EPUB into Android Downloads without opening a WebView. */
-    fun downloadBookEpub(
-        bookId: Long,
-        replacementMode: NativeDownloadReplacementMode = NativeDownloadReplacementMode.Source,
-    ) {
-        val book = (bookDetailState.book as? LoadResult.Success)?.value
-            ?.takeIf { it.id == bookId }
-        if (bookId <= 0 || nativeEpubDownloadState.busy) return
-        if (authToken.isNullOrBlank()) {
-            nativeEpubDownloadState = NativeEpubDownloadState(
-                bookId = bookId,
-                format = NativeBookDownloadFormat.Epub,
-                message = "请先登录后再下载 EPUB",
-            )
+    private fun startNativeDownloadTask(bookId:Long,format:DownloadFormat,mode:NativeDownloadReplacementMode) {
+        val account=currentUserProfile()?.id
+        val container=AppContainer.from(getApplication())
+        if(bookId<=0||container.downloads.state.value.busy)return
+        if(account==null||authToken.isNullOrBlank()) {
+            nativeEpubDownloadState=NativeEpubDownloadState(bookId=bookId,message="请先登录后下载")
             return
         }
-        val app = getApplication<Application>()
-        val imageConcurrency = profileState.downloadImageConcurrency
-        val reusableRetry = reusableNativeDownloadRetry(bookId, NativeBookDownloadFormat.Epub, replacementMode)
-        val reusableTicket = reusableRetry?.ticket
-        if (reusableTicket == null) nativeDownloadRetry = null
-        cleanupNativeEpubTempFiles(app.cacheDir)
-        cleanupNativeEpubTempFiles(File(app.filesDir, "novalpie-epub-work"))
-        val generation = beginNativeDownload(
-            bookId = bookId,
-            format = NativeBookDownloadFormat.Epub,
-            replacementMode = replacementMode,
-            message = if (reusableTicket == null) "正在申请下载授权…" else "正在使用上次授权重试…",
-        )
-        nativeDownloadJob = viewModelScope.launch {
-            val downloadControl = nativeDownloadControl
-            var destination: NativeDownloadDestination? = null
-            var destinationCommitted = false
-            var epubWorkDirectory: File? = null
-            var generatedEpubFile: File? = null
-            // NativeEpubArchiveWriter stages several image assets at once. The producer callback
-            // therefore records temporary files from multiple IO workers.
-            val temporaryAssets = ConcurrentLinkedQueue<File>()
-            try {
-                val replacementSnapshot = reusableRetry?.replacementSnapshot
-                    ?: resolveDownloadReplacementSnapshot(bookId, replacementMode)
-                val ticket = reusableTicket ?: api.requestEpubDownload(bookId).also {
-                    nativeDownloadRetry = NativeDownloadRetry(
-                        bookId = bookId,
-                        format = NativeBookDownloadFormat.Epub,
-                        ticket = it,
-                        replacementMode = replacementMode,
-                        replacementSnapshot = replacementSnapshot,
-                    )
-                }
-                updateNativeDownload(generation) {
-                    it.copy(
-                        message = "正在下载正文并整理 EPUB…",
-                    )
-                }
-                withContext(Dispatchers.IO) {
-                    val workDirectory = createNativeEpubWorkDirectory(app, bookId)
-                    epubWorkDirectory = workDirectory
-                    val generated = nativeEpubGenerationFile(workDirectory, bookId)
-                    generatedEpubFile = generated
-                    generated.outputStream().use { output ->
-                        api.streamDownloadFile(ticket.fileName) { input ->
-                            InputStreamReader(input, Charsets.UTF_8).use { source ->
-                                NativeEpubArchiveWriter.write(
-                                    output = output,
-                                    metadata = NativeEpubMetadata(
-                                        title = book?.title ?: "NovalPie book $bookId",
-                                        author = book?.author ?: "未知作者",
-                                        description = book?.description.orEmpty(),
-                                        coverUrl = nativeEpubCoverUrl(book),
-                                    ),
-                                    source = source,
-                                    transformChapter = { chapterOrder, title, body ->
-                                        replacementSnapshot
-                                            ?.transform(chapterOrder, title, body)
-                                            ?.let { transformed ->
-                                                NativeDownloadChapterText(
-                                                    title = transformed.title,
-                                                    body = transformed.body,
-                                                )
-                                            }
-                                            ?: NativeDownloadChapterText(title = title, body = body)
-                                    },
-                                    imageConcurrency = imageConcurrency,
-                                    stagingDirectory = epubWorkDirectory,
-                                    awaitIfPaused = { downloadControl?.awaitIfPaused() },
-                                    openAsset = { url ->
-                                        val temporary = File.createTempFile(
-                                            "novalpie-asset-",
-                                            ".bin",
-                                            epubWorkDirectory,
-                                        )
-                                        try {
-                                            var mediaType: String? = null
-                                            api.streamAsset(url) { assetInput, contentType ->
-                                                mediaType = contentType
-                                                temporary.outputStream().buffered().use { fileOutput ->
-                                                    copyNativeDownloadStream(
-                                                        input = assetInput,
-                                                        output = fileOutput,
-                                                        awaitIfPaused = { downloadControl?.awaitIfPaused() },
-                                                    )
-                                                }
-                                            }
-                                            temporaryAssets.add(temporary)
-                                            NativeEpubAsset(
-                                                mediaType = mediaType,
-                                                input = temporary.inputStream(),
-                                                onConsumed = {
-                                                    temporary.delete()
-                                                    temporaryAssets.remove(temporary)
-                                                },
-                                            )
-                                        } catch (failure: Throwable) {
-                                            temporary.delete()
-                                            throw failure
-                                        }
-                                    },
-                                    onProgress = { progress ->
-                                        updateNativeDownload(generation) {
-                                            it.copy(
-                                                progress = progress,
-                                                message = nativeEpubProgressMessage(progress),
-                                            )
-                                        }
-                                    },
-                                )
-                            }
-                        }
-                    }
-                    if (!generated.isFile || generated.length() <= 0L) {
-                        throw IOException("EPUB 临时文件为空")
-                    }
-                    updateNativeDownload(generation) {
-                        it.copy(message = "正在写入下载目录…")
-                    }
-                    destination = createNativeEpubDestination(book?.title ?: "novalpie", bookId)
-                    val target = destination ?: throw IOException("无法创建下载目标")
-                    publishNativeEpubFile(
-                        source = generated,
-                        destination = target,
-                        awaitIfPaused = { downloadControl?.awaitIfPaused() },
-                    )
-                    commitNativeDownloadDestination(target)
-                    destinationCommitted = true
-                }
-                if (generation == nativeDownloadGeneration) {
-                    nativeDownloadRetry = null
-                    updateNativeDownload(generation) {
-                        it.copy(
-                            busy = false,
-                            canRetry = false,
-                            message = "EPUB 已保存到下载目录：${destination?.displayName.orEmpty()}",
-                        )
-                    }
-                }
-            } catch (cancelled: CancellationException) {
-                if (!destinationCommitted) destination?.let(::discardNativeDownloadDestination)
-                if (generation == nativeDownloadGeneration) {
-                    updateNativeDownload(generation) {
-                        it.copy(
-                            busy = false,
-                            paused = false,
-                            canRetry = true,
-                            message = "下载已取消，可重试",
-                        )
-                    }
-                }
-                throw cancelled
-            } catch (failure: Throwable) {
-                if (!destinationCommitted) destination?.let(::discardNativeDownloadDestination)
-                updateNativeDownload(generation) {
-                    it.copy(
-                        busy = false,
-                        paused = false,
-                        canRetry = true,
-                        message = apiFailureMessage("下载 EPUB", failure),
-                    )
-                }
-            } finally {
-                temporaryAssets.forEach { it.delete() }
-                generatedEpubFile?.delete()
-                epubWorkDirectory?.deleteRecursively()
-                if (generation == nativeDownloadGeneration) {
-                    nativeDownloadJob = null
-                    nativeDownloadControl = null
-                }
-            }
+        val book=(bookDetailState.book as? LoadResult.Success)?.value?.takeIf {it.id==bookId}
+        val task=DownloadTask(java.util.UUID.randomUUID().toString(),account,bookId,book?.title ?: "NovalPie-$bookId",format,
+            applyReplacement=mode==NativeDownloadReplacementMode.EffectiveReaderRules,requestedConcurrency=profileState.downloadImageConcurrency)
+        runCatching {NativeDownloadService.start(getApplication(),task)}.onFailure {
+            nativeEpubDownloadState=NativeEpubDownloadState(bookId=bookId,message="无法启动原生下载：${it.message}")
         }
     }
-
-    /** Downloads the source-authorized TXT into Android Downloads without opening a WebView. */
-    fun downloadBookTxt(
-        bookId: Long,
-        replacementMode: NativeDownloadReplacementMode = NativeDownloadReplacementMode.Source,
-    ) {
-        val book = (bookDetailState.book as? LoadResult.Success)?.value
-            ?.takeIf { it.id == bookId }
-        if (bookId <= 0 || nativeEpubDownloadState.busy) return
-        if (authToken.isNullOrBlank()) {
-            nativeEpubDownloadState = NativeEpubDownloadState(
-                bookId = bookId,
-                format = NativeBookDownloadFormat.Txt,
-                message = "请先登录后再下载 TXT",
-            )
+    fun cancelNativeBookDownload(bookId:Long) {
+        val coordinator=AppContainer.from(getApplication()).downloads
+        if(coordinator.state.value.task?.bookId==bookId)coordinator.cancel()
+    }
+    fun pauseNativeBookDownload(bookId:Long) {
+        val coordinator=AppContainer.from(getApplication()).downloads
+        if(coordinator.state.value.task?.bookId==bookId)coordinator.pause()
+    }
+    fun resumeNativeBookDownload(bookId:Long) {
+        val coordinator=AppContainer.from(getApplication()).downloads
+        if(coordinator.state.value.task?.bookId==bookId)coordinator.resume()
+    }
+    fun toggleNativeBookDownloadPause(bookId:Long) {
+        if(nativeEpubDownloadState.paused)resumeNativeBookDownload(bookId)else pauseNativeBookDownload(bookId)
+    }
+    fun retryNativeBookDownload(bookId:Long) {
+        val coordinator=AppContainer.from(getApplication()).downloads
+        val task=coordinator.state.value.task?.takeIf{it.bookId==bookId} ?: return
+        if(coordinator.state.value.busy)return
+        if(task.phase==DownloadPhase.AuthorizationUncertain) {
+            nativeEpubDownloadState=nativeEpubDownloadState.copy(message="上次授权结果未确认，不会自动再次扣分")
             return
         }
-        val reusableRetry = reusableNativeDownloadRetry(bookId, NativeBookDownloadFormat.Txt, replacementMode)
-        val reusableTicket = reusableRetry?.ticket
-        if (reusableTicket == null) nativeDownloadRetry = null
-        val generation = beginNativeDownload(
-            bookId = bookId,
-            format = NativeBookDownloadFormat.Txt,
-            replacementMode = replacementMode,
-            message = if (reusableTicket == null) "正在申请下载授权…" else "正在使用上次授权重试…",
-        )
-        nativeDownloadJob = viewModelScope.launch {
-            val downloadControl = nativeDownloadControl
-            var destination: NativeDownloadDestination? = null
-            var destinationCommitted = false
-            try {
-                val replacementSnapshot = reusableRetry?.replacementSnapshot
-                    ?: resolveDownloadReplacementSnapshot(bookId, replacementMode)
-                val ticket = reusableTicket ?: api.requestTxtDownload(bookId).also {
-                    nativeDownloadRetry = NativeDownloadRetry(
-                        bookId = bookId,
-                        format = NativeBookDownloadFormat.Txt,
-                        ticket = it,
-                        replacementMode = replacementMode,
-                        replacementSnapshot = replacementSnapshot,
-                    )
-                }
-                updateNativeDownload(generation) {
-                    it.copy(message = "正在原生保存 TXT…")
-                }
-                withContext(Dispatchers.IO) {
-                    destination = createNativeTxtDestination(book?.title ?: "novalpie", bookId)
-                    val target = destination ?: throw IOException("无法创建下载目标")
-                    openNativeDownloadOutput(target).use { output ->
-                        api.streamDownloadFile(ticket.fileName) { input ->
-                            if (replacementSnapshot == null) {
-                                copyNativeDownloadStream(
-                                    input = input,
-                                    output = output,
-                                    awaitIfPaused = { downloadControl?.awaitIfPaused() },
-                                )
-                            } else {
-                                InputStreamReader(input, Charsets.UTF_8).use { source ->
-                                    OutputStreamWriter(output, Charsets.UTF_8).use { writer ->
-                                        NativeEpubArchiveWriter.writeTransformedTxt(
-                                            output = writer,
-                                            source = source,
-                                            transformChapter = { chapterOrder, title, body ->
-                                                replacementSnapshot.transform(chapterOrder, title, body)
-                                                    .let { transformed ->
-                                                        NativeDownloadChapterText(
-                                                            title = transformed.title,
-                                                            body = transformed.body,
-                                                        )
-                                                    }
-                                            },
-                                            awaitIfPaused = { downloadControl?.awaitIfPaused() },
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    commitNativeDownloadDestination(target)
-                    destinationCommitted = true
-                }
-                if (generation == nativeDownloadGeneration) {
-                    nativeDownloadRetry = null
-                    updateNativeDownload(generation) {
-                        it.copy(
-                            busy = false,
-                            canRetry = false,
-                            message = "TXT 已保存到下载目录：${destination?.displayName.orEmpty()}",
-                        )
-                    }
-                }
-            } catch (cancelled: CancellationException) {
-                if (!destinationCommitted) destination?.let(::discardNativeDownloadDestination)
-                if (generation == nativeDownloadGeneration) {
-                    updateNativeDownload(generation) {
-                        it.copy(
-                            busy = false,
-                            paused = false,
-                            canRetry = true,
-                            message = "下载已取消，可重试",
-                        )
-                    }
-                }
-                throw cancelled
-            } catch (failure: Throwable) {
-                if (!destinationCommitted) destination?.let(::discardNativeDownloadDestination)
-                updateNativeDownload(generation) {
-                    it.copy(
-                        busy = false,
-                        paused = false,
-                        canRetry = true,
-                        message = apiFailureMessage("下载 TXT", failure),
-                    )
-                }
-            } finally {
-                if (generation == nativeDownloadGeneration) {
-                    nativeDownloadJob = null
-                    nativeDownloadControl = null
-                }
-            }
-        }
+        NativeDownloadService.start(getApplication(),task.copy(phase=DownloadPhase.Queued,failure=null))
     }
 
     /**
@@ -8797,260 +8160,6 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         imagePreviewState = ImagePreviewState()
     }
 
-    private fun nativeEpubProgressMessage(progress: NativeEpubExportProgress): String {
-        val chapterText = if (progress.totalChapters > 0) {
-            "章节 ${progress.completedChapters}/${progress.totalChapters}"
-        } else {
-            "已处理 ${progress.completedChapters} 章"
-        }
-        val imageText = if (progress.totalImages > 0) {
-            "，插图 ${progress.completedImages}/${progress.totalImages}"
-        } else {
-            ""
-        }
-        return "正在生成 EPUB：$chapterText$imageText"
-    }
-
-    /**
-     * EPUB staging is deliberately kept out of cacheDir. Android may evict cache files while a
-     * multi-minute, multi-gigabyte export is still reading them; a private per-job directory gives
-     * the writer a stable filesystem boundary and is removed in the coroutine's finally block.
-     */
-    private fun createNativeEpubWorkDirectory(app: Application, bookId: Long): File {
-        val root = File(app.filesDir, "novalpie-epub-work")
-        if (!root.isDirectory && !root.mkdirs()) {
-            throw IOException("无法创建 EPUB 临时目录")
-        }
-        val directory = File(root, "$bookId-${System.currentTimeMillis()}-${System.nanoTime()}")
-        if (!directory.mkdirs()) {
-            throw IOException("无法创建 EPUB 工作目录")
-        }
-        return directory
-    }
-
-    private fun createNativeEpubDestination(title: String, bookId: Long): NativeDownloadDestination =
-        createNativeDownloadDestination(
-            title = title,
-            bookId = bookId,
-            extension = "epub",
-            mimeType = "application/epub+zip",
-        )
-
-    private fun createNativeTxtDestination(title: String, bookId: Long): NativeDownloadDestination =
-        createNativeDownloadDestination(
-            title = title,
-            bookId = bookId,
-            extension = "txt",
-            mimeType = "text/plain",
-        )
-
-    /**
-     * Removes stale MediaStore rows left between destination creation and publication.
-     *
-     * The normal path creates a pending row only after the EPUB has been assembled, so this is
-     * primarily a crash/process-death recovery path. The age guard prevents a second ViewModel or
-     * a very slow publication from deleting a live transfer, while the owner/name checks keep the
-     * cleanup bounded to files emitted by this app.
-     */
-    private fun cleanupOrphanedNativeDownloadEntries(app: Application): Int {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0
-        val resolver = app.contentResolver
-        val projection = arrayOf(
-            "_id",
-            MediaStore.MediaColumns.DISPLAY_NAME,
-            MediaStore.MediaColumns.MIME_TYPE,
-            MediaStore.MediaColumns.IS_PENDING,
-            MediaStore.MediaColumns.OWNER_PACKAGE_NAME,
-            MediaStore.MediaColumns.DATE_MODIFIED,
-        )
-        val staleBefore = System.currentTimeMillis() / 1000L - NATIVE_DOWNLOAD_ORPHAN_AGE_SECONDS
-        val staleUris = mutableListOf<Uri>()
-        runCatching {
-            resolver.query(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                projection,
-                "${MediaStore.MediaColumns.IS_PENDING} = ?",
-                arrayOf("1"),
-                null,
-            )?.use { cursor ->
-                val idIndex = cursor.getColumnIndex("_id")
-                val nameIndex = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
-                val mimeIndex = cursor.getColumnIndex(MediaStore.MediaColumns.MIME_TYPE)
-                val ownerIndex = cursor.getColumnIndex(MediaStore.MediaColumns.OWNER_PACKAGE_NAME)
-                val modifiedIndex = cursor.getColumnIndex(MediaStore.MediaColumns.DATE_MODIFIED)
-                if (idIndex < 0 || nameIndex < 0 || mimeIndex < 0) return@use
-                while (cursor.moveToNext()) {
-                    val name = cursor.getString(nameIndex).orEmpty()
-                    val mimeType = cursor.getString(mimeIndex).orEmpty()
-                    val owner = ownerIndex.takeIf { it >= 0 && !cursor.isNull(it) }
-                        ?.let(cursor::getString)
-                        .orEmpty()
-                    val modified = modifiedIndex.takeIf { it >= 0 && !cursor.isNull(it) }
-                        ?.let(cursor::getLong)
-                        ?: 0L
-                    val ownedByApp = owner == app.packageName ||
-                        (owner.isBlank() && isNativeDownloadDisplayName(name))
-                    val recognizedType = mimeType == "application/epub+zip" || mimeType == "text/plain"
-                    if (
-                        ownedByApp &&
-                        recognizedType &&
-                        isNativeDownloadDisplayName(name) &&
-                        modified <= staleBefore
-                    ) {
-                        staleUris += ContentUris.withAppendedId(
-                            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                            cursor.getLong(idIndex),
-                        )
-                    }
-                }
-            }
-        }
-        return staleUris.count { uri ->
-            runCatching { resolver.delete(uri, null, null) > 0 }.getOrDefault(false)
-        }
-    }
-
-    private fun createNativeDownloadDestination(
-        title: String,
-        bookId: Long,
-        extension: String,
-        mimeType: String,
-    ): NativeDownloadDestination {
-        val safeTitle = title
-            .replace(Regex("[^A-Za-z0-9\\p{L}\\p{N}._-]"), "_")
-            .trim('_')
-            .take(72)
-            .ifBlank { "novalpie" }
-        val displayName = "${safeTitle}_${bookId}_${System.currentTimeMillis()}.$extension"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, displayName)
-                put(MediaStore.Downloads.MIME_TYPE, mimeType)
-                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                put(MediaStore.Downloads.IS_PENDING, 1)
-            }
-            val uri = getApplication<Application>().contentResolver.insert(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                values,
-            ) ?: throw IOException("无法创建下载文件")
-            return NativeDownloadDestination(
-                displayName = displayName,
-                mimeType = mimeType,
-                uri = uri,
-            )
-        }
-        val directory = getApplication<Application>()
-            .getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-            ?: getApplication<Application>().cacheDir
-        if (!directory.exists() && !directory.mkdirs()) {
-            throw IOException("无法创建下载目录")
-        }
-        return NativeDownloadDestination(
-            displayName = displayName,
-            mimeType = mimeType,
-            file = File(directory, displayName),
-        )
-    }
-
-    private fun openNativeDownloadOutput(destination: NativeDownloadDestination): OutputStream =
-        destination.uri?.let { uri ->
-            getApplication<Application>().contentResolver.openOutputStream(uri, "w")
-                ?: throw IOException("无法打开下载文件")
-        } ?: destination.file?.outputStream()
-        ?: throw IOException("下载目标无效")
-
-    /**
-     * Publish only after NativeEpubArchiveWriter has closed and validated the complete ZIP. A
-     * MediaStore/FUSE stream can stop at the 4 GiB boundary on large books; keeping ZIP assembly
-     * on a private regular file avoids exposing that boundary to ZipOutputStream.
-     */
-    private suspend fun publishNativeEpubFile(
-        source: File,
-        destination: NativeDownloadDestination,
-        awaitIfPaused: suspend () -> Unit = {},
-    ) {
-        val expected = source.length()
-        if (expected <= 0L) throw IOException("EPUB 临时文件为空")
-        destination.uri?.let { uri ->
-            val resolver = getApplication<Application>().contentResolver
-            resolver.openOutputStream(uri, "w")?.use { output ->
-                copyNativeDownloadFilePausable(
-                    source = source,
-                    output = output,
-                    awaitIfPaused = awaitIfPaused,
-                )
-            } ?: throw IOException("无法打开下载文件")
-            val publishedSize = resolver.query(
-                uri,
-                arrayOf(OpenableColumns.SIZE),
-                null,
-                null,
-                null,
-            )?.use { cursor ->
-                if (!cursor.moveToFirst()) null else {
-                    val index = cursor.getColumnIndex(OpenableColumns.SIZE)
-                    if (index < 0 || cursor.isNull(index)) null else cursor.getLong(index)
-                }
-            }
-            if (publishedSize != null && publishedSize >= 0L && publishedSize != expected) {
-                throw IOException("下载文件复制不完整：预期 $expected 字节，实际 $publishedSize 字节")
-            }
-            return
-        }
-
-        val target = destination.file ?: throw IOException("下载目标无效")
-        val temporary = File(target.parentFile, ".${target.name}.part")
-        try {
-            temporary.delete()
-            temporary.outputStream().use { output ->
-                copyNativeDownloadFilePausable(
-                    source = source,
-                    output = output,
-                    awaitIfPaused = awaitIfPaused,
-                )
-            }
-            if (temporary.length() != expected) {
-                throw IOException("下载文件复制不完整：预期 $expected 字节，实际 ${temporary.length()} 字节")
-            }
-            if (target.exists() && !target.delete()) {
-                throw IOException("无法替换下载文件")
-            }
-            if (!temporary.renameTo(target)) {
-                throw IOException("无法发布下载文件")
-            }
-        } finally {
-            temporary.delete()
-        }
-    }
-
-    private fun commitNativeDownloadDestination(destination: NativeDownloadDestination) {
-        destination.uri?.let { uri ->
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                getApplication<Application>().contentResolver.update(
-                    uri,
-                    ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) },
-                    null,
-                    null,
-                )
-            }
-            return
-        }
-        destination.file?.let { file ->
-            MediaScannerConnection.scanFile(
-                getApplication<Application>(),
-                arrayOf(file.absolutePath),
-                arrayOf(destination.mimeType),
-                null,
-            )
-        }
-    }
-
-    private fun discardNativeDownloadDestination(destination: NativeDownloadDestination) {
-        destination.uri?.let { uri ->
-            runCatching { getApplication<Application>().contentResolver.delete(uri, null, null) }
-        }
-        destination.file?.let { file -> runCatching { file.delete() } }
-    }
 
     private fun hasBookManagementAccess(bookId: Long): Boolean =
         bookDetailState.bookId == bookId &&
@@ -9620,10 +8729,6 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         if (currentRoute is AppRoute.Reader) readerSessionStore.clear()
     }
 
-    private fun saveSearchOptions() {
-        searchSettingsStore.save(searchOptions.toPersistedSearchSettings())
-    }
-
     private fun saveFavoritesOptions() {
         favoritesSettingsStore.save(
             favoritesUiOptions.toPersistedFavoritesSettings(
@@ -9676,28 +8781,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             ?: total?.let { page.toLong() * pageSize < it }
             ?: (items.size >= pageSize)
 
-    private fun invalidateSearchRequests() {
-        searchRequestSerial += 1
-        searchCanLoadMore = false
-        searchLoadingMore = false
-    }
-
-    private fun refreshSearchAfterFilterChange(changed: Boolean) {
-        if (searchFilterChangeShouldRefresh(currentRoute == AppRoute.Search, changed)) {
-            performSearch()
-        }
-    }
-
     private fun resetHomeGridScrollPosition() {
         if (homeGridScrollPosition != GridScrollPosition()) homeGridScrollPosition = GridScrollPosition()
     }
 
     private fun resetForumScrollPosition() {
         if (forumScrollPosition != GridScrollPosition()) forumScrollPosition = GridScrollPosition()
-    }
-
-    private fun resetSearchGridScrollPosition() {
-        if (searchGridScrollPosition != GridScrollPosition()) searchGridScrollPosition = GridScrollPosition()
     }
 
     private fun mergeBooksById(current: List<NovelCard>, next: List<NovelCard>): List<NovelCard> {
@@ -9724,6 +8813,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             onSuccess = { LoadResult.Success(it) },
             onFailure = { LoadResult.Error(apiFailureMessage(label, it)) }
         )
+
+    override fun onCleared() {
+        searchFeature.close()
+        super.onCleared()
+    }
 
     companion object {
         private const val PAGE_SIZE = 20

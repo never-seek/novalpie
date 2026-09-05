@@ -206,6 +206,9 @@ class RequestFreshnessTest {
                 expectedPage = 1
             )
         )
+        assertTrue(
+            isFreshSearchResult(request,42,"alpha",options.copy(viewMode=SearchViewMode.List,cacheEnabled=false),1)
+        )
         assertFalse(
             isFreshSearchResult(
                 request = request,

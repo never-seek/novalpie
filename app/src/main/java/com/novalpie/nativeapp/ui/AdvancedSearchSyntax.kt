@@ -68,22 +68,22 @@ internal fun resolveSearchRequest(keyword: String, options: SearchOptions): Reso
     val parsed = parseAdvancedSearchSyntax(keyword)
     return ResolvedSearchRequest(
         keyword = parsed.keyword,
-        sortBy = options.sortBy,
-        sortOrder = options.sortOrder,
-        scope = parsed.scope ?: options.scope,
-        matchType = parsed.matchType ?: options.matchType,
-        adultFilter = parsed.adultFilter ?: options.adultFilter,
+        sortBy = if(parsed.matchType=="ai") "relevance" else "favorite_count",
+        sortOrder = "desc",
+        scope = parsed.scope ?: "all",
+        matchType = parsed.matchType ?: "fuzzy_strict",
+        adultFilter = parsed.adultFilter ?: "all",
         // The source uses `platform`, not its basic-form `source`, for syntax mode.
-        source = if (parsed.platform == null) options.source else "",
+        source = "",
         platform = parsed.platform,
         type = parsed.type,
         status = parsed.status,
-        minWordCount = parsed.minWordCount ?: baseMin,
-        maxWordCount = parsed.maxWordCount ?: baseMax,
-        requiredTags = normalizeSearchTagList(options.requiredTags + parsed.requiredTags),
+        minWordCount = parsed.minWordCount,
+        maxWordCount = parsed.maxWordCount,
+        requiredTags = normalizeSearchTagList(parsed.requiredTags),
         tagsAny = normalizeSearchTagList(parsed.tagsAny),
         tagsExpression = parsed.tagsExpression,
-        blockedTags = normalizeSearchTagList(options.blockedTags + parsed.blockedTags),
+        blockedTags = normalizeSearchTagList(parsed.blockedTags),
         blockedTerms = normalizeSearchTerms(parsed.blockedTerms),
         errors = parsed.errors
     )

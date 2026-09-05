@@ -1,0 +1,119 @@
+package com.novalpie.nativeapp.core
+
+import android.content.Context
+import android.webkit.CookieManager
+import com.novalpie.nativeapp.data.AuthSessionStore
+import com.novalpie.nativeapp.data.NetworkConfigStore
+import com.novalpie.nativeapp.data.NovalPieApi
+import com.novalpie.nativeapp.data.ProxySettings
+import com.novalpie.nativeapp.data.SearchHistoryStore
+import com.novalpie.nativeapp.data.SearchSettingsStore
+import com.novalpie.nativeapp.data.isEmulatorRuntime
+import com.novalpie.nativeapp.feature.search.SearchPreferences
+import com.novalpie.nativeapp.feature.search.SearchRepository
+import com.novalpie.nativeapp.feature.search.StoredSearchPreferences
+import com.novalpie.nativeapp.feature.search.WebsiteSearchRepository
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import com.novalpie.nativeapp.feature.reader.tts.AndroidSpeechEngine
+import com.novalpie.nativeapp.feature.reader.tts.TtsPlaybackCoordinator
+import com.novalpie.nativeapp.feature.reader.tts.WebsiteSpeechChapterSource
+import com.novalpie.nativeapp.feature.reader.tts.SpeechChapter
+import com.novalpie.nativeapp.data.ReaderTtsSettings
+import com.novalpie.nativeapp.feature.download.DownloadTask
+import com.novalpie.nativeapp.feature.download.DownloadTaskStore
+import com.novalpie.nativeapp.feature.download.DownloadCoordinator
+import com.novalpie.nativeapp.feature.download.NativeDownloadTaskRunner
+import kotlinx.coroutines.withContext
+import java.io.File
+
+/** Application-owned dependencies. Stores keep their Beta 6 names and serialization format. */
+internal class AppContainer(context: Context) {
+    private val application = context.applicationContext
+    val environment = RequestEnvironment(AuthSessionStore(application), NetworkConfigStore(application))
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    val speechEngine by lazy { AndroidSpeechEngine(application,applicationScope) }
+    private val playbackDelegate = lazy { TtsPlaybackCoordinator(speechEngine,WebsiteSpeechChapterSource(application,api),applicationScope) }
+    val playback by playbackDelegate
+    fun refreshEnvironmentFromStores() {
+        val revision=environment.revision
+        environment.setToken(AuthSessionStore(application).loadToken())
+        environment.setProxy(NetworkConfigStore(application).loadProxySettings())
+        if(revision!=environment.revision) {
+            if(playbackDelegate.isInitialized()){pendingSpeech=null;playback.stop()}
+            if(downloadsDelegate.isInitialized()){pendingDownload=null;downloads.cancel()}
+        }
+    }
+    // An in-process start payload avoids binder limits and never writes chapter prose to Intents.
+    var pendingSpeech: PendingSpeech? = null
+    var pendingDownload: DownloadTask? = null
+    val downloadStore by lazy {DownloadTaskStore(File(application.noBackupFilesDir,"download-tasks"))}
+    private val downloadsDelegate=lazy {DownloadCoordinator(applicationScope,{task->withContext(Dispatchers.IO){downloadStore.save(task)}},NativeDownloadTaskRunner(application,api))}
+    val downloads by downloadsDelegate
+    data class PendingSpeech(val chapter: SpeechChapter,val settings: ReaderTtsSettings,val startIndex:Int)
+
+    val api: NovalPieApi by lazy {
+        NovalPieApi(
+            authTokenProvider = { environment.token },
+            // Only consulted by the existing rejected-auth fallback, never during cold startup.
+            cookieProvider = {
+                runCatching {
+                    CookieManager.getInstance().getCookie("https://novalpie.cc")
+                        ?.trim()?.takeIf(String::isNotEmpty)
+                }.getOrNull()
+            },
+            proxySelectorProvider = { environment.proxy.toProxySelector(isEmulatorRuntime()) },
+        )
+    }
+    val searchRepository: SearchRepository by lazy { WebsiteSearchRepository(api) }
+    val searchPreferences: SearchPreferences by lazy {
+        StoredSearchPreferences(SearchSettingsStore(application), SearchHistoryStore(application))
+    }
+
+    companion object {
+        @Volatile private var instance: AppContainer? = null
+
+        fun from(context: Context): AppContainer = instance ?: synchronized(this) {
+            instance ?: AppContainer(context.applicationContext).also { instance = it }
+        }
+    }
+}
+
+/**
+ * Session/proxy changes invalidate responses, not just connection pools. The observable stream
+ * contains an opaque generation only; credentials cannot leak through state logging/toString.
+ */
+internal class RequestEnvironment(
+    private val auth: AuthSessionStore,
+    private val network: NetworkConfigStore,
+) {
+    @Volatile var token: String? = auth.loadToken()
+        private set
+    @Volatile var proxy: ProxySettings = network.loadProxySettings()
+        private set
+    private val changes = MutableStateFlow(0L)
+    val revisions = changes.asStateFlow()
+    val revision: Long get() = changes.value
+
+    @Synchronized fun setToken(value: String?) {
+        val normalized = value?.trim()?.takeIf(String::isNotEmpty)
+        if (normalized == token) return
+        if (normalized == null) auth.clearToken() else auth.saveToken(normalized)
+        token = normalized
+        changes.value++
+    }
+
+    @Synchronized fun setProxy(value: ProxySettings) {
+        val normalized = value.copy(
+            host = value.host.trim().ifBlank { ProxySettings.DEFAULT_PROXY_HOST },
+            port = value.port.coerceIn(1, 65535),
+        )
+        if (normalized == proxy) return
+        network.saveProxySettings(normalized)
+        proxy = normalized
+        changes.value++
+    }
+}

@@ -331,15 +331,12 @@ private fun FavoritesGridColumnsPicker(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                text = if (enabled) "标题、作者和阅读进度保留 · 长按卡片进入批量管理" else "切换网格后生效",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
+        Text(
+            text = if (enabled) "长按书籍可批量管理" else "切换网格后生效",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs),

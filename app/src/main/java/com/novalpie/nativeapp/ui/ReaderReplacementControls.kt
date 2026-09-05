@@ -262,7 +262,7 @@ internal fun ReaderReplacementSettingsControls(
                     } else {
                         displayRules.forEach { rule ->
                             val isShared = rule.owner == ReaderReplacementOwner.Shared
-                            val visible = !isShared || rule.id !in state.hiddenSharedRuleIds
+                            val visible = readerReplacementRowEnabled(rule, state.hiddenSharedRuleIds)
                             ReaderReplacementRuleRow(
                                 rule = rule,
                                 enabled = visible,

@@ -704,7 +704,10 @@ internal fun readerViewportPersistencePosition(
 internal data class ReaderBodyLayout(
     val chapters: List<ReaderBodyLayoutChapter>,
     val itemLocations: List<ReaderBodyItemLocation>,
+    val textLocations: List<ReaderBodyTextLocation> = emptyList(),
 )
+
+internal data class ReaderBodyTextLocation(val chapterId:Long,val itemIndex:Int,val text:String)
 
 internal data class ReaderBodyLayoutChapter(
     val chapter: com.novalpie.nativeapp.model.ReaderChapterContent,
@@ -730,6 +733,7 @@ internal fun readerBodyLayoutForContents(
             ),
         )
     }
+    val textLocations = mutableListOf<ReaderBodyTextLocation>()
     val itemLocations = buildList {
         chapters.forEach { chapterLayout ->
             val chapter = chapterLayout.chapter
@@ -747,6 +751,7 @@ internal fun readerBodyLayoutForContents(
             if (!chapter.title.isNullOrBlank()) addBodyItem()
             chapterLayout.visibleBlocks.forEach { block ->
                 if (block is ReaderContentBlock.Text || (block is ReaderContentBlock.Image && options.showImages)) {
+                    if (block is ReaderContentBlock.Text) textLocations += ReaderBodyTextLocation(chapter.chapterId,size,block.value)
                     addBodyItem()
                 }
             }
@@ -754,7 +759,14 @@ internal fun readerBodyLayoutForContents(
             if (options.showComments) addBodyItem()
         }
     }
-    return ReaderBodyLayout(chapters = chapters, itemLocations = itemLocations)
+    return ReaderBodyLayout(chapters = chapters, itemLocations = itemLocations,textLocations=textLocations.toList())
+}
+
+/** Uses the parsed document index; TTS following must not reparse HTML on the main thread. */
+internal fun readerBodyItemIndexForText(layout:ReaderBodyLayout,target:String,chapterId:Long):Int? {
+    val query=target.trim().takeIf(String::isNotBlank) ?: return null
+    return layout.textLocations.firstOrNull { it.chapterId==chapterId &&
+        (it.text.contains(query) || query.contains(it.text.take(24))) }?.itemIndex
 }
 
 /** O(1) global LazyColumn index to the persisted chapter-local viewport anchor. */

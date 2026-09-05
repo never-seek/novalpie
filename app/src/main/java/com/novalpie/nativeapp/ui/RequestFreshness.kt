@@ -57,7 +57,9 @@ internal fun isFreshSearchResult(
 ): Boolean =
     isFreshRequestSerial(request.serial, activeSerial) &&
         request.keyword == currentKeyword &&
-        request.options == currentOptions &&
+        // Grid/list and local cache policy affect presentation, not the submitted server query.
+        // Rejecting them here used to drop a valid response and leave Loading forever.
+        resolveSearchRequest(request.keyword, request.options) == resolveSearchRequest(currentKeyword, currentOptions) &&
         request.page == expectedPage
 
 internal fun searchKeywordForSubmission(currentKeyword: String, submittedKeyword: String?): String {

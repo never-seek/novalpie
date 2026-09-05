@@ -13,6 +13,14 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 class ReaderTextTest {
     @Test
+    fun plainReaderTextDecodesEntitiesWithoutEatingAngleBracketContent() {
+        val source="&lt;例子1&gt;\n甲 &amp; 乙\n&#x1F642;"
+        assertEquals(listOf("<例子1>","甲 & 乙","🙂"),readerParagraphsFromContent(source))
+        assertEquals(listOf("<例子1>","甲 & 乙","🙂"),readerFormattedParagraphsFromContent(source).map { it.text })
+        assertEquals(listOf("&lt;例子1&gt;"),readerParagraphsFromContent("&amp;lt;例子1&amp;gt;"))
+    }
+
+    @Test
     fun readerParagraphsDecodeHtmlEntitiesAndPreserveParagraphBreaks() {
         val paragraphs = readerParagraphsFromContent(
             """

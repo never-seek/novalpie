@@ -7,6 +7,19 @@ import org.junit.Test
 
 class AdvancedSearchSyntaxTest {
     @Test
+    fun advancedModeDoesNotInheritHiddenBasicFiltersAndSorts() {
+        val request=resolveSearchRequest("学院",SearchOptions(advancedSyntaxEnabled=true,source="upload",scope="author",
+            requiredTags=listOf("不相关标签"),blockedTags=listOf("学院"),wordCountRange="1000000..",matchType="exact",sortBy="word_count",sortOrder="asc"))
+        assertEquals("",request.source)
+        assertEquals("all",request.scope)
+        assertEquals("fuzzy_strict",request.matchType)
+        assertEquals("favorite_count",request.sortBy)
+        assertEquals("desc",request.sortOrder)
+        assertTrue(request.requiredTags.isEmpty())
+        assertTrue(request.blockedTags.isEmpty())
+        assertEquals(null,request.minWordCount)
+    }
+    @Test
     fun titleScopeAndExcludedTermMatchTheObservedWebsiteRequest() {
         val request = resolveSearchRequest(
             keyword = "@title:魔法 学院 NOT 续作",

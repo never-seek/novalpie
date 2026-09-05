@@ -1,5 +1,7 @@
 package com.novalpie.nativeapp.data
 
+import kotlinx.coroutines.ensureActive
+
 import android.os.SystemClock
 import android.util.Log
 import android.util.Base64
@@ -1324,6 +1326,27 @@ class NovalPieApi(
                 )
             )
         )
+    }
+
+    /** Source tag catalog is offset-paged, not a fixed "top 100" vocabulary. */
+    suspend fun allTags(pageSize:Int=1000):List<NovelTag> = withContext(Dispatchers.IO) {
+        val limit=pageSize.coerceIn(1,1000)
+        val result=linkedMapOf<String,NovelTag>()
+        var offset=0
+        repeat(100) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            val raw=get("/api/tags",mapOf("sort" to "count","limit" to limit.toString(),"offset" to offset.toString()))
+            val tags=normalizeNovelTags(raw)
+            val received=extractArray(raw,"tags","data","items","records","list").size
+            val root=raw as? JSONObject
+            val hasMore=root?.firstBooleanOrNull("hasMore","has_more")
+            val total=root?.intOrNull("total")
+            tags.forEach { tag->result[tag.id?.toString() ?: tag.name]=tag }
+            offset+=received
+            if(hasMore==false || (total!=null&&offset>=total) || (hasMore==null&&received<limit))return@withContext result.values.toList()
+            if(received==0)throw IOException("标签分页未继续返回数据，请重试")
+        }
+        throw IOException("标签目录超过安全分页范围，请稍后重试")
     }
 
     suspend fun messages(page: Int = 1, pageSize: Int = 20): List<SiteMessage> =

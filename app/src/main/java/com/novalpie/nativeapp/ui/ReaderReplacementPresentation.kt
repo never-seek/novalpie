@@ -10,6 +10,7 @@ import com.novalpie.nativeapp.model.ReaderReplacementTarget
 import com.novalpie.nativeapp.model.LoadResult
 import com.novalpie.nativeapp.model.ReaderChapterContent
 import com.novalpie.nativeapp.model.Chapter
+import com.novalpie.nativeapp.feature.reader.text.DerivedTextPipeline
 
 internal data class ReaderReplacementValidation(
     val isValid: Boolean,
@@ -275,8 +276,8 @@ internal fun readerReplacementSaveSyncAction(
 ): ReaderReplacementRemoteSyncAction {
     val previousServerRuleId = previous?.let(::readerReplacementPersonalServerRuleId)
     if (!saved.canSyncReaderReplacementToWebsite()) {
-        return previousServerRuleId?.let(ReaderReplacementRemoteSyncAction::Delete)
-            ?: ReaderReplacementRemoteSyncAction.None
+        // Device-local disable/scope/target must never delete a contribution other readers use.
+        return ReaderReplacementRemoteSyncAction.None
     }
     if (previousServerRuleId == null) return ReaderReplacementRemoteSyncAction.Create(saved)
 
@@ -339,9 +340,13 @@ internal fun effectiveReaderReplacementRules(
         rule.isEnabled && ruleAppliesTo(rule, chapterOrder, target) && validateReaderReplacementRule(rule).isValid
     }
     val personalSources = activePersonal.map { it.source.trim() }.toSet()
+    // The server's shared view includes the user's own published rows. A local disabled/scoped
+    // override still owns that server row even when it doesn't apply in this chapter.
+    val personalServerIds = personalRules.mapNotNull(::readerReplacementPersonalServerRuleId).toSet()
     val activeShared = sharedRules.filter { rule ->
         rule.isEnabled &&
             rule.id !in hiddenSharedRuleIds &&
+            (rule.websiteRuleId ?: rule.id.removePrefix("shared:").toLongOrNull()) !in personalServerIds &&
             rule.source.trim() !in personalSources &&
             ruleAppliesTo(rule, chapterOrder, target) &&
             validateReaderReplacementRule(rule).isValid
@@ -349,6 +354,9 @@ internal fun effectiveReaderReplacementRules(
     return activeShared.sortedWith(readerReplacementRuleComparator) +
         activePersonal.sortedWith(readerReplacementRuleComparator)
 }
+
+internal fun readerReplacementRowEnabled(rule: ReaderReplacementRule, hiddenSharedRuleIds: Set<String>): Boolean =
+    rule.isEnabled && (rule.owner != ReaderReplacementOwner.Shared || rule.id !in hiddenSharedRuleIds)
 
 internal fun applyReaderReplacementRules(
     original: String,
@@ -401,31 +409,8 @@ internal fun applyReaderReplacementRulesToDownloadBody(
     rules: List<ReaderReplacementRule>,
     chapterOrder: Int?,
 ): ReaderReplacementApplyResult {
-    val output = StringBuilder(original.length)
-    val invalidRuleIds = mutableListOf<String>()
-    var cursor = 0
-    readerDownloadImageMarker.findAll(original).forEach { marker ->
-        val prose = original.substring(cursor, marker.range.first)
-        val transformed = applyReaderReplacementRules(
-            original = prose,
-            rules = rules,
-            chapterOrder = chapterOrder,
-            target = ReaderReplacementTarget.Content,
-        )
-        output.append(transformed.text)
-        invalidRuleIds += transformed.invalidRuleIds
-        output.append(marker.value)
-        cursor = marker.range.last + 1
-    }
-    val tail = applyReaderReplacementRules(
-        original = original.substring(cursor),
-        rules = rules,
-        chapterOrder = chapterOrder,
-        target = ReaderReplacementTarget.Content,
-    )
-    output.append(tail.text)
-    invalidRuleIds += tail.invalidRuleIds
-    return ReaderReplacementApplyResult(output.toString(), invalidRuleIds.distinct())
+    val derived = DerivedTextPipeline.transform(original, rules, chapterOrder)
+    return ReaderReplacementApplyResult(derived.markup, derived.invalidRuleIds)
 }
 
 internal fun effectiveReaderText(
@@ -441,11 +426,10 @@ internal fun effectiveReaderText(
         chapterOrder = chapterOrder,
         target = ReaderReplacementTarget.Title,
     )
-    val transformedContent = applyReaderReplacementRules(
+    val transformedContent = applyReaderReplacementRulesToDownloadBody(
         original = content,
         rules = rules,
         chapterOrder = chapterOrder,
-        target = ReaderReplacementTarget.Content,
     )
     return EffectiveReaderText(
         title = transformedTitle.text,
@@ -477,11 +461,10 @@ internal fun effectiveReaderChapterContent(
         chapterOrder = chapterOrder,
         target = ReaderReplacementTarget.Title,
     )
-    val contentResult = applyReaderReplacementRules(
+    val contentResult = applyReaderReplacementRulesToDownloadBody(
         original = chapter.content.content,
         rules = contentRules,
         chapterOrder = chapterOrder,
-        target = ReaderReplacementTarget.Content,
     )
     return chapter.copy(
         title = titleResult.text,
@@ -603,8 +586,6 @@ private fun regexFlagsToPatternFlags(flags: Set<ReaderReplacementRegexFlag>): In
     if (ReaderReplacementRegexFlag.Multiline in flags) add(Pattern.MULTILINE)
     if (ReaderReplacementRegexFlag.DotMatchesAll in flags) add(Pattern.DOTALL)
 }.fold(0) { accumulator, flag -> accumulator or flag }
-
-private val readerDownloadImageMarker = Regex("\\[图片(?:[:：]|\\s)*?.*?\\]")
 
 private fun ReaderReplacementRule.canSyncReaderReplacementToWebsite(): Boolean =
     owner == ReaderReplacementOwner.Personal &&

@@ -16,6 +16,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import com.novalpie.nativeapp.model.ChapterIllustration
 import com.novalpie.nativeapp.model.ReaderContent
+import com.novalpie.nativeapp.feature.reader.text.DerivedTextPipeline
 
 internal sealed interface ReaderContentBlock {
     data class Text(
@@ -144,7 +145,7 @@ internal fun readerParagraphsFromContent(raw: String): List<String> {
     // Android, this keeps the presentation layer usable in JVM tests and preserves authored line
     // breaks exactly as the source reader does.
     if (!keepsExplicitLineBreaks && !source.contains('<') && !source.contains('>')) {
-        return source
+        return DerivedTextPipeline.decodeEntities(source)
             .replace("\r\n", "\n")
             .replace('\r', '\n')
             .lines()

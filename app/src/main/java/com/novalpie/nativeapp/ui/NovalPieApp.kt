@@ -6,6 +6,16 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.novalpie.nativeapp.core.AppContainer
+import com.novalpie.nativeapp.feature.reader.tts.ReaderPlaybackService
+import com.novalpie.nativeapp.feature.reader.tts.SpeechChapter
+import com.novalpie.nativeapp.feature.reader.tts.SpeechStatus
+import com.novalpie.nativeapp.feature.reader.pagination.NativePagedReader
+import com.novalpie.nativeapp.feature.search.searchWordRangeInput
+import com.novalpie.nativeapp.feature.search.searchWordRangeStops
+import com.novalpie.nativeapp.feature.search.searchTagQueryMatches
+import com.novalpie.nativeapp.model.ChineseVariant
 import java.util.concurrent.atomic.AtomicBoolean
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
@@ -5037,6 +5047,13 @@ private fun SearchTagFilterSection(
     var mode by remember { mutableStateOf(SearchTagFilterMode.Required) }
     var tagInput by remember { mutableStateOf("") }
     var visibleTagCount by remember { mutableIntStateOf(24) }
+    val indexedTags=remember(tags) {
+        (tags as? LoadResult.Success)?.value.orEmpty().map {it to convertChineseVariantText(it.name,ChineseVariant.Simplified)}
+    }
+    val filteredTags=remember(indexedTags,tagInput) {
+        val query=convertChineseVariantText(tagInput.trim(),ChineseVariant.Simplified)
+        indexedTags.filter {query.isBlank()||it.second.contains(query,ignoreCase=true)}.map{it.first}
+    }
     val hasSelectedTags = options.requiredTags.isNotEmpty() || options.blockedTags.isNotEmpty()
     val applyInput = {
         if (tagInput.isNotBlank()) {
@@ -5102,7 +5119,7 @@ private fun SearchTagFilterSection(
                 }
             }
         }
-        NpSectionHeader(title = "热门标签", actionLabel = "刷新", onAction = onRefresh)
+        NpSectionHeader(title = "全部标签", actionLabel = "刷新", onAction = onRefresh)
         Text(
             "选择后立即按网站标签条件刷新结果。",
             style = MaterialTheme.typography.bodySmall,
@@ -5122,7 +5139,7 @@ private fun SearchTagFilterSection(
                     LibraryStatusLine("暂无可显示标签")
                 } else {
                     NpChipRow {
-                        tags.value.take(visibleTagCount).forEach { tag ->
+                        filteredTags.take(visibleTagCount).forEach { tag ->
                             val selected = when (mode) {
                                 SearchTagFilterMode.Required -> options.requiredTags.containsSearchTag(tag.name)
                                 SearchTagFilterMode.Blocked -> options.blockedTags.containsSearchTag(tag.name)
@@ -5137,13 +5154,13 @@ private fun SearchTagFilterSection(
                             )
                         }
                     }
-                    if (tags.value.size > visibleTagCount) {
+                    if (filteredTags.size > visibleTagCount) {
                         TextButton(
                             onClick = {
-                                visibleTagCount = (visibleTagCount + 24).coerceAtMost(tags.value.size)
+                                visibleTagCount = (visibleTagCount + 24).coerceAtMost(filteredTags.size)
                             }
                         ) {
-                            Text("显示更多热门标签")
+                            Text("显示更多标签（${filteredTags.size}）")
                         }
                     }
                 }
@@ -5157,8 +5174,31 @@ private fun SearchWordCountSection(
     options: SearchOptions,
     onWordCountRangeChange: (String) -> Unit
 ) {
-    val group = discoverFilterGroups(options).single { it.label == "字数" }
-    FilterChoiceRail(group = group, onSelected = onWordCountRangeChange)
+    var minText by remember(options.wordCountRange){mutableStateOf(searchMinWordCount(options.wordCountRange)?.toString().orEmpty())}
+    var maxText by remember(options.wordCountRange){mutableStateOf(searchMaxWordCount(options.wordCountRange)?.toString().orEmpty())}
+    var rangeError by remember{mutableStateOf<String?>(null)}
+    var slider by remember(options.wordCountRange){mutableStateOf(
+        searchWordRangeStops.indexOf(searchMinWordCount(options.wordCountRange) ?: 0L).coerceIn(0,7).toFloat()..
+            searchWordRangeStops.indexOf(searchMaxWordCount(options.wordCountRange)).let {if(it<0)8 else it}.toFloat())}
+    Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+        Text("字数范围",style=MaterialTheme.typography.titleSmall)
+        androidx.compose.material3.RangeSlider(value=slider,onValueChange={slider=it},valueRange=0f..8f,steps=7,
+            onValueChangeFinished={
+                minText=searchWordRangeStops[slider.start.toInt().coerceAtMost(7)]?.toString().orEmpty()
+                maxText=searchWordRangeStops[slider.endInclusive.toInt()]?.toString().orEmpty()
+            })
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(value=minText,onValueChange={minText=it;rangeError=null},label={Text("最少字数")},modifier=Modifier.weight(1f),singleLine=true,
+                keyboardOptions=KeyboardOptions(keyboardType=androidx.compose.ui.text.input.KeyboardType.Number))
+            OutlinedTextField(value=maxText,onValueChange={maxText=it;rangeError=null},label={Text("最多字数")},placeholder={Text("不限")},modifier=Modifier.weight(1f),singleLine=true,
+                keyboardOptions=KeyboardOptions(keyboardType=androidx.compose.ui.text.input.KeyboardType.Number))
+        }
+        rangeError?.let {Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.labelSmall)}
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End) {
+            TextButton(onClick={onWordCountRangeChange("")}){Text("重置")}
+            Button(onClick={val result=searchWordRangeInput(minText,maxText);rangeError=result.error;result.value?.let(onWordCountRangeChange)}){Text("确定")}
+        }
+    }
 }
 
 @Composable
@@ -6222,8 +6262,7 @@ internal fun ReaderScreen(
     var pendingChapterEntryPosition by remember { mutableStateOf(ReaderChapterEntryPosition.Start) }
     // Auto-next needs to survive the route's loading phase, but must not hijack a later manual
     // navigation to some other chapter.
-    var pendingTtsContinuationChapterId by remember(state.bookId) { mutableStateOf<Long?>(null) }
-    var pendingTtsContinuationSourceChapterId by remember(state.bookId) { mutableStateOf<Long?>(null) }
+    var speechNavigationTarget by remember(state.bookId) { mutableStateOf<Long?>(null) }
     var lastReaderChromeTapUptime by remember { mutableLongStateOf(0L) }
     var lastReaderChromeTapXFraction by remember { mutableFloatStateOf(-1f) }
     var lastReaderChromeTapYFraction by remember { mutableFloatStateOf(-1f) }
@@ -6307,36 +6346,22 @@ internal fun ReaderScreen(
             }
         }
     }
-    val ttsController = remember(context) { ReaderTtsController(context) }
-    androidx.compose.runtime.DisposableEffect(ttsController) {
-        onDispose { ttsController.shutdown() }
-    }
-    var lastAppliedTtsSettings by remember(ttsController) { mutableStateOf(ttsSettings) }
+    val appDependencies = remember(context) { AppContainer.from(context) }
+    val playback = appDependencies.playback
+    val speech by playback.state.collectAsStateWithLifecycle()
+    val speechBelongsToBook = speech.chapter?.bookId == state.bookId
+    var lastAppliedTtsSettings by remember(playback) { mutableStateOf(ttsSettings) }
     LaunchedEffect(ttsSettings) {
         if (ttsSettings != lastAppliedTtsSettings) {
-            ttsController.updateSettingsForResume(ttsSettings)
+            playback.updateSettings(ttsSettings)
             lastAppliedTtsSettings = ttsSettings
         }
     }
     LaunchedEffect(options.showTts) {
-        if (!options.showTts) ttsController.stop()
+        if (!options.showTts) playback.stop()
     }
-    LaunchedEffect(replacementState.ttsRevision) {
-        // The display text and spoken text share the effective replacement pipeline. Never allow
-        // an already queued utterance to speak pre-replacement text after a user rule edit.
-        // Background glossary imports intentionally leave the existing queue alone.
-        ttsController.stop()
-    }
-    LaunchedEffect(chapters) {
-        // Until the directory names the current chapter's real ordinal, scope-specific rules are
-        // intentionally withheld. Stop any queue that began in that brief gap rather than let it
-        // speak text for the wrong chapter scope.
-        if (readerReplacementStateHasScopedRules(replacementState)) {
-            ttsController.stop()
-        }
-    }
-    LaunchedEffect(ttsController.voiceFallback) {
-        ttsController.voiceFallback?.let {
+    LaunchedEffect(appDependencies.speechEngine.voiceFallback) {
+        appDependencies.speechEngine.voiceFallback?.let {
             onReaderTtsSettingsChange { settings -> settings.copy(voice = null) }
         }
     }
@@ -6360,6 +6385,8 @@ internal fun ReaderScreen(
     // modes. ReaderSettingsStore and the settings sheet repair that state for future launches.
     val continuousScrollEnabled = options.useInfiniteScroll
     val pageTurnEnabled = options.pageTurnMode && !continuousScrollEnabled
+    var nativePageTurn by remember(state.bookId,state.chapterId) { mutableStateOf<((Int)->Unit)?>(null) }
+    var nativePagedAnchor by remember(state.bookId,state.chapterId) {mutableStateOf<ReaderViewportAnchor?>(null)}
     val pageTerminalPaddingRequired = readerPageTerminalPaddingRequired(
         pageTurnEnabled = pageTurnEnabled,
         hasReadableBody = hasReadableBody,
@@ -6430,17 +6457,12 @@ internal fun ReaderScreen(
     // A new chapter replaces the reader route in-place, so the LazyColumn survives by design.
     // Reset its viewport explicitly; otherwise a user who was near the end of chapter A can land
     // in the middle of chapter B before its heading and first paragraphs.
+    var previousReaderRouteChapter by remember(state.bookId) { mutableLongStateOf(state.chapterId) }
     LaunchedEffect(state.bookId, state.chapterId, state.entryPosition) {
-        ttsController.stop()
-        val continuationTarget = pendingTtsContinuationChapterId
-        if (
-            continuationTarget != null &&
-            state.chapterId != continuationTarget &&
-            state.chapterId != pendingTtsContinuationSourceChapterId
-        ) {
-            pendingTtsContinuationChapterId = null
-            pendingTtsContinuationSourceChapterId = null
-        }
+        if (previousReaderRouteChapter != state.chapterId && speechNavigationTarget != state.chapterId &&
+            speech.chapter?.chapterId != state.chapterId) playback.stop()
+        previousReaderRouteChapter = state.chapterId
+        if (speechNavigationTarget == state.chapterId) speechNavigationTarget = null
         catalogVisible.value = false
         readerSettingsVisible.value = false
         readerHelpVisible.value = false
@@ -6466,6 +6488,7 @@ internal fun ReaderScreen(
         hasReadableBody,
         readerEndSentinelKey,
     ) {
+        if (pageTurnEnabled) return@LaunchedEffect
         if (!hasReadableBody || pendingChapterEntryPosition != ReaderChapterEntryPosition.End) {
             return@LaunchedEffect
         }
@@ -6490,6 +6513,7 @@ internal fun ReaderScreen(
         readerEndSentinelKey,
         pendingViewportAnchor,
     ) {
+        if (pageTurnEnabled) return@LaunchedEffect
         val anchor = pendingViewportAnchor ?: return@LaunchedEffect
         if (!hasReadableBody || state.entryPosition != ReaderChapterEntryPosition.Start) {
             return@LaunchedEffect
@@ -6506,7 +6530,8 @@ internal fun ReaderScreen(
 
     // Infinite scrolling appends bodies without replacing the route. Update the visible chapter
     // immediately for the footer/progress model, but avoid disk work unless that chapter changes.
-    LaunchedEffect(listState) {
+    LaunchedEffect(listState,pageTurnEnabled) {
+        if (pageTurnEnabled) return@LaunchedEffect
         snapshotFlow {
             listState.firstVisibleItemIndex
         }.collect { visibleItemIndex ->
@@ -6530,7 +6555,8 @@ internal fun ReaderScreen(
     // The first optimization removed HTML/Markdown parsing from the scroll hot path. Persist the
     // local paragraph anchor only once touch/fling activity settles so SharedPreferences and the
     // root ViewModel do not recompose the reader during every 24px of a high-refresh drag.
-    LaunchedEffect(listState) {
+    LaunchedEffect(listState,pageTurnEnabled) {
+        if(pageTurnEnabled)return@LaunchedEffect
         snapshotFlow {
             readerViewportPersistencePosition(
                 isScrollInProgress = listState.isScrollInProgress,
@@ -6653,8 +6679,8 @@ internal fun ReaderScreen(
     // The compact rails are overlays, not permanent masks. Keep them in the same visibility
     // contract as the action controls: cold loading/error states remain navigable, while a loaded
     // immersive page has no persistent header/footer that can clip the first or final line.
-    val headerVisible = chromeVisible && options.showHeader && !sidePanelVisible
-    val statusVisible = chromeVisible && options.showFooter && !sidePanelVisible
+    val headerVisible = (pageTurnEnabled || chromeVisible) && options.showHeader && !sidePanelVisible
+    val statusVisible = (pageTurnEnabled || chromeVisible) && options.showFooter && !sidePanelVisible
     val actionRailVisible = chromeVisible
     val pageAlpha = remember { Animatable(1f) }
     val pageOffset = remember { Animatable(0f) }
@@ -6683,6 +6709,10 @@ internal fun ReaderScreen(
     }
 
     fun turnReaderPage(direction: Int, gestureId: Long? = null) {
+        if (pageTurnEnabled) {
+            nativePageTurn?.invoke(direction)
+            return
+        }
         if (pageTurnInProgress) return
         val adjacent = adjacentReaderChapters(state.chapterId, chapters)
         val viewportInfo = listState.layoutInfo
@@ -6930,117 +6960,73 @@ internal fun ReaderScreen(
         )
     }
 
-    fun startTts(continueFromPreviousChapter: Boolean) {
-        val segments = chapterContents.flatMap { chapter ->
-            readerParagraphsFromContent(chapter.content.content)
-        }
-        val onFinished: (() -> Unit)? = if (ttsSettings.enableAutoNextChapter) {
-            {
-                val nextChapterId = readerTtsAutoNextChapterId(
-                    spokenChapterIds = chapterContents.map(ReaderChapterContent::chapterId),
-                    routeChapterId = state.chapterId,
-                    chapters = chapters,
-                )
-                if (nextChapterId != null) {
-                    pendingTtsContinuationSourceChapterId = state.chapterId
-                    pendingTtsContinuationChapterId = nextChapterId
-                    onOpenReader(state.bookId, nextChapterId)
-                }
-                Unit
-            }
-        } else {
-            null
-        }
-        val onSegmentChanged: (Int, String) -> Unit = { _, text ->
-            if (ttsSettings.enableAutoScroll) {
-                val itemIndex = readerBodyItemIndexForText(chapterContents, options, text)
-                if (itemIndex != null) {
-                    readerScope.launch {
-                        listState.animateScrollToItem(itemIndex)
-                    }
-                }
-            }
-        }
-        if (continueFromPreviousChapter) {
-            ttsController.speak(
-                segments = segments,
-                settings = ttsSettings,
-                onSegmentChanged = onSegmentChanged,
-                onFinished = onFinished,
-            )
-        } else {
-            ttsController.toggle(
-                segments = segments,
-                settings = ttsSettings,
-                onSegmentChanged = onSegmentChanged,
-                onFinished = onFinished,
-            )
-        }
+    fun speechChapterFor(chapter: ReaderChapterContent): SpeechChapter {
+        val index = chapters.indexOfFirst { it.id == chapter.chapterId }
+        return SpeechChapter(
+            bookId = state.bookId,
+            chapterId = chapter.chapterId,
+            bookTitle = state.bookTitle ?: "小说听书",
+            chapterTitle = chapter.title ?: chapter.content.title.orEmpty(),
+            segments = readerTtsSegments(readerBlocksForContent(chapter.content)
+                .filterIsInstance<ReaderContentBlock.Text>().map { it.value }),
+            nextChapterId = if (index >= 0) chapters.getOrNull(index + 1)?.id else null,
+            textRevision = replacementState.revision,
+        )
+    }
+
+    fun startTts() {
+        if (!hasReadableBody) return
+        val visibleId = visibleReaderChapterId ?: state.chapterId
+        val chapter = chapterContents.firstOrNull { it.chapterId == visibleId } ?: return
+        val document = speechChapterFor(chapter)
+        // Begin at the visible paragraph instead of rereading every previously appended chapter.
+        val visibleIndex = if(pageTurnEnabled)nativePagedAnchor?.itemIndexWithinChapter ?: 0 else listState.firstVisibleItemIndex
+        val first = document.segments.indexOfFirst { segment ->
+            (readerBodyItemIndexForText(readerBodyLayout, segment, chapter.chapterId) ?: Int.MAX_VALUE) >= visibleIndex
+        }.takeIf { it >= 0 } ?: document.segments.lastIndex.coerceAtLeast(0)
+        runCatching { ReaderPlaybackService.start(context,document,ttsSettings,first) }
+            .onFailure { Toast.makeText(context,"无法启动后台听书：${it.message}",Toast.LENGTH_LONG).show() }
     }
 
     fun toggleTts() {
-        when (
-            readerTtsToggleAction(
-                pendingChapterId = pendingTtsContinuationChapterId,
-                hasReadableBody = hasReadableBody,
-                playbackState = ttsController.state,
-            )
-        ) {
-            ReaderTtsToggleAction.CancelPendingContinuation -> {
-                pendingTtsContinuationChapterId = null
-                pendingTtsContinuationSourceChapterId = null
-                ttsController.stop()
+        if (!speechBelongsToBook || speech.status in setOf(SpeechStatus.Stopped,SpeechStatus.Error)) startTts()
+        else when (speech.status) {
+            SpeechStatus.Speaking -> playback.pause()
+            SpeechStatus.Paused -> ReaderPlaybackService.resume(context)
+            SpeechStatus.Loading -> playback.stop()
+            else -> Unit
+        }
+    }
+
+    var observedRuleRevision by remember(state.bookId) { mutableLongStateOf(replacementState.ttsRevision) }
+    LaunchedEffect(replacementState.ttsRevision, chapterContents) {
+        if (observedRuleRevision != replacementState.ttsRevision) {
+            observedRuleRevision = replacementState.ttsRevision
+            if (speechBelongsToBook) chapterContents.firstOrNull { it.chapterId == speech.chapter?.chapterId }
+                ?.let { playback.replaceChapter(speechChapterFor(it)) }
+        }
+    }
+    LaunchedEffect(speech.chapter?.chapterId,speech.segmentIndex,speech.status,hasReadableBody) {
+        val active = speech.chapter ?: return@LaunchedEffect
+        if (!speechBelongsToBook || !ttsSettings.enableAutoScroll || speech.status != SpeechStatus.Speaking) return@LaunchedEffect
+        if (chapterContents.none { it.chapterId == active.chapterId }) {
+            speechNavigationTarget = active.chapterId
+            onOpenReader(state.bookId,active.chapterId)
+        } else if (hasReadableBody && !pageTurnEnabled) {
+            active.segments.getOrNull(speech.segmentIndex)?.let { text ->
+                readerBodyItemIndexForText(readerBodyLayout,text,active.chapterId)?.let { listState.scrollToItem(it) }
             }
-            ReaderTtsToggleAction.StartPlayback ->
-                startTts(continueFromPreviousChapter = false)
-            ReaderTtsToggleAction.PausePlayback -> ttsController.pause()
-            ReaderTtsToggleAction.ResumePlayback -> ttsController.resume()
-            ReaderTtsToggleAction.StopPlayback -> ttsController.stop()
-            ReaderTtsToggleAction.IgnoreUntilBodyLoads -> Unit
         }
     }
-
-    LaunchedEffect(
-        pendingTtsContinuationChapterId,
-        state.chapterId,
-        hasReadableBody,
-        chapterContents,
-        ttsSettings,
-    ) {
-        if (
-            readerTtsContinuationShouldStart(
-                pendingChapterId = pendingTtsContinuationChapterId,
-                currentChapterId = state.chapterId,
-                hasReadableBody = hasReadableBody,
-            )
-        ) {
-            // Clear this first. Starting TTS changes reader state and must never replay a chapter
-            // because a recomposition observed the same continuation twice.
-            pendingTtsContinuationChapterId = null
-            pendingTtsContinuationSourceChapterId = null
-            startTts(continueFromPreviousChapter = true)
-        }
+    val readerTtsState = if (!speechBelongsToBook) ReaderTtsState.Stopped else when(speech.status) {
+        SpeechStatus.Stopped -> ReaderTtsState.Stopped
+        SpeechStatus.Loading -> ReaderTtsState.Loading
+        SpeechStatus.Speaking -> ReaderTtsState.Speaking
+        SpeechStatus.Paused -> ReaderTtsState.Paused
+        SpeechStatus.Error -> ReaderTtsState.Error
     }
-    LaunchedEffect(pendingTtsContinuationChapterId, state.chapterId, state.content) {
-        if (
-            readerTtsContinuationShouldCancelForLoadFailure(
-                pendingChapterId = pendingTtsContinuationChapterId,
-                currentChapterId = state.chapterId,
-                bodyLoadFailed = state.content is LoadResult.Error,
-            )
-        ) {
-            pendingTtsContinuationChapterId = null
-            pendingTtsContinuationSourceChapterId = null
-            ttsController.stop()
-        }
-    }
-
-    val readerTtsState = if (pendingTtsContinuationChapterId != null) {
-        ReaderTtsState.Loading
-    } else {
-        ttsController.state
-    }
-    val ttsHighlightText = ttsController.currentSegmentText
+    val ttsHighlightText = speech.chapter?.takeIf { speechBelongsToBook && ttsSettings.enableHighlight && speech.status == SpeechStatus.Speaking }
+        ?.segments?.getOrNull(speech.segmentIndex)
     val readerSystemBarModifier = if (readerFullscreenArticleUsesSystemBarInsets(readerFullscreen)) {
         Modifier.windowInsetsPadding(WindowInsets.systemBars)
     } else {
@@ -7071,7 +7057,43 @@ internal fun ReaderScreen(
             .fillMaxHeight()
             .fillMaxWidth(readerSidePanelWidthFraction())
             .widthIn(max = readerSidePanelMaxWidthDp().dp)
-        LazyColumn(
+        if (pageTurnEnabled && readableContent != null) {
+            val effectiveChapter=chapterContents.firstOrNull {it.chapterId==state.chapterId}
+            val paragraphLayout=readerTextLayout(options)
+            NativePagedReader(
+                bookId=state.bookId,chapterId=state.chapterId,original=readableContent,
+                derived=effectiveChapter?.content ?: readableContent,options=options,entry=state.entryPosition,
+                legacyAnchor=state.restoreViewportAnchor,fontFamily=readerFontFamily(options.fontFamily),
+                textColor=palette.text,background=palette.background,
+                hasPrevious=adjacentReaderChapters(state.chapterId,chapters).previous!=null,
+                hasNext=adjacentReaderChapters(state.chapterId,chapters).next!=null,
+                onTap={x,y->
+                    activeReaderGestureId++
+                    performReaderTap(x,y,android.os.SystemClock.uptimeMillis(),activeReaderGestureId)
+                },
+                onBoundary={direction->openReaderPageBoundary(if(direction<0)ReaderPageBoundaryTarget.PreviousChapter else ReaderPageBoundaryTarget.NextChapter)},
+                registerTurn={nativePageTurn=it},
+                onAnchor={nativePagedAnchor=it;onViewportAnchorChanged(it)},onPreview=onPreviewImage,
+                followText=ttsHighlightText.takeIf {ttsSettings.enableAutoScroll},
+                modifier=Modifier.align(Alignment.Center).widthIn(max=options.contentWidthDp.dp).fillMaxSize()
+                    .then(readerSystemBarModifier)
+                    .padding(start=paragraphLayout.horizontalPaddingDp.dp,end=paragraphLayout.horizontalPaddingDp.dp,
+                        top=(if(options.showHeader)chromeLayout.headerHeightDp else 0f).dp+options.screenPaddingTopDp.dp,
+                        bottom=(if(options.showFooter)chromeLayout.statusHeightDp else 0f).dp+options.screenPaddingBottomDp.dp),
+            ) {
+                ReaderChapterCommentsSection(
+                    chapterId=state.chapterId,
+                    commentState=state.chapterCommentStates[state.chapterId] ?: ReaderChapterCommentState(comments=state.comments),
+                    defaultCollapsed=true,inlineCommentInteractionActive=inlineCommentInteractionActive,
+                    onRetry={onRetryChapterComments(state.chapterId)},
+                    onDraftChange={onCommentDraftChange(state.chapterId,it)},onSubmit={onSubmitComment(state.chapterId)},
+                    onReply={onReplyComment(state.chapterId,it)},onCancelReply={onCancelCommentReply(state.chapterId)},
+                    onLike={onCommentLike(state.chapterId,it)},onDislike={onCommentDislike(state.chapterId,it)},
+                    onEmoji={onCommentEmoji(state.chapterId,it)},onAward={onCommentAward(state.chapterId,it)},
+                    onOpenUser=onOpenUser,onOpenLink=onOpenLink,onOpenWeb={onOpenWeb(state.chapterId)},
+                )
+            }
+        } else LazyColumn(
                 state = listState,
                 userScrollEnabled = !pageTurnEnabled,
                 modifier = Modifier
@@ -7322,7 +7344,7 @@ internal fun ReaderScreen(
                 cacheClearing = state.clearingChapterCache,
                 cacheMessage = state.chapterCacheActionMessage,
                 ttsSettings = ttsSettings,
-                ttsVoiceOptions = ttsController.voiceOptions,
+                    ttsVoiceOptions = appDependencies.speechEngine.voiceOptions,
                 onTtsSettingsChange = onReaderTtsSettingsChange,
                 replacementState = replacementState,
                 currentChapterOrder = readerChapterOrderForId(state.chapterId, chapters),
@@ -7402,9 +7424,9 @@ internal fun ReaderScreen(
         ) {
             ReaderTtsFeedback(
                 state = readerTtsState,
-                failureMessage = ttsController.failureMessage,
-                voiceFallbackMessage = ttsController.voiceFallback?.message,
-                onStop = ttsController::stop,
+                failureMessage = speech.message,
+                voiceFallbackMessage = appDependencies.speechEngine.voiceFallback?.message,
+                onStop = playback::stop,
                 onOpenSystemTtsSettings = {
                     // The actionable error refers to the Android speech engine, not an app-local
                     // voice preference. Open the matching system surface and retain the local TTS
@@ -11213,7 +11235,7 @@ private fun Modifier.readerInlineCommentInteractionGuard(
  * card remains the click target; only a stationary press held past the platform long-press
  * threshold opens the image preview.
  */
-private fun Modifier.longPressOnly(
+internal fun Modifier.longPressOnly(
     touchSlopPx: Float,
     onLongPress: () -> Unit,
 ): Modifier = pointerInput(touchSlopPx) {
