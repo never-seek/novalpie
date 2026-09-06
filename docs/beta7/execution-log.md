@@ -151,3 +151,6 @@
 - exec69606恢复失败（278.768秒），同包CRC已通过/建立package.complete，64KB写到公共pending约7.7GB后仍EPROTO；小chunk不是完整解决。新增明确本机保底：公共MediaStore IOException时把已验证成品移动至files/native-downloads，经仅该目录FileProvider可打开分享，界面明确系统目录失败/本机保存/卸载会移除，不假报公共目录成功。当前74124全量build中、MuMu正常shutdown，任务原包与缓存保留供下一次恢复；不重新下载/授权。
 - 本机保底单测因AndroidX FileProvider在Windows Robolectric路径'/'比较失败，不是Android路径行为；改注入仅URI工厂的单测，保持文件移动/范围/显示原断言，并新增真实Device FileProvider打开/删除测试。53203单测+Debug/AndroidTest通过（2m47s），APKAFA983EC...28C4D161，测试0C595FB8...A0483288，安装实机先验证真实FileProvider后再恢复大包。所有未push。
 - 本机FileProvider device test通过。exec27498第三次大包恢复最终OK(1test)，331.238秒；相同任务免重授权，23GB完成包移入本机区并读回完整验证，1365章/19573源占位/19573图引用/19573正文图片+1封面，各原图SHA一致。机器报告在beta7-device/20260906-large-350192-report.json。测试成品已删，成功任务工作目录已清；不是整个Beta7验收通过，当前只大包完整性/本机兼容路径通过。
+- 本轮全量939tests/0failures、lint通过（10817，6m50s），本机fallback保存为本地提交63af1f7（未push）。公共存储缺陷以明确兼容路径解决，不能直接宣传所有系统公共Downloads成功。后续开始CommunityQuoteRuleTest原站1124常用引号负向前瞻的窄范围安全兼容，当前测试14241运行；不引入任意回溯正则执行。
+- CommunityQuoteRuleTest首次2红灯；新增仅识别论坛1124四种引号固定模式的线性扫描+RE2替换适配。与Java原模式在合成小文本做精确对照时发现跳过匹配后的引号边界差异，新增case继续红灯后修；当前正在重新跑47项替换相关测试。仍未安装这一适配，不宣称任意lookahead支持。
+- 9330替换相关47项测试已全绿，CommunityQuoteRule4项包含四引号类型/禁止跨行/跳过与相邻边界/危险规则拒绝，Debug assemble仍执行。适配只覆盖已核对的1124固定模式，其他前后瞻仍错误提示；任意脚本/回溯正则未启用。

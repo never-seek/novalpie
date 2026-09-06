@@ -11,6 +11,7 @@ import com.novalpie.nativeapp.model.LoadResult
 import com.novalpie.nativeapp.model.ReaderChapterContent
 import com.novalpie.nativeapp.model.Chapter
 import com.novalpie.nativeapp.feature.reader.text.DerivedTextPipeline
+import com.novalpie.nativeapp.feature.reader.text.CommunityQuoteRule
 
 internal data class ReaderReplacementValidation(
     val isValid: Boolean,
@@ -321,6 +322,7 @@ internal fun validateReaderReplacementRule(rule: ReaderReplacementRule): ReaderR
     if (source.length > MAX_REPLACEMENT_REGEX_LENGTH) {
         return ReaderReplacementValidation(false, "正则表达式过长")
     }
+    if(CommunityQuoteRule.parse(source)!=null)return ReaderReplacementValidation(true)
     return try {
         Pattern.compile(source, regexFlagsToPatternFlags(rule.regexFlags))
         ReaderReplacementValidation(true)
@@ -383,7 +385,8 @@ internal fun applyReaderReplacementRules(
         }
         transformed = if (rule.isRegex) {
             runCatching {
-                Pattern.compile(rule.source.trim(), regexFlagsToPatternFlags(rule.regexFlags))
+                CommunityQuoteRule.parse(rule.source.trim())?.replace(transformed,rule.replacement,regexFlagsToPatternFlags(rule.regexFlags))
+                    ?: Pattern.compile(rule.source.trim(), regexFlagsToPatternFlags(rule.regexFlags))
                     .matcher(transformed)
                     .replaceAll(rule.replacement)
             }.getOrElse {
