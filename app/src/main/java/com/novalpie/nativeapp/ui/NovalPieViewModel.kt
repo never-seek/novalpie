@@ -1035,7 +1035,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private var forumPostBodyRequestSerial = 0L
     private var forumPostCommentsRequestSerial = 0L
     private var forumBookReferenceRequestSerial = 0L
-    private var bookDetailRequestSerial = 0L
+    private val bookFeature=com.novalpie.nativeapp.feature.books.BookDetailViewModel(
+        dependencies.bookRepository,progress=readerProgressStore::load,
+        onComments={bookId,comments->loadBookCommentBookReferences(bookId,comments,bookDetailRequestSerial)},
+    )
+    private val bookDetailRequestSerial:Long get()=bookFeature.revision
     private var terminologyRequestSerial = 0L
     private var bookEditRequestSerial = 0L
     private var bookChapterRequestSerial = 0L
@@ -1155,8 +1159,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     internal val searchGridScrollPosition get() = searchFeature.state.scroll
     var bookCatalogQuery by mutableStateOf("")
         private set
-    var bookDetailState by mutableStateOf(BookDetailState())
-        private set
+    var bookDetailState:BookDetailState
+        get()=bookFeature.state
+        private set(value){bookFeature.present{value}}
     var nativeEpubDownloadState by mutableStateOf(NativeEpubDownloadState())
         private set
     var imagePreviewState by mutableStateOf(ImagePreviewState())
@@ -1228,7 +1233,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             var previous=authToken to proxySettings
             snapshotFlow {authToken to proxySettings}.collect {next->
-                if(next!=previous){previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged();libraryFeature.environmentChanged();if(currentRoute==AppRoute.Home)loadHome()}
+                if(next!=previous){previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged();libraryFeature.environmentChanged();bookFeature.environmentChanged()
+                    when(val route=currentRoute){AppRoute.Home->loadHome();is AppRoute.BookDetail->loadBookDetail(route.bookId);else->Unit}}
             }
         }
         viewModelScope.launch {
@@ -7513,128 +7519,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         preservedActionMessage: String? = null,
         retainCommentComposer: Boolean = false,
     ) {
-        val requestSerial = ++bookDetailRequestSerial
-        val shouldCheckManagementPermissions = !authToken.isNullOrBlank()
-        val previous = bookDetailState.takeIf { it.bookId == bookId }
-        val retainedComments = previous?.comments
-            ?.takeIf { retainCommentComposer && it is LoadResult.Success }
-            ?: LoadResult.Loading
-        bookDetailState = BookDetailState(
-            bookId = bookId,
-            book = LoadResult.Loading,
-            chapters = LoadResult.Loading,
-            comments = retainedComments,
-            bookReferences = if (retainCommentComposer) previous?.bookReferences.orEmpty() else emptyMap(),
-            favoriteStatus = LoadResult.Loading,
-            managementPermissions = if (shouldCheckManagementPermissions) {
-                LoadResult.Loading
-            } else {
-                LoadResult.Success(BookEditPermissions())
-            },
-            readerProgress = readerProgressStore.load(bookId),
-            commentDraft = if (retainCommentComposer) previous?.commentDraft.orEmpty() else "",
-            replyingToCommentId = if (retainCommentComposer) previous?.replyingToCommentId else null,
-            replyingToName = if (retainCommentComposer) previous?.replyingToName else null,
-            actionMessage = preservedActionMessage,
-        )
-        viewModelScope.launch {
-            val book = async { runCatching { api.bookDetail(bookId) } }
-            val originalCover = async { runCatching { api.bookCoverPhoto(bookId) } }
-            val chapters = async { runCatching { api.chapters(bookId) } }
-            // The live mobile book page requests thirty top-level reviews, including nested
-            // replies, before rendering the review section.
-            val comments = async {
-                runCatching { api.bookComments(bookId = bookId, page = 1, limit = BOOK_COMMENT_PAGE_SIZE) }
-            }
-            val favoriteStatus = async { runCatching { api.favoriteStatus(bookId) } }
-            val managementPermissions = if (shouldCheckManagementPermissions) {
-                async { runCatching { api.managedBookPermissions(bookId) } }
-            } else {
-                null
-            }
-            fun isFresh(): Boolean =
-                isFreshRequestSerial(requestSerial, bookDetailRequestSerial) &&
-                    isFreshBookDetailResult(currentRoute, bookDetailState, bookId)
-
-            // Book, catalogue, reviews, favourite state, permissions, and the full-resolution
-            // cover are independent source requests. Publish each result as it arrives so a slow
-            // review/permission endpoint cannot make the detail page or its book reviews look
-            // empty. Every child keeps the same request-serial guard for rapid A -> B navigation.
-            launch {
-                val result = chapters.await()
-                if (isFresh()) {
-                    bookDetailState = bookDetailState.copy(
-                        chapters = result.toLoadResult(VisibleUiLabels.ChapterCatalog),
-                    )
-                }
-            }
-            launch {
-                val result = comments.await()
-                if (isFresh()) {
-                    bookDetailState = bookDetailState.copy(
-                        comments = result.toLoadResult("评论区"),
-                        bookReferences = if (result.isFailure) {
-                            bookDetailState.bookReferences
-                        } else {
-                            emptyMap()
-                        },
-                    )
-                    result.getOrNull()?.let { commentList ->
-                        loadBookCommentBookReferences(
-                            bookId = bookId,
-                            comments = commentList,
-                            requestSerial = requestSerial,
-                        )
-                    }
-                }
-            }
-            launch {
-                val result = favoriteStatus.await()
-                if (isFresh()) {
-                    bookDetailState = bookDetailState.copy(
-                        favoriteStatus = result.toLoadResult("收藏状态"),
-                    )
-                }
-            }
-            managementPermissions?.let { permissions ->
-                launch {
-                    val result = permissions.await()
-                    if (isFresh()) {
-                        bookDetailState = bookDetailState.copy(
-                            managementPermissions = result.toLoadResult("load book management permissions"),
-                        )
-                    }
-                }
-            }
-            launch {
-                val coverUrl = originalCover.await().getOrNull().orEmpty()
-                val sourceBook = book.await().getOrNull() ?: return@launch
-                if (coverUrl.isNotBlank() && isFresh()) {
-                    val currentBook = (bookDetailState.book as? LoadResult.Success)?.value ?: sourceBook
-                    bookDetailState = bookDetailState.copy(
-                        book = LoadResult.Success(currentBook.copy(fullCoverUrl = coverUrl)),
-                    )
-                }
-            }
-
-            val bookResult = book.await()
-            if (!isFresh()) return@launch
-            val fullCoverUrl = (bookDetailState.book as? LoadResult.Success)
-                ?.value
-                ?.fullCoverUrl
-                ?.takeIf(String::isNotBlank)
-            val resolvedBook = bookResult.toLoadResult(VisibleUiLabels.BookDetail).let { result ->
-                if (result is LoadResult.Success && !fullCoverUrl.isNullOrBlank()) {
-                    LoadResult.Success(result.value.copy(fullCoverUrl = fullCoverUrl))
-                } else {
-                    result
-                }
-            }
-            bookDetailState = bookDetailState.copy(
-                book = resolvedBook,
-                readerProgress = readerProgressStore.load(bookId),
-            )
-        }
+        if(bookId<=0)return
+        bookFeature.load(bookId,!authToken.isNullOrBlank(),retainCommentComposer,preservedActionMessage)
     }
 
     /** Mirrors the reader's favourite action while keeping the detail action independently busy. */
@@ -8464,6 +8350,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         searchFeature.close()
         forumFeature.close()
         libraryFeature.close()
+        bookFeature.close()
         super.onCleared()
     }
 

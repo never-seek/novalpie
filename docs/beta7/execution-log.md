@@ -165,3 +165,6 @@
 - 97213短卡片真实测量/Library6项定向与Debug/AndroidTest通过（5m15s），新APK752417DE410ABB6C5F6A4FF82F3CD0E6A61AE3E0E42D0B44B830184E4A09AFD2准备覆盖安装；此前全量948绿色不含这1个新增字体测量测试，需后续最终全量。
 - 752417包安装冷启动2914ms成功，MuMu四列真实长书名/韩文长作者完整显示，同行作者/进度同基线；截图20260906-library-fullnames.png已查看，短文名不会把同行进度抬高。未加载历史概览显示“最近—”，不是0。收藏总65仍正确，原登录/进度保留。上传页同组件待单独实机。
 - 上传书页2列→4列实机：`再次踏入光芒之中`及`시요,유야,티카티카`、同排长标题均完整显示，作者同基线；4列截图20260906-upload-four-fullnames.png，恢复原2列。当前新一轮全量unit/lint启动，MuMu正常shutdown，不清数据。收藏module/卡片修改仍待本地commit，不push。
+- 全量unit/lint70563通过（6m14s），收藏及完整名称本地提交7e7affb（未push）。下一片BookDetailViewModelTest3项先红（16833缺类），新增独立BookDetailRepository/ViewModel：书/目录/评论/原封面/权限独立加载、代次隔离、草稿保留、访客不请求管理权限；当前定向build运行，**尚未接root**。不要拿此prototype当详情迁移完成。
+- 4874详情3项定向通过（2m22s），BookDetailViewModel/Repository接root/AppContainer，移除旧loadBookDetail约130行；书籍/目录/评论等互不等待、source cover和身份代次保留，环境切换清旧详情再加载。新全量unit/assemble/AndroidTest正在跑，未实机安装；剩余详情管理/评论动作仍暂在root委派逐项迁移。
+- 1343全量120 suites/952 tests/0 failures，Debug与AndroidTest打包成功（5m13s）。APK `8E29E1356DB079E884FF0EE66286DA671F4C01EF1C97CC889229E68A82AAC217` 已install-r，MuMu冷启动2941ms，原登录/65收藏/4列保留；从收藏进入《成为了S级的青梅竹马》，简介/207章目录/4条书评互斥切换正确。返回收藏原卡位置 `[151,202][260,502]` 不变，再开《老师不是恋爱对象》显示其22章目录与本书封面、作者、简介，无旧书串页。截图 `20260906-book-split-{catalog,comments,second}.png` 已逐张查看。仅本切片运行通过，不代表详情所有写入或Beta7发布门禁完成；MuMu随后正常shutdown为下一编译让资源。
