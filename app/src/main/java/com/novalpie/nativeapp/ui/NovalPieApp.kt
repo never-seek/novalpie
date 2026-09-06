@@ -3576,7 +3576,7 @@ private fun HomeScreen(
                     hasAuthToken = hasAuthToken,
                     favoriteCount = state.favoriteTotal ?: (state.favoriteEntries as? LoadResult.Success)?.value?.size,
                     groupCount = (state.groups as? LoadResult.Success)?.value?.size,
-                    recentCount = (state.history as? LoadResult.Success)?.value?.size,
+                    recentCount = state.historyTotal ?: (state.history as? LoadResult.Success)?.value?.size,
                     pageCount = if(state.favoriteEntries is LoadResult.Success)state.favoritesPage else null,
                 ),
                 onRefresh = onRefresh,
@@ -3707,6 +3707,8 @@ private fun HomeScreen(
                             // intrinsic pre-measurement during a fast image-grid fling.
                             span = { GridItemSpan(maxLineSpan) },
                         ) { rowEntries ->
+                            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                            val rowTextSlots=compactLibraryRowTextSlots(rowEntries.map{it.book},(maxWidth-NovalPieSpacing.md*(collectionGridColumnCount-1))/collectionGridColumnCount)
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.md),
@@ -3731,6 +3733,7 @@ private fun HomeScreen(
                                         gridCoverHeight = collectionGridCoverHeight,
                                         previewPolicy = CoverPreviewPolicy.Disabled,
                                         collectionCard = true,
+                                        gridTextSlots = rowTextSlots,
                                         onClick = onEntryClick,
                                         onLongClick = { onLongPressFavoritesBook(entry.book.id) },
                                         selected = if (state.selectionMode) isSelected else entry.isPinned,
@@ -3740,6 +3743,7 @@ private fun HomeScreen(
                                 repeat(collectionGridColumnCount - rowEntries.size) {
                                     Spacer(modifier = Modifier.weight(1f))
                                 }
+                            }
                             }
                         }
                     } else {
@@ -8374,6 +8378,7 @@ private fun ReaderSettingsSheet(
 ) {
     val scrollState = androidx.compose.foundation.rememberScrollState()
     var selectedCategory by remember(initialCategory) { mutableStateOf(initialCategory) }
+    LaunchedEffect(selectedCategory) { scrollState.scrollTo(0) }
     Surface(
         modifier = if (sidebar) {
             modifier.fillMaxHeight()
@@ -9274,7 +9279,7 @@ private fun LibraryOverviewBlock(
                         1 -> "分组"
                         else -> "最近"
                     },
-                    value = stat.filter(Char::isDigit)
+                    value = stat.substringAfter(' ',"—")
                 )
             }
         }
@@ -9295,7 +9300,7 @@ private fun LibraryOverviewBlock(
 /** One shelf count. A chip, not a titleLarge number in a card: it is metadata about the grid. */
 @Composable
 private fun LibraryMetricCell(label: String, value: String) {
-    NpChip(label = "$label ${value.ifBlank { "0" }}", tone = NpChipTone.Neutral)
+    NpChip(label = "$label ${value.ifBlank { "—" }}", tone = NpChipTone.Neutral)
 }
 
 /** Entry point to the Discover tab. Distinct from the local 筛选书架 field below. */
@@ -9766,6 +9771,7 @@ internal fun CompactLibraryBookCardItem(
     previewPolicy: CoverPreviewPolicy = CoverPreviewPolicy.Disabled,
     collectionCard: Boolean = false,
     gridCoverHeight: Dp? = null,
+    gridTextSlots:CompactLibraryBookCardTextSlots=compactLibraryBookCardTextSlots(),
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
@@ -9774,7 +9780,7 @@ internal fun CompactLibraryBookCardItem(
     } else {
         Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
     }
-    val textSlots = compactLibraryBookCardTextSlots()
+    val textSlots = gridTextSlots
     Column(
         modifier = modifier
             .fillMaxWidth()

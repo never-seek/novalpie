@@ -222,6 +222,7 @@ data class HomeState(
     /** Source total remains accurate even when only the first/visible page has loaded. */
     val favoriteTotal: Int? = null,
     val history: LoadResult<List<FavoriteEntry>> = LoadResult.Idle,
+    val historyTotal:Int?=null,
     val favoritesPage: Int = 1,
     val favoritesCanLoadMore: Boolean = false,
     val favoritesLoadingMore: Boolean = false,
@@ -1038,7 +1039,6 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private var terminologyRequestSerial = 0L
     private var bookEditRequestSerial = 0L
     private var bookChapterRequestSerial = 0L
-    private var homeRequestSerial = 0L
     private var profileRequestSerial = 0L
     private var userProfileRequestSerial = 0L
     private var userProfileHeroRequestSerial = 0L
@@ -1072,6 +1072,19 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     // Pagination belongs to the active shelf session, never to a cold launch.  Keep this explicit
     // here as a second guard for installations that still hold an old persisted page preference.
     private var favoritesUiOptions = initialFavoritesSettings.toFavoritesUiOptions().copy(currentPage = 1)
+    private val libraryFeature=com.novalpie.nativeapp.feature.library.LibraryContentViewModel(
+        repository=dependencies.libraryRepository,
+        reconcile={entries->
+            reconcileRemoteReaderProgress(entries)
+            if(readerProgressStore.backfillCompletedFavoriteCatalogues(entries)>0) {
+                readerProgress=readerProgressStore.load()
+                recentReaderProgresses=readerProgressStore.loadRecent(READER_PROGRESS_HISTORY_LIMIT)
+            }
+            favoriteEntriesWithLocalReaderProgress(entries,recentReaderProgresses)
+        },
+        onUser=::publishHomeUserProfile,
+        onLoaded=::onLibraryPageLoaded,
+    )
 
     var currentTab by mutableStateOf(BottomTab.Collection)
         private set
@@ -1081,8 +1094,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         private set
     var forumCreateState by mutableStateOf(ForumCreateState())
         private set
-    var homeState by mutableStateOf(HomeState())
-        private set
+    var homeState:HomeState
+        get()=libraryFeature.state
+        private set(value){libraryFeature.present{value}}
     var profileState by mutableStateOf(
         ProfileState(
             booksGridColumns = initialProfileBooksSettings.gridColumns,
@@ -1214,7 +1228,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             var previous=authToken to proxySettings
             snapshotFlow {authToken to proxySettings}.collect {next->
-                if(next!=previous){previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged()}
+                if(next!=previous){previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged();libraryFeature.environmentChanged();if(currentRoute==AppRoute.Home)loadHome()}
             }
         }
         viewModelScope.launch {
@@ -7395,223 +7409,18 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun loadHome(actionMessage: String? = null) {
-        val requestSerial = ++homeRequestSerial
-        val tokenProfile = authToken?.let(::decodeAuthTokenProfile)
-        val options = favoritesUiOptions
-        val requestedPage = options.currentPage
-        val requestedReaderProgressRevision = readerProgressRevision
-        val retainedFavoriteTotal = homeState.favoriteTotal
-        val retainCollectionWhileRefreshing =
-            options.tab == FavoritesContentTab.Favorites &&
-                collectionRefreshRequired(
-                    readerProgressRevision = readerProgressRevision,
-                    syncedProgressRevision = syncedCollectionProgressRevision,
-                )
-        val retainedFavoriteEntries = if (retainCollectionWhileRefreshing) {
-            (homeState.favoriteEntries as? LoadResult.Success)?.value
-                ?.let { favoriteEntriesWithLocalReaderProgress(it, recentReaderProgresses) }
-        } else {
-            null
-        }
-        homeState = HomeState(
-            user = tokenProfile?.let { LoadResult.Success(it) } ?: LoadResult.Loading,
-            groups = LoadResult.Loading,
-            favorites = retainedFavoriteEntries?.let { LoadResult.Success(it.map(FavoriteEntry::book)) }
-                ?: if (options.tab == FavoritesContentTab.Favorites) LoadResult.Loading else LoadResult.Idle,
-            favoriteEntries = retainedFavoriteEntries?.let { LoadResult.Success(it) }
-                ?: if (options.tab == FavoritesContentTab.Favorites) LoadResult.Loading else LoadResult.Idle,
-            favoriteTotal = retainedFavoriteTotal,
-            history = if (options.tab == FavoritesContentTab.History) LoadResult.Loading else LoadResult.Idle,
-            favoritesPage = requestedPage,
-            selectedFavoriteGroupId = selectedFavoriteGroupId,
-            options = options,
-            actionMessage = actionMessage
+        val options=favoritesUiOptions
+        libraryFeature.load(
+            requested=com.novalpie.nativeapp.feature.library.LibraryQuery(options.tab,options.currentPage,selectedFavoriteGroupId,bookshelfQuery,options.sortField,options.sortOrder),
+            options=options,
+            tokenProfile=authToken?.let(::decodeAuthTokenProfile),
+            message=actionMessage,
+            retain=options.tab==FavoritesContentTab.Favorites&&collectionRefreshRequired(readerProgressRevision,syncedCollectionProgressRevision),
         )
         resolveMissingReaderProgressBookTitle()
-        viewModelScope.launch {
-            val favoriteGroupId = selectedFavoriteGroupId
-            if (options.tab == FavoritesContentTab.Favorites) {
-                // Start the visible shelf first. Profile and group chrome can resolve afterward.
-                val favorites = async {
-                    runCatching {
-                        api.favoritePage(
-                            page = requestedPage,
-                            limit = PAGE_SIZE,
-                            groupId = favoriteGroupId,
-                            search = bookshelfQuery,
-                            sortField = options.sortField,
-                            sortOrder = options.sortOrder
-                        )
-                    }
-                }
-                val user = async { runCatching { api.currentUser() } }
-                val groups = async { runCatching { api.favoriteGroups() } }
-                val result = favorites.await()
-                if (!isFreshRequestSerial(requestSerial, homeRequestSerial)) return@launch
-                val page = result.getOrNull()
-                if (page != null) {
-                    reconcileRemoteReaderProgress(page.items)
-                    // ReaderProgressStore gained the completed-catalogue baseline after earlier
-                    // versions had already saved local chapter positions.  Repair only legacy
-                    // entries that both the source shelf and the local reader prove completed,
-                    // then reload the in-memory snapshot before calculating card update labels.
-                    if (readerProgressStore.backfillCompletedFavoriteCatalogues(page.items) > 0) {
-                        readerProgress = readerProgressStore.load()
-                        recentReaderProgresses = readerProgressStore.loadRecent(limit = READER_PROGRESS_HISTORY_LIMIT)
-                    }
-                    syncedCollectionProgressRevision = maxOf(
-                        syncedCollectionProgressRevision,
-                        requestedReaderProgressRevision,
-                    )
-                }
-                val entriesWithLocalProgress = page?.items?.let { entries ->
-                    favoriteEntriesWithLocalReaderProgress(entries, recentReaderProgresses)
-                }
-                homeState = HomeState(
-                    // The shelf is the primary surface. Do not make returned book cards wait for
-                    // the independent profile/group requests on a slow source route.
-                    user = tokenProfile?.let { LoadResult.Success(it) } ?: LoadResult.Loading,
-                    groups = LoadResult.Loading,
-                    favorites = entriesWithLocalProgress?.let { LoadResult.Success(it.map(FavoriteEntry::book)) }
-                        ?: LoadResult.Error(
-                            apiFailureMessage(
-                                VisibleUiLabels.Bookshelf,
-                                result.exceptionOrNull() ?: IOException("favorites request failed")
-                            )
-                        ),
-                    favoriteEntries = entriesWithLocalProgress?.let { LoadResult.Success(it) }
-                        ?: LoadResult.Error(
-                            apiFailureMessage(
-                                VisibleUiLabels.Bookshelf,
-                                result.exceptionOrNull() ?: IOException("favorites request failed")
-                            )
-                        ),
-                    favoriteTotal = page?.total ?: retainedFavoriteTotal,
-                    favoritesPage = page?.page ?: requestedPage,
-                    favoritesCanLoadMore = page?.canLoadMore() ?: false,
-                    selectedFavoriteGroupId = favoriteGroupId,
-                    options = options,
-                    actionMessage = actionMessage
-                )
-                val resolvedUser = user.await()
-                val resolvedGroups = groups.await()
-                if (!isFreshRequestSerial(requestSerial, homeRequestSerial)) return@launch
-                val resolvedHomeUser = resolveUserLoadResult(resolvedUser, tokenProfile)
-                homeState = homeState.copy(
-                    user = resolvedHomeUser,
-                    groups = resolvedGroups.toLoadResult(VisibleUiLabels.FavoriteGroups)
-                )
-                resolvedUser.getOrNull()?.let(::publishHomeUserProfile)
-            } else {
-                val history = async { runCatching { api.readingHistoryPage(page = requestedPage, limit = PAGE_SIZE) } }
-                val user = async { runCatching { api.currentUser() } }
-                val groups = async { runCatching { api.favoriteGroups() } }
-                val result = history.await()
-                if (!isFreshRequestSerial(requestSerial, homeRequestSerial)) return@launch
-                val page = result.getOrNull()
-                page?.let { reconcileRemoteReaderProgress(it.items) }
-                homeState = HomeState(
-                    user = tokenProfile?.let { LoadResult.Success(it) } ?: LoadResult.Loading,
-                    groups = LoadResult.Loading,
-                    favorites = LoadResult.Success(emptyList()),
-                    favoriteTotal = retainedFavoriteTotal,
-                    history = page?.let { LoadResult.Success(it.items) }
-                        ?: LoadResult.Error(
-                            apiFailureMessage(
-                                "阅读历史",
-                                result.exceptionOrNull() ?: IOException("history request failed")
-                            )
-                        ),
-                    favoritesPage = page?.page ?: requestedPage,
-                    favoritesCanLoadMore = page?.canLoadMore() ?: false,
-                    selectedFavoriteGroupId = favoriteGroupId,
-                    options = options,
-                    actionMessage = actionMessage
-                )
-                val resolvedUser = user.await()
-                val resolvedGroups = groups.await()
-                if (!isFreshRequestSerial(requestSerial, homeRequestSerial)) return@launch
-                val resolvedHomeUser = resolveUserLoadResult(resolvedUser, tokenProfile)
-                homeState = homeState.copy(
-                    user = resolvedHomeUser,
-                    groups = resolvedGroups.toLoadResult(VisibleUiLabels.FavoriteGroups)
-                )
-                resolvedUser.getOrNull()?.let(::publishHomeUserProfile)
-            }
-        }
     }
 
-    fun loadMoreFavorites() {
-        if (homeState.favoritesLoadingMore || !homeState.favoritesCanLoadMore) return
-
-        val nextPage = homeState.favoritesPage + 1
-        val requestSerial = homeRequestSerial
-        val favoriteGroupId = homeState.selectedFavoriteGroupId
-        val options = homeState.options
-        homeState = homeState.copy(favoritesLoadingMore = true, favoritesLoadMoreError = null)
-        viewModelScope.launch {
-            val result = if (options.tab == FavoritesContentTab.Favorites) {
-                runCatching {
-                    api.favoritePage(
-                        page = nextPage,
-                        limit = PAGE_SIZE,
-                        groupId = favoriteGroupId,
-                        search = bookshelfQuery,
-                        sortField = options.sortField,
-                        sortOrder = options.sortOrder
-                    )
-                }
-            } else {
-                runCatching { api.readingHistoryPage(page = nextPage, limit = PAGE_SIZE) }
-            }
-            if (!isFreshRequestSerial(requestSerial, homeRequestSerial)) return@launch
-            homeState = result.fold(
-                onSuccess = { nextPageResult ->
-                    reconcileRemoteReaderProgress(nextPageResult.items)
-                    if (options.tab == FavoritesContentTab.Favorites) {
-                        val currentEntries = (homeState.favoriteEntries as? LoadResult.Success)?.value.orEmpty()
-                        val merged = favoriteEntriesWithLocalReaderProgress(
-                            entries = mergeFavoriteEntriesByBookId(currentEntries, nextPageResult.items),
-                            localProgresses = recentReaderProgresses,
-                        )
-                        favoritesUiOptions = favoritesUiOptions.copy(currentPage = nextPageResult.page.coerceAtLeast(1))
-                        saveFavoritesOptions()
-                        homeState.copy(
-                            favorites = LoadResult.Success(merged.map(FavoriteEntry::book)),
-                            favoriteEntries = LoadResult.Success(merged),
-                            favoriteTotal = nextPageResult.total ?: homeState.favoriteTotal,
-                            favoritesPage = nextPageResult.page,
-                            options = favoritesUiOptions,
-                            favoritesCanLoadMore = nextPageResult.canLoadMore(),
-                            favoritesLoadingMore = false,
-                            favoritesLoadMoreError = null
-                        )
-                    } else {
-                        val currentEntries = (homeState.history as? LoadResult.Success)?.value.orEmpty()
-                        val merged = mergeFavoriteEntriesByBookId(currentEntries, nextPageResult.items)
-                        favoritesUiOptions = favoritesUiOptions.copy(currentPage = nextPageResult.page.coerceAtLeast(1))
-                        saveFavoritesOptions()
-                        homeState.copy(
-                            history = LoadResult.Success(merged),
-                            favoritesPage = nextPageResult.page,
-                            options = favoritesUiOptions,
-                            favoritesCanLoadMore = nextPageResult.canLoadMore(),
-                            favoritesLoadingMore = false,
-                            favoritesLoadMoreError = null
-                        )
-                    }
-                },
-                onFailure = {
-                    // Keep the pages already loaded; report only that this page failed. The page
-                    // counter is left alone so retrying asks for the same page again.
-                    homeState.copy(
-                        favoritesLoadingMore = false,
-                        favoritesLoadMoreError = apiFailureMessage(VisibleUiLabels.Bookshelf, it)
-                    )
-                }
-            )
-        }
-    }
+    fun loadMoreFavorites() = libraryFeature.loadMore()
 
     fun performSearch(submittedKeyword: String? = null) {
         searchFeature.submit(submittedKeyword)
@@ -8595,25 +8404,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun runFavoritesMutation(successMessage: String, mutation: suspend () -> Unit) {
-        homeState = homeState.copy(actionLoading = true, actionMessage = null)
-        viewModelScope.launch {
-            runCatching { mutation() }.fold(
-                onSuccess = {
-                    homeState = homeState.copy(
-                        actionLoading = false,
-                        selectionMode = false,
-                        selectedBookIds = emptySet()
-                    )
-                    loadHome(successMessage)
-                },
-                onFailure = { failure ->
-                    homeState = homeState.copy(
-                        actionLoading = false,
-                        actionMessage = apiFailureMessage("收藏操作", failure)
-                    )
-                }
-            )
-        }
+        libraryFeature.mutation(successMessage,mutation){loadHome(successMessage)}
+    }
+
+    private fun onLibraryPageLoaded() {
+        syncedCollectionProgressRevision=readerProgressRevision
+        favoritesUiOptions=favoritesUiOptions.copy(currentPage=homeState.favoritesPage.coerceAtLeast(1))
+        saveFavoritesOptions()
     }
 
     private fun selectedFavoriteEntries(): List<FavoriteEntry> =
@@ -8666,6 +8463,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     override fun onCleared() {
         searchFeature.close()
         forumFeature.close()
+        libraryFeature.close()
         super.onCleared()
     }
 

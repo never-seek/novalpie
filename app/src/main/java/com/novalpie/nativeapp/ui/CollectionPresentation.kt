@@ -433,7 +433,7 @@ private fun FavoritesSourceTabs(
     onSelectTab: (FavoritesContentTab) -> Unit
 ) {
     val favoriteCount = state.favoriteTotal ?: (state.favoriteEntries as? LoadResult.Success)?.value?.size
-    val historyCount = (state.history as? LoadResult.Success)?.value?.size
+    val historyCount = state.historyTotal ?: (state.history as? LoadResult.Success)?.value?.size
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(NovalPieRadius.md),

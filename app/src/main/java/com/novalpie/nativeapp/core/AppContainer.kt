@@ -71,6 +71,9 @@ internal class AppContainer(context: Context) {
         )
     }
     val searchRepository: SearchRepository by lazy { WebsiteSearchRepository(api) }
+    val libraryRepository: com.novalpie.nativeapp.feature.library.LibraryRepository by lazy {
+        com.novalpie.nativeapp.feature.library.WebsiteLibraryRepository(api)
+    }
     val forumFeedRepository: com.novalpie.nativeapp.feature.forum.ForumFeedRepository by lazy {
         com.novalpie.nativeapp.feature.forum.WebsiteForumFeedRepository(api)
     }

@@ -345,6 +345,8 @@ internal fun ProfileScreen(
                                     columnCount = columns,
                                 ).dp
                                 items(visibleBooks.chunked(columns), key = { row -> "profile-books-${row.joinToString { it.id.toString() }}" }) { rowBooks ->
+                                    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+                                    val rowTextSlots=compactLibraryRowTextSlots(rowBooks,(maxWidth-12.dp*(columns-1))/columns)
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -356,12 +358,14 @@ internal fun ProfileScreen(
                                                 presentation = compactUploadedBookCardPresentation(book),
                                                 modifier = Modifier.weight(1f),
                                                 gridCoverHeight = gridCoverHeight,
+                                                gridTextSlots = rowTextSlots,
                                                 previewPolicy = CoverPreviewPolicy.Disabled,
                                             ) { onOpenBook(book.id) }
                                         }
                                         repeat(columns - rowBooks.size) {
                                             Spacer(modifier = Modifier.weight(1f))
                                         }
+                                    }
                                     }
                                 }
                             }

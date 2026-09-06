@@ -154,3 +154,14 @@
 - 本轮全量939tests/0failures、lint通过（10817，6m50s），本机fallback保存为本地提交63af1f7（未push）。公共存储缺陷以明确兼容路径解决，不能直接宣传所有系统公共Downloads成功。后续开始CommunityQuoteRuleTest原站1124常用引号负向前瞻的窄范围安全兼容，当前测试14241运行；不引入任意回溯正则执行。
 - CommunityQuoteRuleTest首次2红灯；新增仅识别论坛1124四种引号固定模式的线性扫描+RE2替换适配。与Java原模式在合成小文本做精确对照时发现跳过匹配后的引号边界差异，新增case继续红灯后修；当前正在重新跑47项替换相关测试。仍未安装这一适配，不宣称任意lookahead支持。
 - 9330替换相关47项测试已全绿，CommunityQuoteRule4项包含四引号类型/禁止跨行/跳过与相邻边界/危险规则拒绝，Debug assemble仍执行。适配只覆盖已核对的1124固定模式，其他前后瞻仍错误提示；任意脚本/回溯正则未启用。
+- 9330最终Debug打包成功（5m8s），本地提交f87a7be（未push）。最新开发APK76067A86ABC40CE8FA4988FEE0D39DF3867E6A0730E60EA1E25B7EF484A382EE已无损安装，MainActivity冷启动3360ms成功。仍是Beta6开发版本字段，不能当Beta7成品上传。截图20260906-beta7-dev-current.png；尚未实机输入1124规则或公共写入验收。
+- 真实353686/6072568小书阅读器打开正常、中央点菜单可用，进入设置低部文本替换时复现分类滚动位置继承导致顶部条目被卷走。修为selectedCategory变化滚到顶部，当前build51217全量unit/Debug/AndroidTest运行。MuMu实例0为了构建资源已正常shutdown，未清用户数据；原规则未做任何真实修改。下午页面状态已变更，后续一律刷新UI证据再操作，不复用上午坐标。
+- 51217因新LibraryContentViewModelTest未实现类型先红；随后新增feature/library的Query/Repository/ViewModel（尚未接root），首个编译类型默认lambda缺空格导致解析失败已修。当前定向79556运行；4个新用例覆盖冷启动page1/源总数、分组迟到回包、失败追加保留页和重试、列数切换不干扰请求。不要把该未接线切片算收藏重构完成。
+- 79556定向4项通过，收藏Query/Repository/ViewModel已接AppContainer/root，旧loadHome/loadMore约200行迁出；根仍暂留管理动作/展示偏好委派，后续还需完整迁移。当前88227全量unit/Debug/AndroidTest运行，未安装本切片；设置分类重置滚动修订同批。MuMu仍shutdown不清数据。
+- 88227全量unit/Debug/AndroidTest通过（7m14s），新增多页返回刷新不丢前页用例后29413定向5项通过。补齐当前页回传与刷新加载1..已加载页范围，收藏mutation执行归feature、generation防旧回包。下一全量build执行中，仍未安装当前library切片；此前76067仍是设备最新包。
+- 54202全量948tests/0failures，Debug/AndroidTest完成（5m58s），收藏接线与设置类别滚动修订准备MuMu安装。包含新领域逻辑不代表收藏所有管理/原文进度/升级状态已证，待实机。
+- CB2AE692A4242CC03A6ACA62D08AB4752A2A8670095786FC1B7F3586F9433B64包已无损安装，冷启动2903ms成功；真实65收藏、历史加载、全部卡片、详情返回同位置正常，截图20260906-library-split.png。UI另发现overview把“—”过滤成空再当0，已修不再错误显示0；history总数新增单独字段，避免第一页20当总数。当前下一全量unit/assemble/AndroidTest/lint运行，MuMu已shutdown让资源，需新包复验。
+- 81885上述计数修订全量unit/Debug/AndroidTest/lint通过（9m16s）。后续核对用户“书名作者不能略”发现2/3/4列仍固定2行/1行Ellipsis，新增CompactLibraryRowMeasurement按每排真实宽度测量短身份文字，保留全名并按排最大行数对齐；原主题/卡片结构不改。当前新测量用例/Library定向+Debug/AndroidTest正在build，尚未新安装。
+- 97213短卡片真实测量/Library6项定向与Debug/AndroidTest通过（5m15s），新APK752417DE410ABB6C5F6A4FF82F3CD0E6A61AE3E0E42D0B44B830184E4A09AFD2准备覆盖安装；此前全量948绿色不含这1个新增字体测量测试，需后续最终全量。
+- 752417包安装冷启动2914ms成功，MuMu四列真实长书名/韩文长作者完整显示，同行作者/进度同基线；截图20260906-library-fullnames.png已查看，短文名不会把同行进度抬高。未加载历史概览显示“最近—”，不是0。收藏总65仍正确，原登录/进度保留。上传页同组件待单独实机。
+- 上传书页2列→4列实机：`再次踏入光芒之中`及`시요,유야,티카티카`、同排长标题均完整显示，作者同基线；4列截图20260906-upload-four-fullnames.png，恢复原2列。当前新一轮全量unit/lint启动，MuMu正常shutdown，不清数据。收藏module/卡片修改仍待本地commit，不push。
