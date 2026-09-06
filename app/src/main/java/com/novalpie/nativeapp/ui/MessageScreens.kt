@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -51,6 +52,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -146,7 +148,13 @@ internal fun MessageCenterScreen(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { onSearch() })
             )
+            if (state.appliedQuery != null && state.query.copy(keyword = state.query.keyword.trim()) != state.appliedQuery) {
+                Text("输入已更改，点击搜索应用", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+            }
         }
+
+        if (state.refreshing && state.messages is LoadResult.Success) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
 
         item {
             MessageFilterRail(
@@ -447,34 +455,59 @@ internal fun MessageConversationScreen(
     currentUserId: Long?,
     onRetry: () -> Unit,
     onDraftChange: (String) -> Unit,
-    onSend: () -> Unit
+    onSend: () -> Unit,
+    onLoadMore: () -> Unit = {},
 ) {
+    val listState = remember(state.targetUserId) { LazyListState() }
+    var priorLastId by remember(state.targetUserId) { mutableStateOf<Long?>(null) }
+    var priorCount by remember(state.targetUserId) { mutableStateOf(0) }
+    val loaded = (state.messages as? LoadResult.Success)?.value
+    LaunchedEffect(state.targetUserId, loaded?.lastOrNull()?.id, loaded?.size) {
+        val messages = loaded ?: return@LaunchedEffect
+        if (messages.isEmpty()) return@LaunchedEffect
+        val newest = messages.last()
+        val nearEnd = (listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= priorCount - 2
+        if (priorLastId == null || (priorLastId != newest.id && (nearEnd || newest.executeUserId == currentUserId))) {
+            listState.scrollToItem(messages.lastIndex + if (state.hasMore) 1 else 0)
+        }
+        priorLastId = newest.id
+        priorCount = messages.size + if (state.hasMore) 1 else 0
+    }
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text(state.targetName ?: "私信对话", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text("与用户 #${state.targetUserId} 的对话", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             IconButton(onClick = onRetry) { Icon(Icons.Filled.Refresh, contentDescription = "刷新") }
         }
+        if (state.refreshing && loaded != null) LinearProgressIndicator(Modifier.fillMaxWidth())
+        Box(Modifier.weight(1f).fillMaxWidth()) {
         when (val messages = state.messages) {
             LoadResult.Idle -> MessageEmpty("等待加载私信")
             LoadResult.Loading -> MessageLoading("正在同步私信")
             is LoadResult.Error -> MessageError(messages.message, onRetry)
             is LoadResult.Success -> LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier.fillMaxSize(),
+                state = listState,
                 contentPadding = PaddingValues(vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                if (state.hasMore) item(key = "older-messages") {
+                    TextButton(onClick = onLoadMore, enabled = !state.loadingMore && !state.refreshing, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (state.loadingMore) "正在加载…" else "加载更早的私信")
+                    }
+                }
                 if (messages.value.isEmpty()) item { MessageEmpty("还没有私信，发送第一条消息吧") }
                 items(messages.value, key = { it.id }) { message ->
                     DirectMessageBubble(message, currentUserId)
                 }
             }
+        }
         }
         state.actionMessage?.let { MessageNotice(it) }
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {

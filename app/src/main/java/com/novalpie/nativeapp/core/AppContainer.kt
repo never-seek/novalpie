@@ -36,7 +36,12 @@ internal class AppContainer(context: Context) {
     val environment = RequestEnvironment(AuthSessionStore(application), NetworkConfigStore(application))
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val speechEngine by lazy { AndroidSpeechEngine(application,applicationScope) }
-    private val speechProgress by lazy {com.novalpie.nativeapp.feature.reader.tts.SpeechProgressRecorder(application,api,applicationScope){environment.revision}}
+    val readingProgressSync by lazy {
+        com.novalpie.nativeapp.feature.reader.progress.ReadingProgressSynchronizer(applicationScope, {environment.revision}) { bookId, chapterId ->
+            api.saveReadingProgress(bookId, chapterId)
+        }
+    }
+    private val speechProgress by lazy {com.novalpie.nativeapp.feature.reader.tts.SpeechProgressRecorder(application,api,applicationScope,readingProgressSync){environment.revision}}
     private val playbackDelegate = lazy { TtsPlaybackCoordinator(speechEngine,WebsiteSpeechChapterSource(application,api),applicationScope,speechProgress::record) }
     val playback by playbackDelegate
     fun refreshEnvironmentFromStores() {
@@ -76,6 +81,9 @@ internal class AppContainer(context: Context) {
     }
     val bookRepository: com.novalpie.nativeapp.feature.books.BookDetailRepository by lazy {
         com.novalpie.nativeapp.feature.books.WebsiteBookDetailRepository(api)
+    }
+    val messagesRepository: com.novalpie.nativeapp.feature.messages.MessagesRepository by lazy {
+        com.novalpie.nativeapp.feature.messages.WebsiteMessagesRepository(api)
     }
     val forumFeedRepository: com.novalpie.nativeapp.feature.forum.ForumFeedRepository by lazy {
         com.novalpie.nativeapp.feature.forum.WebsiteForumFeedRepository(api)

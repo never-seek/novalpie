@@ -754,7 +754,8 @@ fun NovalPieApp(
                     currentUserId = (viewModel.homeState.user as? LoadResult.Success)?.value?.id,
                     onRetry = { viewModel.loadMessageConversation(route.targetUserId, route.targetName) },
                     onDraftChange = viewModel::updateMessageDraft,
-                    onSend = viewModel::sendMessageDraft
+                    onSend = viewModel::sendMessageDraft,
+                    onLoadMore = viewModel::loadMoreDirectMessages,
                 )
 
                 AppRoute.MessageSettings -> MessageSettingsScreen(

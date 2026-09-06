@@ -35,3 +35,16 @@ eSpeak来自F-Droid官方源，版本1.52.0/22；包SHA256 `0a7822fec54d7f7ae759
 - 记录：`agent-bridge/artifacts/beta7-device/20260905-tts-background-service.json`和同名log，包含已装包/本地包hash一致检查。
 
 这是服务原型验证，使用合成测试文字；接入真实阅读器按钮、真实源章节、焦点竞争/耳机事件、跨章首句与进度还需继续验收。随后已将ReaderScreen入口改接服务，完整构建/新按钮设备测试正在进行。
+
+## 2026-09-06 真实源章节跨章、后台断点
+
+开发APK `1c5cc984670ad0d3c536f7393b1765d0279612e427adec7d5720a0201bb166eb`，MuMu Android15/540×1098/density240/font1.0，无损install-r。
+
+- 慢网回归`SpeechProgressLatencyTest`先失败：进度POST阻塞时，后续段落本地锚点1200ms内无法更新。将本地小状态apply与远端写分离后通过；`ReadingProgressSynchronizerTest`3项覆盖按书合并、顺序写、账号隔离、失败不按每句重发。
+- 真实书`353686《透明龙》`，当前目录9章。最初指定6072568为最后一章，测试明确失败“无下一章”，未开始播放，不算App跨章缺陷。
+- 改用6072567（第8章）尾部第47片段开始，实际系统TTS发声并HOME后台；自动加载6072568（第9章），首个onStart片段索引**0**，实际派生内容440片段。
+- 本地ReaderProgressStore第9章与源目录一致，熄屏仍Speaking，通知暂停→Paused、继续→同一章节/片段0 Speaking。
+- `NativeTtsLiveDeviceTest` **OK (1 test)，14.806s**；流程耗时13719ms。机器证据`beta7-device/20260906-live-tts-353686-ch8.{json,log}`和`20260906-live-tts-353686-report.json`，只含ID/计数/状态，不含正文/凭据。
+- 结束停止播放、移除服务，未删除章节或修改替换规则。该真实书本地/网站进度由测试推进到第9章（末章），不影响其他书。
+
+仍待：最终优化包重测、真实公共规则变更后的TTS、音频焦点竞争和耳机事件、OEM/长时间背景。网站远端进度此次仅发送，尚未独立读取回验；不把本地第9章当远端已读回证明。本次MuMu冷启动83s、App17.9s，其他较快启动不能抹掉这个性能样本。

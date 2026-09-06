@@ -2,11 +2,14 @@ param(
     [string]$Adb = 'C:\Users\86188\AppData\Local\Android\Sdk\platform-tools\adb.exe',
     [string]$Serial = '127.0.0.1:16384',
     [string]$TestClass = 'com.novalpie.nativeapp.ui.ReaderTtsDeviceTest',
-    [string]$EvidenceName = 'tts-device'
+    [string]$EvidenceName = 'tts-device',
+    [long]$BookId = 0,
+    [long]$ChapterId = 0
 )
 $ErrorActionPreference = 'Stop'
 if ($TestClass -notmatch '^com\.novalpie\.nativeapp\.[A-Za-z0-9_.]+$') { throw 'Only NovalPie test classes are accepted' }
 if ($EvidenceName -notmatch '^[a-zA-Z0-9_-]+$') { throw 'Use a simple evidence name' }
+if ($BookId -lt 0 -or $ChapterId -lt 0) { throw 'Source IDs must be positive when supplied' }
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $appApk = Join-Path $repositoryRoot 'app\build\outputs\apk\debug\app-debug.apk'
 $testApk = Join-Path $repositoryRoot 'app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk'
@@ -32,7 +35,11 @@ $metadata = [ordered]@{
     gitHead = (& git -C $repositoryRoot rev-parse HEAD).Trim()
     dirty = [bool](& git -C $repositoryRoot status --porcelain)
 }
-$log = & $Adb -s $Serial shell am instrument -w -r -e class $TestClass com.novalpie.app.debug.test/androidx.test.runner.AndroidJUnitRunner 2>&1
+$instrumentArgs = @('-s', $Serial, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'class', $TestClass)
+if ($BookId -gt 0) { $instrumentArgs += @('-e', 'bookId', $BookId.ToString()); $metadata.bookId = $BookId }
+if ($ChapterId -gt 0) { $instrumentArgs += @('-e', 'chapterId', $ChapterId.ToString()); $metadata.chapterId = $ChapterId }
+$instrumentArgs += 'com.novalpie.app.debug.test/androidx.test.runner.AndroidJUnitRunner'
+$log = & $Adb @instrumentArgs 2>&1
 $logText = $log -join "`n"
 $metadata.passed = $logText -match 'OK \(\d+ tests?\)' -and $logText -notmatch 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed'
 $logFile = Join-Path $outputRoot "$EvidenceName.log"

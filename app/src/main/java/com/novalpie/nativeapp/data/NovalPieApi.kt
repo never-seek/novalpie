@@ -1402,19 +1402,20 @@ class NovalPieApi(
         query.priority?.let { params["priority"] = it.toString() }
         query.keyword.trim().takeIf { it.isNotEmpty() }?.let { params["keyword"] = it }
         normalizeMessagePage(
-            raw = get("/api/messages", params),
+            raw = requireMessageResponse(get("/api/messages", params)),
             requestedPage = page,
             requestedPageSize = pageSize
         )
     }
 
     suspend fun messageDetail(messageId: Long): SiteMessage = withContext(Dispatchers.IO) {
-        val source = unwrapObject(get("/api/messages/$messageId"), "message", "data", "result")
-        normalizeMessage(source) ?: throw IOException("NovalPie message detail is missing: $messageId")
+        val source = unwrapObject(requireMessageResponse(get("/api/messages/$messageId")), "message", "data", "result")
+        normalizeMessage(source)?.takeIf { it.id == messageId }
+            ?: throw IOException("消息详情缺失或身份不匹配，请刷新重试")
     }
 
     suspend fun messageStats(): MessageStats = withContext(Dispatchers.IO) {
-        normalizeMessageStats(get("/api/messages/stats"))
+        normalizeMessageStats(requireMessageResponse(get("/api/messages/stats")))
     }
 
     suspend fun workspaceApiConfigs(): List<WorkspaceApiConfig> = withContext(Dispatchers.IO) {
@@ -1582,7 +1583,7 @@ class NovalPieApi(
     }
 
     suspend fun messageSettings(): MessageSettings = withContext(Dispatchers.IO) {
-        normalizeMessageSettings(get("/api/messages/settings"))
+        normalizeMessageSettings(requireMessageResponse(get("/api/messages/settings")))
     }
 
     suspend fun updateMessageSettings(settings: MessageSettings): MessageActionResult = withContext(Dispatchers.IO) {
@@ -1603,14 +1604,14 @@ class NovalPieApi(
         pageSize: Int = 100
     ): List<DirectMessage> = withContext(Dispatchers.IO) {
         normalizeDirectMessages(
-            get(
+            requireMessageResponse(get(
                 "/api/messages/conversations",
                 mapOf(
                     "target_user_id" to targetUserId.toString(),
                     "page" to page.coerceAtLeast(1).toString(),
                     "page_size" to pageSize.coerceAtLeast(1).toString()
                 )
-            )
+            ))
         )
     }
 
@@ -4249,12 +4250,28 @@ class NovalPieApi(
 
     private fun normalizeMessageActionResult(raw: Any): MessageActionResult {
         val source = unwrapObject(raw, "data", "result")
-        return MessageActionResult(
-            success = booleanFromAny(raw)
-                ?: source.firstBooleanOrNull("success", "ok", "status")
-                ?: true,
-            message = source.firstStringOrNull("message", "msg", "detail")
+        val root = raw as? JSONObject
+        val declared = listOfNotNull(
+            root?.firstBooleanOrNull("success", "ok"),
+            source.firstBooleanOrNull("success", "ok", "status"),
+            booleanFromAny(raw),
         )
+        return MessageActionResult(
+            success = declared.none { !it },
+            message = root?.firstStringOrNull("message", "msg", "detail")
+                ?: source.firstStringOrNull("message", "msg", "detail")
+        )
+    }
+
+    /** HTTP 200 is not an acknowledgement when a source envelope explicitly says it failed. */
+    private fun requireMessageResponse(raw: Any): Any {
+        val root = raw as? JSONObject ?: return raw
+        val envelope = unwrapObject(root, "data", "result")
+        if (root.firstBooleanOrNull("success", "ok") == false || envelope.firstBooleanOrNull("success", "ok") == false) {
+            throw IllegalStateException(root.firstStringOrNull("message", "msg", "detail")
+                ?: envelope.firstStringOrNull("message", "msg", "detail") ?: "服务器未接受消息请求")
+        }
+        return raw
     }
 
     private fun normalizeMessageSettings(raw: Any): MessageSettings {

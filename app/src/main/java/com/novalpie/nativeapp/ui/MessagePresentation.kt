@@ -3,6 +3,12 @@ package com.novalpie.nativeapp.ui
 import com.novalpie.nativeapp.model.MessageSettings
 import com.novalpie.nativeapp.model.SiteMessage
 
+// Source-compatible names while the app shell moves to feature-owned state.
+typealias MessageCenterState = com.novalpie.nativeapp.feature.messages.MessageCenterState
+typealias MessageDetailState = com.novalpie.nativeapp.feature.messages.MessageDetailState
+typealias MessageConversationState = com.novalpie.nativeapp.feature.messages.MessageConversationState
+typealias MessageSettingsState = com.novalpie.nativeapp.feature.messages.MessageSettingsState
+
 internal data class MessageTypeOption(
     val value: Int,
     val label: String

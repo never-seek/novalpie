@@ -407,39 +407,6 @@ data class ToolsState(
     val messages: LoadResult<List<SiteMessage>> = LoadResult.Idle
 )
 
-data class MessageCenterState(
-    val query: MessageQuery = MessageQuery(),
-    val messages: LoadResult<List<SiteMessage>> = LoadResult.Idle,
-    val pagination: MessagePagination = MessagePagination(),
-    val stats: LoadResult<MessageStats> = LoadResult.Idle,
-    val selectedIds: Set<Long> = emptySet(),
-    val loadingMore: Boolean = false,
-    val actionLoading: Boolean = false,
-    val actionMessage: String? = null
-)
-
-data class MessageDetailState(
-    val messageId: Long = 0,
-    val detail: LoadResult<SiteMessage> = LoadResult.Idle,
-    val actionLoading: Boolean = false,
-    val actionMessage: String? = null
-)
-
-data class MessageConversationState(
-    val targetUserId: Long = 0,
-    val targetName: String? = null,
-    val messages: LoadResult<List<DirectMessage>> = LoadResult.Idle,
-    val draft: String = "",
-    val sending: Boolean = false,
-    val actionMessage: String? = null
-)
-
-data class MessageSettingsState(
-    val settings: LoadResult<MessageSettings> = LoadResult.Idle,
-    val draft: MessageSettings = MessageSettings(),
-    val saving: Boolean = false,
-    val actionMessage: String? = null
-)
 
 data class WorkspaceState(
     val selectedTab: WorkspaceTab = WorkspaceTab.Overview,
@@ -1053,10 +1020,14 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private var userProfileCheckinSettingsRequestSerial = 0L
     private var adminRequestSerial = 0L
     private var toolsRequestSerial = 0L
-    private var messageCenterRequestSerial = 0L
-    private var messageDetailRequestSerial = 0L
-    private var messageConversationRequestSerial = 0L
-    private var messageSettingsRequestSerial = 0L
+    private val messageInboxFeature = com.novalpie.nativeapp.feature.messages.MessageInboxViewModel(dependencies.messagesRepository)
+    private val conversationFeature = com.novalpie.nativeapp.feature.messages.ConversationViewModel(dependencies.messagesRepository)
+    private val messageSettingsFeature = com.novalpie.nativeapp.feature.messages.MessageSettingsViewModel(dependencies.messagesRepository)
+    private val messageDetailFeature = com.novalpie.nativeapp.feature.messages.MessageDetailViewModel(
+        dependencies.messagesRepository,
+        onDeleted = { id -> if ((currentRoute as? AppRoute.MessageDetail)?.messageId == id) goBack() },
+        onChanged = { if (messageCenterState.messages !is LoadResult.Idle) messageInboxFeature.refresh() },
+    )
     private var workspaceRequestSerial = 0L
     private var uploadRequestSerial = 0L
     private var editorRequestSerial = 0L
@@ -1064,8 +1035,6 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private var authRequestSerial = 0L
     private var readerRequestSerial = 0L
     private var readerCatalogRequestSerial = 0L
-    private val readerProgressSyncMutex = Mutex()
-    private var readerProgressSyncRevision = 0L
     private var imagePreviewRequestSerial = 0L
     /** One in-flight source detail lookup prevents home refreshes from duplicating legacy repair. */
     private var readerProgressTitleLookupBookId: Long? = null
@@ -1114,14 +1083,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         private set
     var toolsState by mutableStateOf(ToolsState())
         private set
-    var messageCenterState by mutableStateOf(MessageCenterState())
-        private set
-    var messageDetailState by mutableStateOf(MessageDetailState())
-        private set
-    var messageConversationState by mutableStateOf(MessageConversationState())
-        private set
-    var messageSettingsState by mutableStateOf(MessageSettingsState())
-        private set
+    val messageCenterState: MessageCenterState get() = messageInboxFeature.state
+    val messageDetailState: MessageDetailState get() = messageDetailFeature.state
+    val messageConversationState: MessageConversationState get() = conversationFeature.state
+    val messageSettingsState: MessageSettingsState get() = messageSettingsFeature.state
     var workspaceState by mutableStateOf(
         WorkspaceState(
             localApis = workspaceLocalStore.loadApis(),
@@ -1234,7 +1199,16 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             var previous=authToken to proxySettings
             snapshotFlow {authToken to proxySettings}.collect {next->
                 if(next!=previous){previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged();libraryFeature.environmentChanged();bookFeature.environmentChanged()
-                    when(val route=currentRoute){AppRoute.Home->loadHome();is AppRoute.BookDetail->loadBookDetail(route.bookId);else->Unit}}
+                    messageInboxFeature.environmentChanged();messageDetailFeature.environmentChanged();conversationFeature.environmentChanged();messageSettingsFeature.environmentChanged()
+                    when(val route=currentRoute){
+                        AppRoute.Home->loadHome()
+                        is AppRoute.BookDetail->loadBookDetail(route.bookId)
+                        AppRoute.MessageCenter->loadMessageCenter()
+                        is AppRoute.MessageDetail->loadMessageDetail(route.messageId)
+                        is AppRoute.MessageConversation->loadMessageConversation(route.targetUserId,route.targetName)
+                        AppRoute.MessageSettings->loadMessageSettings()
+                        else->Unit
+                    }}
             }
         }
         viewModelScope.launch {
@@ -3407,134 +3381,25 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         loadMessageCenter()
     }
 
-    fun loadMessageCenter() {
-        val requestSerial = ++messageCenterRequestSerial
-        val query = messageCenterState.query
-        messageCenterState = messageCenterState.copy(
-            messages = LoadResult.Loading,
-            stats = LoadResult.Loading,
-            pagination = MessagePagination(),
-            selectedIds = emptySet(),
-            loadingMore = false,
-            actionMessage = null
-        )
-        viewModelScope.launch {
-            val page = async { runCatching { api.messagePage(query, page = 1, pageSize = PAGE_SIZE) } }
-            val stats = async { runCatching { api.messageStats() } }
-            val pageResult = page.await()
-            val statsResult = stats.await()
-            if (!isFreshRequestSerial(requestSerial, messageCenterRequestSerial)) return@launch
-            messageCenterState = messageCenterState.copy(
-                messages = pageResult.fold(
-                    onSuccess = { LoadResult.Success(it.items) },
-                    onFailure = { LoadResult.Error(apiFailureMessage("消息列表", it)) }
-                ),
-                pagination = pageResult.getOrNull()?.pagination ?: MessagePagination(),
-                stats = statsResult.toLoadResult("消息统计")
-            )
-        }
-    }
-
-    fun loadMoreMessages() {
-        val current = (messageCenterState.messages as? LoadResult.Success)?.value ?: return
-        val pagination = messageCenterState.pagination
-        if (messageCenterState.loadingMore || pagination.page >= pagination.totalPages) return
-        val requestSerial = ++messageCenterRequestSerial
-        messageCenterState = messageCenterState.copy(loadingMore = true, actionMessage = null)
-        viewModelScope.launch {
-            val result = runCatching {
-                api.messagePage(
-                    query = messageCenterState.query,
-                    page = pagination.page + 1,
-                    pageSize = pagination.pageSize
-                )
-            }
-            if (!isFreshRequestSerial(requestSerial, messageCenterRequestSerial)) return@launch
-            messageCenterState = result.fold(
-                onSuccess = { next ->
-                    messageCenterState.copy(
-                        messages = LoadResult.Success(mergeMessagePages(current, next.items)),
-                        pagination = next.pagination,
-                        loadingMore = false
-                    )
-                },
-                onFailure = { failure ->
-                    messageCenterState.copy(
-                        loadingMore = false,
-                        actionMessage = apiFailureMessage("加载更多消息", failure)
-                    )
-                }
-            )
-        }
-    }
-
-    fun updateMessageKeyword(value: String) {
-        messageCenterState = messageCenterState.copy(
-            query = messageCenterState.query.copy(keyword = value)
-        )
-    }
-
-    fun applyMessageSearch() = loadMessageCenter()
-
-    fun selectMessageType(type: Int?) {
-        if (messageCenterState.query.messageType == type) return
-        messageCenterState = messageCenterState.copy(query = messageCenterState.query.copy(messageType = type))
-        loadMessageCenter()
-    }
-
-    fun selectMessageReadFilter(isRead: Boolean?) {
-        if (messageCenterState.query.isRead == isRead) return
-        messageCenterState = messageCenterState.copy(query = messageCenterState.query.copy(isRead = isRead))
-        loadMessageCenter()
-    }
-
-    fun selectMessagePriority(priority: Int?) {
-        if (messageCenterState.query.priority == priority) return
-        messageCenterState = messageCenterState.copy(query = messageCenterState.query.copy(priority = priority))
-        loadMessageCenter()
-    }
-
-    fun toggleMessageSelected(messageId: Long) {
-        messageCenterState = messageCenterState.copy(
-            selectedIds = toggleMessageSelection(messageCenterState.selectedIds, messageId)
-        )
-    }
-
-    fun selectAllVisibleMessages(select: Boolean) {
-        val ids = (messageCenterState.messages as? LoadResult.Success)?.value?.map { it.id }.orEmpty()
-        messageCenterState = messageCenterState.copy(selectedIds = selectVisibleMessages(ids, select))
-    }
-
-    fun markSelectedMessagesRead() {
-        val ids = messageCenterState.selectedIds.toList()
-        if (ids.isEmpty()) return
-        runMessageCenterAction("批量已读") { api.markMessagesRead(ids) }
-    }
-
-    fun deleteSelectedMessages() {
-        val ids = messageCenterState.selectedIds.toList()
-        if (ids.isEmpty()) return
-        runMessageCenterAction("批量删除") { api.deleteMessages(ids) }
-    }
-
-    fun markAllMessagesRead() {
-        runMessageCenterAction("全部已读") { api.markAllMessagesRead() }
-    }
-
-    fun toggleMessageStar(message: SiteMessage) {
-        runMessageCenterAction(if (message.isStarred) "取消星标" else "添加星标") {
-            api.starMessage(message.id, !message.isStarred)
-        }
-    }
+    fun loadMessageCenter() = messageInboxFeature.refresh()
+    fun loadMoreMessages() = messageInboxFeature.loadMore()
+    fun updateMessageKeyword(value: String) = messageInboxFeature.editKeyword(value)
+    fun applyMessageSearch() = messageInboxFeature.submit()
+    fun selectMessageType(type: Int?) = messageInboxFeature.filter { it.copy(messageType = type) }
+    fun selectMessageReadFilter(isRead: Boolean?) = messageInboxFeature.filter { it.copy(isRead = isRead) }
+    fun selectMessagePriority(priority: Int?) = messageInboxFeature.filter { it.copy(priority = priority) }
+    fun toggleMessageSelected(messageId: Long) = messageInboxFeature.toggleSelected(messageId)
+    fun selectAllVisibleMessages(select: Boolean) = messageInboxFeature.selectAll(select)
+    fun markSelectedMessagesRead() = messageInboxFeature.markSelectedRead()
+    fun deleteSelectedMessages() = messageInboxFeature.deleteSelected()
+    fun markAllMessagesRead() = messageInboxFeature.markAllRead()
+    fun toggleMessageStar(message: SiteMessage) = messageInboxFeature.star(message)
 
     fun openMessage(message: SiteMessage) {
         if (message.type == 8) {
-            val currentUserId = currentUserProfile()?.id
-            val targetUserId = directMessageTargetUserId(message, currentUserId)
+            val targetUserId = directMessageTargetUserId(message, currentUserProfile()?.id)
             if (targetUserId != null) {
-                if (!message.isRead) {
-                    viewModelScope.launch { runCatching { api.markMessageRead(message.id) } }
-                }
+                if (!message.isRead) messageInboxFeature.markRead(message.id)
                 openMessageConversation(targetUserId, message.username)
                 return
             }
@@ -3548,49 +3413,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         loadMessageDetail(messageId)
     }
 
-    fun loadMessageDetail(messageId: Long) {
-        val requestSerial = ++messageDetailRequestSerial
-        messageDetailState = MessageDetailState(messageId = messageId, detail = LoadResult.Loading)
-        viewModelScope.launch {
-            val result = runCatching { api.messageDetail(messageId) }
-            if (!isFreshRequestSerial(requestSerial, messageDetailRequestSerial)) return@launch
-            messageDetailState = messageDetailState.copy(
-                detail = result.toLoadResult("消息详情")
-            )
-        }
-    }
-
-    fun markCurrentMessageRead() {
-        val message = (messageDetailState.detail as? LoadResult.Success)?.value ?: return
-        if (message.isRead || messageDetailState.actionLoading) return
-        runMessageDetailAction("已标记为已读") { api.markMessageRead(message.id) }
-    }
-
-    fun toggleCurrentMessageStar() {
-        val message = (messageDetailState.detail as? LoadResult.Success)?.value ?: return
-        if (messageDetailState.actionLoading) return
-        runMessageDetailAction(if (message.isStarred) "已取消星标" else "已添加星标") {
-            api.starMessage(message.id, !message.isStarred)
-        }
-    }
-
-    fun deleteCurrentMessage() {
-        val message = (messageDetailState.detail as? LoadResult.Success)?.value ?: return
-        if (messageDetailState.actionLoading) return
-        messageDetailState = messageDetailState.copy(actionLoading = true, actionMessage = null)
-        viewModelScope.launch {
-            val result = runCatching { api.deleteMessage(message.id) }
-            result.onSuccess {
-                goBack()
-                loadMessageCenter()
-            }.onFailure { failure ->
-                messageDetailState = messageDetailState.copy(
-                    actionLoading = false,
-                    actionMessage = apiFailureMessage("删除消息", failure)
-                )
-            }
-        }
-    }
+    fun loadMessageDetail(messageId: Long) = messageDetailFeature.load(messageId)
+    fun markCurrentMessageRead() = messageDetailFeature.markRead()
+    fun toggleCurrentMessageStar() = messageDetailFeature.toggleStar()
+    fun deleteCurrentMessage() = messageDetailFeature.delete()
 
     fun openCurrentMessageConversation() {
         val message = (messageDetailState.detail as? LoadResult.Success)?.value ?: return
@@ -3606,7 +3432,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             "https://novalpie.cc/${actionUrl.trimStart('/')}"
         }
         val uri = runCatching { Uri.parse(absolute) }.getOrNull()
-        val segments = uri?.pathSegments.orEmpty()
+        if (uri?.host?.equals("novalpie.cc", ignoreCase = true) != true) {
+            openWebFallback(absolute)
+            return
+        }
+        val segments = uri.pathSegments.orEmpty()
         when (segments.firstOrNull()) {
             "forum", "posts" -> segments.getOrNull(1)?.toLongOrNull()?.let(::openForumPost)
                 ?: openWebFallback(absolute)
@@ -3625,64 +3455,18 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     fun openMessageConversation(targetUserId: Long, targetName: String?) {
         if (targetUserId <= 0) return
-        val route = AppRoute.MessageConversation(targetUserId, targetName)
-        navigator.replaceAll(pushDistinctRoute(routes.toList(), route))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.MessageConversation(targetUserId, targetName)))
         loadMessageConversation(targetUserId, targetName)
     }
 
-    fun loadMessageConversation(targetUserId: Long, targetName: String?) {
-        val requestSerial = ++messageConversationRequestSerial
-        messageConversationState = MessageConversationState(
-            targetUserId = targetUserId,
-            targetName = targetName,
-            messages = LoadResult.Loading
-        )
-        viewModelScope.launch {
-            val result = runCatching { api.messageConversation(targetUserId) }
-            if (!isFreshRequestSerial(requestSerial, messageConversationRequestSerial)) return@launch
-            messageConversationState = messageConversationState.copy(
-                messages = result.toLoadResult("私信对话")
-            )
-        }
-    }
-
-    fun updateMessageDraft(value: String) {
-        messageConversationState = messageConversationState.copy(draft = value, actionMessage = null)
-    }
+    fun loadMessageConversation(targetUserId: Long, targetName: String?) = conversationFeature.load(targetUserId, targetName)
+    fun loadMoreDirectMessages() = conversationFeature.loadMore()
+    fun updateMessageDraft(value: String) = conversationFeature.edit(value)
 
     fun sendMessageDraft() {
         val profile = currentUserProfile() ?: return
-        val currentUserId = profile.id ?: return
-        val content = messageConversationState.draft.trim()
-        val targetUserId = messageConversationState.targetUserId
-        if (content.isBlank() || targetUserId <= 0 || messageConversationState.sending) return
-        messageConversationState = messageConversationState.copy(sending = true, actionMessage = null)
-        viewModelScope.launch {
-            val result = runCatching {
-                api.sendDirectMessage(
-                    currentUserId = currentUserId,
-                    targetUserId = targetUserId,
-                    currentUserName = profile.name,
-                    content = content
-                )
-            }
-            messageConversationState = result.fold(
-                onSuccess = {
-                    messageConversationState.copy(
-                        draft = "",
-                        sending = false,
-                        actionMessage = it.message ?: "私信已发送"
-                    )
-                },
-                onFailure = { failure ->
-                    messageConversationState.copy(
-                        sending = false,
-                        actionMessage = apiFailureMessage("发送私信", failure)
-                    )
-                }
-            )
-            if (result.isSuccess) loadMessageConversation(targetUserId, messageConversationState.targetName)
-        }
+        val id = profile.id ?: return
+        conversationFeature.send(id, profile.name)
     }
 
     fun openMessageSettings() {
@@ -3690,109 +3474,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         loadMessageSettings()
     }
 
-    fun loadMessageSettings() {
-        val requestSerial = ++messageSettingsRequestSerial
-        messageSettingsState = MessageSettingsState(settings = LoadResult.Loading)
-        viewModelScope.launch {
-            val result = runCatching { api.messageSettings() }
-            if (!isFreshRequestSerial(requestSerial, messageSettingsRequestSerial)) return@launch
-            messageSettingsState = result.fold(
-                onSuccess = { settings ->
-                    MessageSettingsState(settings = LoadResult.Success(settings), draft = settings)
-                },
-                onFailure = { failure ->
-                    MessageSettingsState(
-                        settings = LoadResult.Error(apiFailureMessage("消息设置", failure)),
-                        actionMessage = apiFailureMessage("消息设置", failure)
-                    )
-                }
-            )
-        }
-    }
-
-    fun updateMessageSettingsDraft(transform: (MessageSettings) -> MessageSettings) {
-        messageSettingsState = messageSettingsState.copy(
-            draft = transform(messageSettingsState.draft),
-            actionMessage = null
-        )
-    }
-
-    fun saveMessageSettings() {
-        if (messageSettingsState.saving) return
-        validateMessageSettings(messageSettingsState.draft)?.let { error ->
-            messageSettingsState = messageSettingsState.copy(actionMessage = error)
-            return
-        }
-        messageSettingsState = messageSettingsState.copy(saving = true, actionMessage = null)
-        viewModelScope.launch {
-            val result = runCatching { api.updateMessageSettings(messageSettingsState.draft) }
-            messageSettingsState = result.fold(
-                onSuccess = {
-                    messageSettingsState.copy(
-                        settings = LoadResult.Success(messageSettingsState.draft),
-                        saving = false,
-                        actionMessage = it.message ?: "消息设置已保存"
-                    )
-                },
-                onFailure = { failure ->
-                    messageSettingsState.copy(
-                        saving = false,
-                        actionMessage = apiFailureMessage("保存消息设置", failure)
-                    )
-                }
-            )
-        }
-    }
-
-    private fun runMessageCenterAction(
-        label: String,
-        action: suspend () -> com.novalpie.nativeapp.model.MessageActionResult
-    ) {
-        if (messageCenterState.actionLoading) return
-        messageCenterState = messageCenterState.copy(actionLoading = true, actionMessage = null)
-        viewModelScope.launch {
-            val result = runCatching { action() }
-            messageCenterState = result.fold(
-                onSuccess = {
-                    messageCenterState.copy(
-                        actionLoading = false,
-                        // Braces are required, not stylistic: Kotlin identifiers may contain CJK
-                        // letters, so "$label已同步" parses as a reference to `label已同步`.
-                        actionMessage = it.message ?: "${label}已同步",
-                        selectedIds = emptySet()
-                    )
-                },
-                onFailure = { failure ->
-                    messageCenterState.copy(
-                        actionLoading = false,
-                        actionMessage = apiFailureMessage(label, failure)
-                    )
-                }
-            )
-            if (result.isSuccess) loadMessageCenter()
-        }
-    }
-
-    private fun runMessageDetailAction(
-        successMessage: String,
-        action: suspend () -> com.novalpie.nativeapp.model.MessageActionResult
-    ) {
-        val messageId = messageDetailState.messageId
-        messageDetailState = messageDetailState.copy(actionLoading = true, actionMessage = null)
-        viewModelScope.launch {
-            val result = runCatching { action() }
-            messageDetailState = result.fold(
-                onSuccess = { messageDetailState.copy(actionLoading = false, actionMessage = it.message ?: successMessage) },
-                onFailure = { failure ->
-                    messageDetailState.copy(
-                        actionLoading = false,
-                        actionMessage = apiFailureMessage(successMessage, failure)
-                    )
-                }
-            )
-            if (result.isSuccess) loadMessageDetail(messageId)
-        }
-    }
+    fun loadMessageSettings() = messageSettingsFeature.load()
+    fun updateMessageSettingsDraft(transform: (MessageSettings) -> MessageSettings) = messageSettingsFeature.edit(transform)
+    fun saveMessageSettings() = messageSettingsFeature.save()
 
     private fun currentUserProfile(): UserProfile? = effectiveToolsUserProfile(
         profile = profileState.profile,
@@ -7382,6 +7066,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val leavingReader = currentRoute as? AppRoute.Reader
         navigator.pop()
         rootRouteTab(currentRoute)?.let { currentTab = it }
+        when (val restored = currentRoute) {
+            is AppRoute.MessageDetail -> if (messageDetailState.messageId != restored.messageId) loadMessageDetail(restored.messageId)
+            is AppRoute.MessageConversation -> if (messageConversationState.targetUserId != restored.targetUserId) loadMessageConversation(restored.targetUserId, restored.targetName)
+            else -> Unit
+        }
         if (leavingReader != null) {
             readerSessionStore.clear()
             val detail = currentRoute as? AppRoute.BookDetail
@@ -8060,13 +7749,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             bookDetailState = bookDetailState.copy(readerProgress = readerProgressStore.load(bookId))
         }
         if (!authToken.isNullOrBlank()) {
-            val syncRevision = ++readerProgressSyncRevision
-            viewModelScope.launch {
-                readerProgressSyncMutex.withLock {
-                    if (syncRevision != readerProgressSyncRevision) return@withLock
-                    runCatching { api.saveReadingProgress(bookId, chapterId) }
-                }
-            }
+            dependencies.readingProgressSync.request(bookId, chapterId)
         }
     }
 
@@ -8351,6 +8034,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         forumFeature.close()
         libraryFeature.close()
         bookFeature.close()
+        messageInboxFeature.close()
+        messageDetailFeature.close()
+        conversationFeature.close()
+        messageSettingsFeature.close()
         super.onCleared()
     }
 
