@@ -1266,7 +1266,7 @@ class NovalPieApi(
             .put("bio", profile.bio.orEmpty())
         profile.showCheckin?.let { body.put("show_checkin", it) }
         profile.autoCheckin?.let { body.put("auto_checkin", it) }
-        patch("/api/users/me", body)
+        requireSuccessfulEnvelope(patch("/api/users/me", body), "资料保存被服务器拒绝")
         profile
     }
 
@@ -4964,10 +4964,10 @@ class NovalPieApi(
     }
 
     private fun normalizeAdminAction(raw: Any): UserCheckinAction {
-        val source = unwrapObject(raw, "data", "result")
+        val acknowledgement = normalizeMessageActionResult(raw)
         return UserCheckinAction(
-            success = source.firstBooleanOrNull("success", "ok") ?: true,
-            message = source.firstStringOrNull("message", "msg", "detail")
+            success = acknowledgement.success,
+            message = acknowledgement.message,
         )
     }
 
@@ -5590,12 +5590,10 @@ class NovalPieApi(
             .distinctBy(ShopItem::id)
 
     private fun normalizeShopPurchase(raw: Any): ShopPurchaseResult {
-        val source = unwrapObject(raw, "data", "result")
+        val acknowledgement = normalizeMessageActionResult(raw)
         return ShopPurchaseResult(
-            success = booleanFromAny(raw)
-                ?: source.firstBooleanOrNull("success", "ok", "status")
-                ?: true,
-            message = source.firstStringOrNull("message", "msg", "detail")
+            success = acknowledgement.success,
+            message = acknowledgement.message,
         )
     }
 

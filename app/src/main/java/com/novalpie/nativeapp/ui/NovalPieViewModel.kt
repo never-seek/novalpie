@@ -1010,7 +1010,6 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private var terminologyRequestSerial = 0L
     private var bookEditRequestSerial = 0L
     private var bookChapterRequestSerial = 0L
-    private var profileRequestSerial = 0L
     private var userProfileRequestSerial = 0L
     private var userProfileHeroRequestSerial = 0L
     private var userProfileActivitiesRequestSerial = 0L
@@ -1070,13 +1069,16 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     var homeState:HomeState
         get()=libraryFeature.state
         private set(value){libraryFeature.present{value}}
-    var profileState by mutableStateOf(
+    private val profileFeature = com.novalpie.nativeapp.feature.profile.ProfileViewModel(
+        dependencies.profileRepository,
         ProfileState(
             booksGridColumns = initialProfileBooksSettings.gridColumns,
             downloadImageConcurrency = initialDownloadSettings.imageConcurrency,
-        )
+        ), onProfile = ::publishHomeUserProfile,
     )
-        private set
+    var profileState: ProfileState
+        get() = profileFeature.state
+        private set(value) { profileFeature.present { value } }
     var userProfileDetailState by mutableStateOf(UserProfileDetailState())
         private set
     var adminState by mutableStateOf(AdminState())
@@ -1204,6 +1206,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             snapshotFlow {authToken to proxySettings}.collect {next->
                 if(next!=previous){previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged();libraryFeature.environmentChanged();bookFeature.environmentChanged()
                     messageInboxFeature.environmentChanged();messageDetailFeature.environmentChanged();conversationFeature.environmentChanged();messageSettingsFeature.environmentChanged()
+                    profileFeature.environmentChanged()
                     replacementLoadRevision++;pendingReaderReplacementCreates.clear();deletedPendingReaderReplacementCreates.clear()
                     readerReplacementState = ReaderReplacementState()
                     when(val route=currentRoute){
@@ -1213,6 +1216,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                         is AppRoute.MessageDetail->loadMessageDetail(route.messageId)
                         is AppRoute.MessageConversation->loadMessageConversation(route.targetUserId,route.targetName)
                         AppRoute.MessageSettings->loadMessageSettings()
+                        AppRoute.Profile->loadProfile()
                         is AppRoute.Reader->loadReaderReplacementRules(route.bookId)
                         else->Unit
                     }}
@@ -2305,8 +2309,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         authSessionStore.clearToken()
         authToken = null
         AppContainer.from(getApplication()).refreshEnvironmentFromStores()
-        profileRequestSerial++
-        profileState = ProfileState()
+        profileFeature.environmentChanged()
         sanitizeAdminSurfaceIfNeeded(isAdmin = false)
         loadHome()
     }
@@ -2356,111 +2359,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.Settings))
     }
 
-    fun loadProfile() {
-        val requestSerial = ++profileRequestSerial
-        val tokenProfile = authToken?.let(::decodeAuthTokenProfile)
-        val displayedProfile = (profileState.profile as? LoadResult.Success)?.value
-        profileState = profileState.copy(
-            // A JWT contains only identity fields. Rendering it as a full profile made a cold
-            // account visit briefly claim 0 points/posts and a missing avatar before `/me`
-            // arrived. Retain a real profile on refresh, otherwise show the explicit sync state.
-            profile = displayedProfile?.let { LoadResult.Success(it) } ?: LoadResult.Loading,
-            checkinStats = LoadResult.Loading,
-            checkinRecords = LoadResult.Loading,
-            activities = LoadResult.Loading,
-            books = LoadResult.Loading,
-            activityFeed = null,
-            uploadedBooks = null,
-            inventory = LoadResult.Loading,
-            shopItems = LoadResult.Loading,
-            quizReward = LoadResult.Loading,
-            actionMessage = null
-        )
-        viewModelScope.launch {
-            val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-            val profileResult = async { runCatching { api.currentUser() } }
-            val today = String.format(Locale.US, "%tF", Calendar.getInstance())
-
-            launch {
-                val result = profileResult.await()
-                if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@launch
-                profileState = currentUserProfileWithLoadedHero(profileState, result, tokenProfile)
-                (profileState.profile as? LoadResult.Success<UserProfile>)?.value?.let { profile ->
-                    publishHomeUserProfile(profile)
-                }
-            }
-
-            launch {
-                val result = runCatching { api.currentUserCheckinStats() }
-                if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@launch
-                profileState = currentUserProfileWithLoadedCheckinStats(profileState, result, today)
-            }
-
-            launch {
-                val result = runCatching {
-                    api.userCheckinRecords(
-                        startDate = "$currentYear-01-01",
-                        endDate = "$currentYear-12-31",
-                    )
-                }
-                if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@launch
-                profileState = currentUserProfileWithLoadedCheckinRecords(profileState, result, today)
-            }
-
-            launch {
-                val ownerId = tokenProfile?.id ?: profileResult.await().getOrNull()?.id
-                val result = if (ownerId == null) {
-                    Result.failure(IllegalStateException("当前账号缺少用户 ID"))
-                } else {
-                    runCatching {
-                        // Source ActivityTab opens a single 200-item window. Keeping that
-                        // contract prevents an active account timeline from looking empty simply
-                        // because its newest relevant entries sit after the legacy 100-item cap.
-                        api.userContentActivityFeed(
-                            userId = ownerId,
-                            limit = 200,
-                            hideSpoilers = forumState.hideSpoilers,
-                        )
-                    }
-                }
-                if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@launch
-                profileState = currentUserProfileWithLoadedActivities(profileState, result)
-                (profileState.profile as? LoadResult.Success<UserProfile>)?.value?.let { profile ->
-                    publishHomeUserProfile(profile)
-                }
-            }
-
-            launch {
-                val result = runCatching { api.currentUserUploadedBooks() }
-                if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@launch
-                profileState = currentUserProfileWithLoadedBooks(profileState, result)
-                (profileState.profile as? LoadResult.Success<UserProfile>)?.value?.let { profile ->
-                    publishHomeUserProfile(profile)
-                }
-            }
-
-            launch {
-                val result = runCatching { api.currentUserInventory() }
-                if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@launch
-                profileState = currentUserProfileWithLoadedInventory(profileState, result)
-                (profileState.profile as? LoadResult.Success<UserProfile>)?.value?.let { profile ->
-                    publishHomeUserProfile(profile)
-                }
-            }
-
-            launch {
-                val result = runCatching { api.shopItems() }
-                if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@launch
-                profileState = profileState.copy(shopItems = result.toLoadResult("商店"))
-            }
-
-            launch {
-                val result = runCatching { api.currentUserQuizRewardStatus() }
-                if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@launch
-                profileState = profileState.copy(quizReward = result.toLoadResult("奖励状态"))
-            }
-        }
-    }
+    fun loadProfile() = profileFeature.load(authToken?.let(::decodeAuthTokenProfile), forumState.hideSpoilers)
 
     fun selectProfileTab(tab: ProfileTab) {
         if (profileState.selectedTab != tab) {
@@ -2481,99 +2380,14 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun toggleCurrentUserEquipment(item: UserInventoryItem) {
-        if (item.itemId <= 0 || profileState.inventoryActionInventoryId != null) return
-        if (authToken.isNullOrBlank()) {
-            profileState = profileState.copy(actionMessage = "请先登录后再管理装扮")
-            return
-        }
-        val requestSerial = ++profileRequestSerial
-        val action = if (item.equipped) "unequip" else "equip"
-        profileState = profileState.copy(
-            inventoryActionInventoryId = item.inventoryId,
-            actionMessage = if (action == "equip") "正在装备…" else "正在卸下…"
-        )
-        viewModelScope.launch {
-            val result = runCatching {
-                val mutation = api.setCurrentUserEquipment(item.itemId, action)
-                val inventory = api.currentUserInventory()
-                val profile = api.currentUser()
-                Triple(mutation, inventory, profile)
-            }
-            if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@launch
-            result.onSuccess { (mutation, inventory, remoteProfile) ->
-                val profile = profileWithEquippedCosmetics(remoteProfile, inventory) ?: remoteProfile
-                profileState = profileState.copy(
-                    profile = LoadResult.Success(profile),
-                    inventory = LoadResult.Success(inventory),
-                    inventoryActionInventoryId = null,
-                    actionMessage = mutation.message
-                        ?: if (mutation.success) {
-                            if (action == "equip") "装备成功" else "已卸下"
-                        } else {
-                            "操作未完成"
-                        }
-                )
-                publishHomeUserProfile(profile)
-            }.onFailure { failure ->
-                profileState = profileState.copy(
-                    inventoryActionInventoryId = null,
-                    actionMessage = apiFailureMessage(if (action == "equip") "装备" else "卸下", failure)
-                )
-            }
-        }
+        if (authToken.isNullOrBlank()) { profileState = profileState.copy(actionMessage = "请先登录"); return }
+        profileFeature.equip(item)
     }
 
     fun purchaseCurrentUserShopItem(item: ShopItem) {
-        if (item.id <= 0 || profileState.shopPurchaseItemId != null) return
-        if (authToken.isNullOrBlank()) {
-            profileState = profileState.copy(actionMessage = "请先登录后再购买装扮")
-            return
-        }
-        val requestSerial = ++profileRequestSerial
-        profileState = profileState.copy(
-            shopPurchaseItemId = item.id,
-            actionMessage = "正在购买“${item.name}”…"
-        )
-        viewModelScope.launch {
-            val result = runCatching {
-                val mutation = api.purchaseShopItem(item.id)
-                val inventory = api.currentUserInventory()
-                val shopItems = api.shopItems()
-                val profile = api.currentUser()
-                PurchasedShopRefresh(
-                    mutation = mutation,
-                    inventory = inventory,
-                    shopItems = shopItems,
-                    profile = profile,
-                )
-            }
-            if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@launch
-            result.onSuccess { refreshed ->
-                val profile = profileWithEquippedCosmetics(refreshed.profile, refreshed.inventory) ?: refreshed.profile
-                profileState = profileState.copy(
-                    profile = LoadResult.Success(profile),
-                    inventory = LoadResult.Success(refreshed.inventory),
-                    shopItems = LoadResult.Success(refreshed.shopItems),
-                    shopPurchaseItemId = null,
-                    actionMessage = refreshed.mutation.message
-                        ?: if (refreshed.mutation.success) "购买成功" else "购买未完成"
-                )
-                publishHomeUserProfile(profile)
-            }.onFailure { failure ->
-                profileState = profileState.copy(
-                    shopPurchaseItemId = null,
-                    actionMessage = apiFailureMessage("购买装扮", failure)
-                )
-            }
-        }
+        if (authToken.isNullOrBlank()) { profileState = profileState.copy(actionMessage = "请先登录"); return }
+        profileFeature.purchase(item)
     }
-
-    private data class PurchasedShopRefresh(
-        val mutation: ShopPurchaseResult,
-        val inventory: UserInventory,
-        val shopItems: List<ShopItem>,
-        val profile: UserProfile,
-    )
 
     /** Local filtering only; uploaded books have already been fetched for the current profile. */
     fun updateProfileBookQuery(value: String) {
@@ -2604,19 +2418,19 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun updateProfileName(value: String) {
-        profileState = profileState.copy(nameDraft = value, actionMessage = null)
+        profileFeature.edit { it.copy(nameDraft = value, actionMessage = null) }
     }
 
     fun updateProfileBio(value: String) {
-        profileState = profileState.copy(bioDraft = value, actionMessage = null)
+        profileFeature.edit { it.copy(bioDraft = value, actionMessage = null) }
     }
 
     fun updateProfileShowCheckin(value: Boolean) {
-        profileState = profileState.copy(showCheckin = value, actionMessage = null)
+        profileFeature.edit { it.copy(showCheckin = value, actionMessage = null) }
     }
 
     fun updateProfileAutoCheckin(value: Boolean) {
-        profileState = profileState.copy(autoCheckin = value, actionMessage = null)
+        profileFeature.edit { it.copy(autoCheckin = value, actionMessage = null) }
     }
 
     fun updateProfileAdultBirthYear(value: String) {
@@ -2626,172 +2440,25 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         )
     }
 
-    fun saveProfile() {
-        if (profileState.saving || profileState.checkingIn) return
-        val profile = (profileState.profile as? LoadResult.Success)?.value
-            ?: currentUserProfile()
-            ?: run {
-                profileState = profileState.copy(actionMessage = "请先登录后再编辑资料")
-                return
-            }
-        val normalizedName = profileState.nameDraft.trim()
-        if (normalizedName.isBlank()) {
-            profileState = profileState.copy(actionMessage = "用户名不能为空")
-            return
-        }
-        val updated = profile.copy(
-            name = normalizedName,
-            bio = profileState.bioDraft.trim(),
-            showCheckin = profileState.showCheckin,
-            autoCheckin = profileState.autoCheckin
-        )
-        val requestSerial = ++profileRequestSerial
-        profileState = profileState.copy(saving = true, actionMessage = "正在保存资料…")
-        viewModelScope.launch {
-            runCatching { api.updateCurrentUser(updated) }
-                .onSuccess {
-                    if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@onSuccess
-                    profileState = profileState.copy(
-                        profile = LoadResult.Success(updated),
-                        saving = false,
-                        actionMessage = "资料已保存"
-                    )
-                    publishHomeUserProfile(updated)
-                }
-                .onFailure { failure ->
-                    if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@onFailure
-                    profileState = profileState.copy(
-                        saving = false,
-                        actionMessage = apiFailureMessage("保存资料", failure)
-                    )
-                }
-        }
-    }
+    fun saveProfile() = profileFeature.save()
 
     fun checkinCurrentUser() {
-        if (profileState.checkingIn || profileState.saving) return
-        if (authToken.isNullOrBlank()) {
-            profileState = profileState.copy(actionMessage = "请先登录后再签到")
-            return
-        }
-        val requestSerial = ++profileRequestSerial
-        profileState = profileState.copy(checkingIn = true, actionMessage = "正在签到…")
-        viewModelScope.launch {
-            runCatching { api.checkinCurrentUser() }
-                .onSuccess { action ->
-                    val refreshedProfile = async { runCatching { api.currentUser() } }
-                    val refreshedStats = async { runCatching { api.currentUserCheckinStats() } }
-                    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-                    val refreshedRecords = async {
-                        runCatching {
-                            api.userCheckinRecords(
-                                startDate = "$currentYear-01-01",
-                                endDate = "$currentYear-12-31"
-                            )
-                        }
-                    }
-                    val refreshedQuizReward = async { runCatching { api.currentUserQuizRewardStatus() } }
-                    val profileResult = refreshedProfile.await()
-                    val statsResult = refreshedStats.await()
-                    val recordsResult = refreshedRecords.await()
-                    val quizRewardResult = refreshedQuizReward.await()
-                    if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@onSuccess
-                    val current = (profileState.profile as? LoadResult.Success)?.value
-                    val resolvedProfile = resolveUserLoadResult(profileResult, current)
-                    profileState = profileState.copy(
-                        profile = resolvedProfile,
-                        checkinStats = if (statsResult.getOrNull() != null || recordsResult.getOrNull().orEmpty().isNotEmpty()) {
-                            LoadResult.Success(
-                                reconcileCheckinStats(
-                                    source = statsResult.getOrNull() ?: UserCheckinStats(),
-                                    records = recordsResult.getOrNull().orEmpty(),
-                                    today = String.format(Locale.US, "%tF", Calendar.getInstance())
-                                )
-                            )
-                        } else {
-                            statsResult.toLoadResult("签到统计")
-                        },
-                        checkinRecords = recordsResult.toLoadResult("签到记录"),
-                        quizReward = quizRewardResult.toLoadResult("奖励状态"),
-                        checkingIn = false,
-                        actionMessage = action.message ?: if (action.success) "签到成功" else "签到未完成"
-                    )
-                    (resolvedProfile as? LoadResult.Success)?.value?.let { user ->
-                        publishHomeUserProfile(user)
-                    }
-                }
-                .onFailure { failure ->
-                    if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@onFailure
-                    profileState = profileState.copy(
-                        checkingIn = false,
-                        actionMessage = apiFailureMessage("签到", failure)
-                    )
-                }
-        }
+        if (authToken.isNullOrBlank()) { profileState = profileState.copy(actionMessage = "请先登录后再签到"); return }
+        profileFeature.checkin()
     }
 
     fun verifyCurrentUserAdult() {
-        if (profileState.verifyingAdult || profileState.saving || profileState.checkingIn) return
-        if (authToken.isNullOrBlank()) {
-            profileState = profileState.copy(actionMessage = "请先登录后再进行成年验证")
-            return
-        }
-        val birthYear = profileState.adultBirthYearDraft.toIntOrNull()
-        if (birthYear == null || birthYear !in 1900..Calendar.getInstance().get(Calendar.YEAR)) {
-            profileState = profileState.copy(actionMessage = "请输入有效的出生年份")
-            return
-        }
-        val requestSerial = ++profileRequestSerial
-        profileState = profileState.copy(verifyingAdult = true, actionMessage = "正在提交成年验证…")
-        viewModelScope.launch {
-            runCatching { api.verifyCurrentUserAdult(birthYear) }
-                .onSuccess { action ->
-                    if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@onSuccess
-                    val current = (profileState.profile as? LoadResult.Success)?.value
-                    val verified = current?.copy(isAdult = action.success)
-                    profileState = profileState.copy(
-                        profile = verified?.let { LoadResult.Success(it) } ?: profileState.profile,
-                        verifyingAdult = false,
-                        actionMessage = action.message ?: if (action.success) "成年验证已完成" else "成年验证未通过"
-                    )
-                    verified?.let(::publishHomeUserProfile)
-                }
-                .onFailure { failure ->
-                    if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@onFailure
-                    profileState = profileState.copy(
-                        verifyingAdult = false,
-                        actionMessage = apiFailureMessage("成年验证", failure)
-                    )
-                }
-        }
+        if (authToken.isNullOrBlank()) { profileState = profileState.copy(actionMessage = "请先登录"); return }
+        profileFeature.verifyAdult()
     }
 
     fun uploadProfileAvatar(rawUri: String) {
-        if (profileState.uploadingAvatar || rawUri.isBlank()) return
-        val requestSerial = ++profileRequestSerial
-        profileState = profileState.copy(uploadingAvatar = true, actionMessage = "正在上传头像…")
-        viewModelScope.launch {
-            val result = runCatching {
-                val document = readUploadDocument(rawUri)
-                require(document.sizeBytes > 0L) { "头像文件为空" }
-                require(document.mimeType?.startsWith("image/") == true) { "请选择图片文件" }
-                api.uploadCurrentUserAvatar(uploadSource(document))
-                api.currentUser()
-            }
-            if (!isFreshRequestSerial(requestSerial, profileRequestSerial)) return@launch
-            result.onSuccess { refreshed ->
-                profileState = profileState.copy(
-                    profile = LoadResult.Success(refreshed),
-                    uploadingAvatar = false,
-                    actionMessage = "头像已更新"
-                )
-                publishHomeUserProfile(refreshed)
-            }.onFailure { failure ->
-                profileState = profileState.copy(
-                    uploadingAvatar = false,
-                    actionMessage = apiFailureMessage("上传头像", failure)
-                )
-            }
+        if (rawUri.isBlank()) return
+        profileFeature.uploadAvatar {
+            val document = readUploadDocument(rawUri)
+            require(document.sizeBytes > 0) { "头像文件为空" }
+            require(document.mimeType?.startsWith("image/") == true) { "请选择图片文件" }
+            api.uploadCurrentUserAvatar(uploadSource(document))
         }
     }
 
@@ -8030,6 +7697,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         messageDetailFeature.close()
         conversationFeature.close()
         messageSettingsFeature.close()
+        profileFeature.close()
         super.onCleared()
     }
 
