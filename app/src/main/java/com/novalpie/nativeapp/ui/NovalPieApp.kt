@@ -6253,6 +6253,7 @@ internal fun ReaderScreen(
     onOpenLink: (String) -> Unit,
     onOpenWeb: (Long) -> Unit,
     onPreviewImage: (ReaderContentBlock.Image, String) -> Unit,
+    recordPlaybackProgress:Boolean=true,
 ) {
     val chapters = (state.chapters as? LoadResult.Success)?.value.orEmpty()
     val catalogVisible = remember { mutableStateOf(false) }
@@ -6968,6 +6969,7 @@ internal fun ReaderScreen(
             chapter.content.copy(title=chapter.title ?: chapter.content.title),if(index>=0)chapters.getOrNull(index+1)?.id else null,
             chapters.getOrNull(index)?.number ?: (index+1).takeIf{it>0},chapters.size.takeIf{it>0},replacementState.revision,
             options.showImages,options.removeDuplicateLines,readerBodyLayout.chapters.firstOrNull{it.chapter.chapterId==chapter.chapterId}?.visibleBlocks)
+            .copy(recordProgress=recordPlaybackProgress)
     }
 
     fun startTts() {

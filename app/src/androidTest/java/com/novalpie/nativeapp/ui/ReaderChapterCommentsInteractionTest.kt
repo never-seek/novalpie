@@ -36,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.Rule
 import org.junit.Test
 import org.junit.Before
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import androidx.test.platform.app.InstrumentationRegistry
@@ -45,6 +46,17 @@ import com.novalpie.nativeapp.feature.reader.tts.SpeechStatus
 class ReaderChapterCommentsInteractionTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
+
+    @After fun removeOnlyLegacySyntheticSpeechProgress() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val store=com.novalpie.nativeapp.data.ReaderProgressStore(context)
+        val fixture=store.load(7)
+        if(fixture?.bookTitle=="测试书籍"&&fixture.chapterId==8L) {
+            store.clear(7)
+            context.getSharedPreferences("novalpie_native_reader_anchors",android.content.Context.MODE_PRIVATE)
+                .edit().remove("book_7_chapter_8").apply()
+        }
+    }
 
     @Before fun matchHandsetActivityOrientation() {
         composeRule.activityRule.scenario.onActivity {
@@ -271,6 +283,7 @@ class ReaderChapterCommentsInteractionTest {
                     onOpenLink = {},
                     onOpenWeb = {},
                     onPreviewImage = { _, _ -> },
+                    recordPlaybackProgress=false,
                 )
             }
         }

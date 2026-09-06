@@ -16,6 +16,16 @@ import org.junit.Test
 class TtsPlaybackCoordinatorTest {
     private fun chapter(id: Long,next:Long?=null)=SpeechChapter(1,id,"测试书","第$id 章",listOf("首句$id","次句$id"),next)
 
+    @Test fun isolatedPreviewPlaybackDoesNotWriteAReadersRealProgress()=runTest {
+        var writes=0
+        val engine=FakeEngine()
+        val coordinator=TtsPlaybackCoordinator(engine,SpeechChapterSource{_,id->chapter(id)},backgroundScope,onPosition={_,_->writes++})
+        coordinator.start(chapter(10).copy(recordProgress=false),ReaderTtsSettings())
+        engine.segment(0)
+        assertEquals(SpeechStatus.Speaking,coordinator.state.value.status)
+        assertEquals(0,writes)
+    }
+
     @Test fun progressOnlyTracksAnActuallyStartedUtteranceAndNeverAPreloadOrLateCallback()=runTest {
         val seen=mutableListOf<Pair<Long,Int>>()
         val engine=FakeEngine()

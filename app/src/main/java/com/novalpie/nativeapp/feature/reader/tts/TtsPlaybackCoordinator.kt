@@ -20,6 +20,7 @@ internal data class SpeechChapter(
     val positions:List<SpeechTextPosition> = emptyList(),
     val chapterNumber:Int?=null,
     val chapterCount:Int?=null,
+    val recordProgress:Boolean=true,
 )
 
 internal fun interface SpeechChapterSource {
@@ -88,7 +89,7 @@ internal class TtsPlaybackCoordinator(
                 onSegment={position->
                     if(generation==serial && position in snapshot.segments.indices && position>=mutable.value.segmentIndex) {
                         mutable.value=mutable.value.copy(status=SpeechStatus.Speaking,segmentIndex=position,message=null)
-                        onPosition(snapshot,position)
+                        if(snapshot.recordProgress)onPosition(snapshot,position)
                     }
                 },
                 onFinished={

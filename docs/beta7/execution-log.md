@@ -135,3 +135,5 @@
 - 论坛反应/书评提交写入补ContentMutationIdentity路由/代次/环境检查，旧操作返回不再覆盖另一本书/另一帖当前状态；尚待本轮完整build/实机。
 - TTS后台进度切片新增SpeechDocument（段落/UTF16偏移、可见图开关对应item索引）与SpeechProgressRecorder：只有实际utterance onStart写本地进度/锚点，按章节同步网站；根观察进度store变化更新收藏和继续阅读。来源与UI共用buildSpeechChapter，移除从全局LazyColumn索引直接比较单章索引的起读偏差。新用例先编译红灯后接实现，当前完整build34016执行中，尚无实机后台进度验收。
 - 实机最新startup ANR细节：exit-info `failed to complete startup`，MainActivity am start -W也超时115738ms，MuMu下uiautomator自身还存在SIGSEGV记录。主机内存压力存在但不能单凭此断言是模拟器问题；实例0已安全shutdown等待构建后重启、不清数据。保持发布blocked-by-verification，其他代码工作仍继续。
+- build34016全量113suites/930tests/0失败，Debug/AndroidTest成功（9m59s），stream取消/外站无会话header与TTS真实位置存储等新用例均绿。开发APK`265F63D23F7DAB9897F02BF37112F0CE12613CD4BF7FB512EAD4C5DC70CE61B4`；MuMu正在launch，接下来无Gradle并发下安装/回归。保存本轮本地中间源码提交，不push不发布；全部门禁仍未关闭。
+- 本地中间提交c18ad1d完成（55files），未push。MuMu重启后最新265f包无损install-r，MainActivity冷启动成功5001ms；分页4项全部通过（20260906-final-paging-restarted.*），包括横滑前后、字体/繁体/词距/无高亮跟页、插图失败可重试。旧startup超时证据保留，不能断言所有设备已无ANR，继续整体运行验收。
