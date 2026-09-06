@@ -70,11 +70,20 @@ internal fun ReaderReplacementSettingsControls(
     onDefaultSharedRulesEnabledChange: (Boolean) -> Unit,
     onResetSharedRulesOverride: () -> Unit,
     onPrefillConsumed: () -> Unit,
+    onRestoreLegacyRules: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var editingRule by remember { mutableStateOf<ReaderReplacementRule?>(null) }
     var publishingToWebsite by remember { mutableStateOf(false) }
     var clipboardMessage by remember { mutableStateOf<String?>(null) }
+    var confirmLegacyRestore by remember { mutableStateOf(false) }
+    if (confirmLegacyRestore) AlertDialog(
+        onDismissRequest = { confirmLegacyRestore = false },
+        title = { Text("恢复本书旧版规则") },
+        text = { Text("升级时没有保留的登录身份，无法自动归属旧规则。只恢复到当前账号的本机停用规则，不发布、不删除旧副本。是否继续？") },
+        confirmButton = { TextButton(onClick = { confirmLegacyRestore = false; onRestoreLegacyRules() }) { Text("恢复到当前账号") } },
+        dismissButton = { TextButton(onClick = { confirmLegacyRestore = false }) { Text("取消") } },
+    )
 
     fun createRule(
         source: String = "",
@@ -122,6 +131,7 @@ internal fun ReaderReplacementSettingsControls(
     }
 
     ReaderSettingsSection(title = "文本替换", textColor = textColor, metaColor = metaColor) {
+        if (state.hasUnassignedLegacyRules) TextButton(onClick = { confirmLegacyRestore = true }) { Text("发现未归属的旧版规则，点击恢复") }
         Text(
             text = "个人规则优先于公共规则；规则只改变阅读和听书的显示文本，不修改原章节。",
             style = MaterialTheme.typography.bodySmall,

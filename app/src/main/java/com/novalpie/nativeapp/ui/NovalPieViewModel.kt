@@ -1680,6 +1680,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         )
     }
 
+    fun restoreUnassignedReaderReplacementRules() {
+        val bookId = readerReplacementState.novelId.takeIf { it > 0 } ?: return
+        val count = readerReplacementRulesStore.importUnassignedLegacyRules(bookId)
+        loadReaderReplacementRules(bookId)
+        readerReplacementState = readerReplacementState.copy(actionMessage = "已恢复 $count 条旧规则为停用的本机规则；确认后可逐条启用")
+    }
+
     /** Explicit per-book control: it governs reader, TTS, and captured download rule snapshots. */
     fun setReaderSharedRulesEnabled(enabled: Boolean) {
         val current = readerReplacementState
@@ -1968,6 +1975,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             defaultSharedRulesEnabled = defaultSharedRulesEnabled,
             sharedRulesEnabledOverride = sharedRulesEnabledOverride,
             revision = readerReplacementRulesStore.revision(bookId),
+            hasUnassignedLegacyRules = readerReplacementRulesStore.hasUnassignedLegacyRules(bookId),
         )
         viewModelScope.launch {
             val personalRequest = async { runCatching { api.personalGlossaries(bookId) } }

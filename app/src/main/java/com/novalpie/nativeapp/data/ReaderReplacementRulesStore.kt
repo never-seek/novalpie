@@ -13,8 +13,22 @@ import org.json.JSONObject
  * Persists local reader-rule controls only. The source chapter and shared glossary stay remote;
  * this store holds a reader's personal overrides and per-book visibility choices.
  */
-class ReaderReplacementRulesStore(context: Context) {
+class ReaderReplacementRulesStore(
+    context: Context,
+    private val accountIdProvider: () -> Long? = {
+        AuthSessionStore(context.applicationContext).loadToken()?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0)?.id }
+    },
+) {
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    init {
+        synchronized(MIGRATION_LOCK) {
+            if (!preferences.contains(LEGACY_OWNER_KEY)) {
+                // An expired retained token still identifies local ownership, never API authority.
+                // No retained identity means unassigned: a later login cannot silently claim it.
+                preferences.edit().putLong(LEGACY_OWNER_KEY, accountIdProvider()?.takeIf { it > 0 } ?: -1L).apply()
+            }
+        }
+    }
 
     fun loadPersonalRules(novelId: Long): List<ReaderReplacementRule> =
         ArrayList(decodeRules(preferences.getString(personalRulesKey(novelId), null), novelId))
@@ -177,13 +191,52 @@ class ReaderReplacementRulesStore(context: Context) {
     private fun JSONObject.nullableString(key: String): String? =
         if (isNull(key)) null else optString(key).takeIf(String::isNotBlank)
 
-    private fun personalRulesKey(novelId: Long): String = "personal_rules_$novelId"
-    private fun hiddenSharedRulesKey(novelId: Long): String = "hidden_shared_rules_$novelId"
-    private fun sharedRulesEnabledOverrideKey(novelId: Long): String = "shared_rules_enabled_override_$novelId"
-    private fun revisionKey(novelId: Long): String = "revision_$novelId"
+    private fun personalRulesKey(novelId: Long): String = accountKey("personal_rules_$novelId")
+    private fun hiddenSharedRulesKey(novelId: Long): String = accountKey("hidden_shared_rules_$novelId")
+    private fun sharedRulesEnabledOverrideKey(novelId: Long): String = accountKey("shared_rules_enabled_override_$novelId")
+    private fun revisionKey(novelId: Long): String = accountKey("revision_$novelId")
+
+    private fun accountKey(legacy: String): String = synchronized(MIGRATION_LOCK) {
+        val account = accountIdProvider()?.takeIf { it > 0 }
+        val key = "account_${account ?: "guest"}_$legacy"
+        val marker = "migrated_$key"
+        if (!preferences.getBoolean(marker, false)) {
+            val editor = preferences.edit()
+            if (account != null && preferences.getLong(LEGACY_OWNER_KEY, -1) == account && !preferences.contains(key)) {
+                when (val value = preferences.all[legacy]) {
+                    is String -> editor.putString(key, value)
+                    is Boolean -> editor.putBoolean(key, value)
+                    is Long -> editor.putLong(key, value)
+                }
+            }
+            // Data and marker are one atomic preferences transaction; original keys are untouched.
+            editor.putBoolean(marker, true).apply()
+        }
+        key
+    }
+
+    fun hasUnassignedLegacyRules(novelId: Long): Boolean = accountIdProvider()?.let { it > 0 } == true &&
+        preferences.getLong(LEGACY_OWNER_KEY, -1) == -1L &&
+        !preferences.getBoolean("legacy_imported_$novelId", false) &&
+        decodeRules(preferences.getString("personal_rules_$novelId", null), novelId).isNotEmpty()
+
+    /** Explicit user recovery only; does not publish rules or reuse another account's remote IDs. */
+    fun importUnassignedLegacyRules(novelId: Long): Int = synchronized(MIGRATION_LOCK) {
+        if (!hasUnassignedLegacyRules(novelId)) return@synchronized 0
+        val original = decodeRules(preferences.getString("personal_rules_$novelId", null), novelId)
+        val current = loadPersonalRules(novelId)
+        val recovered = original.map { rule -> rule.copy(id = "recovered-${rule.id}", websiteRuleId = null,
+            websiteSource = null, websiteReplacement = null, websiteCleanupRuleId = null, isEnabled = false) }
+            .filterNot { restored -> current.any { it.id == restored.id } }
+        savePersonalRules(novelId, current + recovered)
+        preferences.edit().putBoolean("legacy_imported_$novelId", true).apply()
+        recovered.size
+    }
 
     companion object {
         internal const val PREFERENCES_NAME = "novalpie_native_reader_replacement_rules"
         private const val DEFAULT_SHARED_RULES_ENABLED_KEY = "default_shared_rules_enabled"
+        private const val LEGACY_OWNER_KEY = "beta7_legacy_owner_id"
+        private val MIGRATION_LOCK = Any()
     }
 }

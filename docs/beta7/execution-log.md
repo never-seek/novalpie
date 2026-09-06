@@ -183,3 +183,6 @@
 - 48180配套build通过，APK830903DDF5A3EB4F371CC7B77CE92053EEBF4F83694085488597DFBA6482291E、测试8FFEB087...0BA8553B安装成功。MuMu冷启本次84s、App15.6s。64727真实公共规则+4导出 **OK1/39.306s**：公共回读/按书关/单条屏蔽/TTS派生文本/原章节不变、TXT与EPUB原文替换分开均通过；临时公共规则和4下载URI清除、GET确认ruleRemoved=true，pending文件已删除。报告20260906-public-replacement-report.json，详情见replacement-audit。当前无线上测试规则和活跃下载，尚无Beta7发布。
 - 5659 Reader7项同830903dd包回归全通过；MuMu正常shutdown，正在lint，替换本批准备本地commit（未push）。公共规则live临时内容清理已闭环，不得重复清理其他用户规则。
 - 24358 lint通过（5m51s）；此前69179全量984项绿色，48180测试包配套完成，真实公共规则四导出/Reader7已通过。保存本批同步和优先级修复本地节点，未push/未发布；后续账号隔离与正文节点结构仍继续。
+- 本批节点8279cf4本地提交完成，未push。下一规则账号隔离14278两项先红；每账号key+原登录归属+保留legacy副本迁移实现，无原身份时不自动迁给新登录者，增加确认恢复本书旧规则为停用/无远端ID副本的入口。30853三项隔离/六项store定向正在跑，尚未安装；新增ReplacementUpgradeDeviceTest在设备内部核对原账号旧规则/开关，不导出实际规则或登录材料。MuMu仍shutdown、最后830903dd包。
+- 30853规则隔离+store9项通过，94223全量128 suites/987 tests/0失败、Debug/AndroidTest通过（3m7s）。APK41FF74ED99D3E09E053E711FE0ABAE5DC69BD1C287882B9D250968106EBDFC1B已无损install-r，App冷启8.565s；ReplacementUpgradeDeviceTest实机通过：legacyBook1/legacyRule1/loaded1，逐字段比对/原开关保留、外账号为空、备份仍在。报告20260906-replacement-upgrade-report.json。79176同包Reader回归进行；尚不是整个Beta6→最终优化Beta7升级验收。
+- 79176同包Reader7项通过，87186 lint通过（6m55s），规则账号迁移切片保存本地提交；未push/未发布。MuMu当前shutdown、最后41ff74ed包，下一片派生正文结构保护的实测回归及剩余领域继续。

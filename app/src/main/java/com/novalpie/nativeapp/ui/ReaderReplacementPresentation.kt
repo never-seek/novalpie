@@ -98,6 +98,7 @@ data class ReaderReplacementState(
     /** Only user-driven rule changes interrupt an active TTS queue. */
     val ttsRevision: Long = 0L,
     val actionMessage: String? = null,
+    val hasUnassignedLegacyRules: Boolean = false,
 ) {
     val availableSharedRules: List<ReaderReplacementRule>
         get() = (sharedRules as? LoadResult.Success)?.value.orEmpty()
