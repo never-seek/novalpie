@@ -85,6 +85,9 @@ internal class AppContainer(context: Context) {
     val messagesRepository: com.novalpie.nativeapp.feature.messages.MessagesRepository by lazy {
         com.novalpie.nativeapp.feature.messages.WebsiteMessagesRepository(api)
     }
+    val replacementRemoteRepository: com.novalpie.nativeapp.feature.reader.replacement.ReplacementRemoteRepository by lazy {
+        com.novalpie.nativeapp.feature.reader.replacement.WebsiteReplacementRemoteRepository(api)
+    }
     val forumFeedRepository: com.novalpie.nativeapp.feature.forum.ForumFeedRepository by lazy {
         com.novalpie.nativeapp.feature.forum.WebsiteForumFeedRepository(api)
     }

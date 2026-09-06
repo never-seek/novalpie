@@ -81,7 +81,7 @@ class ReaderReplacementRulesStore(context: Context) {
             source = source,
             replacement = value.optString("replacement"),
             owner = ReaderReplacementOwner.Personal,
-            sharedRuleId = value.optString("shared_rule_id").takeIf(String::isNotBlank),
+            sharedRuleId = value.nullableString("shared_rule_id"),
             websiteRuleId = value.takeLongOrNull("website_rule_id"),
             isRegex = value.optBoolean("is_regex", false),
             regexFlags = decodeRegexFlags(value.optJSONArray("regex_flags")),
@@ -93,8 +93,11 @@ class ReaderReplacementRulesStore(context: Context) {
                 else -> ReaderReplacementTarget.Content
             },
             scope = decodeScope(value.optJSONObject("scope")),
-            createdAt = value.optString("created_at").takeIf(String::isNotBlank),
-            updatedAt = value.optString("updated_at").takeIf(String::isNotBlank),
+            createdAt = value.nullableString("created_at"),
+            updatedAt = value.nullableString("updated_at"),
+            websiteSource = value.nullableString("website_source"),
+            websiteReplacement = value.nullableString("website_replacement"),
+            websiteCleanupRuleId = value.takeLongOrNull("website_cleanup_rule_id"),
         )
     }
 
@@ -114,7 +117,10 @@ class ReaderReplacementRulesStore(context: Context) {
                     .put("target", rule.target.name.lowercase())
                     .put("scope", encodeScope(rule.scope))
                     .put("created_at", rule.createdAt ?: JSONObject.NULL)
-                    .put("updated_at", rule.updatedAt ?: JSONObject.NULL),
+                    .put("updated_at", rule.updatedAt ?: JSONObject.NULL)
+                    .put("website_source", rule.websiteSource ?: JSONObject.NULL)
+                    .put("website_replacement", rule.websiteReplacement ?: JSONObject.NULL)
+                    .put("website_cleanup_rule_id", rule.websiteCleanupRuleId ?: JSONObject.NULL),
             )
         }
     }.toString()
@@ -167,6 +173,9 @@ class ReaderReplacementRulesStore(context: Context) {
         is String -> value.toLongOrNull()
         else -> null
     }
+
+    private fun JSONObject.nullableString(key: String): String? =
+        if (isNull(key)) null else optString(key).takeIf(String::isNotBlank)
 
     private fun personalRulesKey(novelId: Long): String = "personal_rules_$novelId"
     private fun hiddenSharedRulesKey(novelId: Long): String = "hidden_shared_rules_$novelId"

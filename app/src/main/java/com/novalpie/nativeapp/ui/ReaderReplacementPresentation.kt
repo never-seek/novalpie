@@ -12,6 +12,7 @@ import com.novalpie.nativeapp.model.ReaderChapterContent
 import com.novalpie.nativeapp.model.Chapter
 import com.novalpie.nativeapp.feature.reader.text.DerivedTextPipeline
 import com.novalpie.nativeapp.feature.reader.text.CommunityQuoteRule
+import com.novalpie.nativeapp.data.encodeWebsiteReaderReplacementSource
 
 internal data class ReaderReplacementValidation(
     val isValid: Boolean,
@@ -263,9 +264,9 @@ internal fun readerReplacementRulesForDisplay(
 ): List<ReaderReplacementRule> = when (source) {
     ReaderReplacementRuleSource.Personal -> personalRules.sortedWith(readerReplacementRuleComparator)
     ReaderReplacementRuleSource.All -> {
-        val personalSources = personalRules.map { it.source.trim() }.toSet()
-        sharedRules
-            .filterNot { it.source.trim() in personalSources }
+        val personalSources = personalRules.map(::readerReplacementSourceIdentity).toSet()
+        newestReaderReplacementRules(sharedRules)
+            .filterNot { readerReplacementSourceIdentity(it) in personalSources }
             .sortedWith(readerReplacementRuleComparator) +
             personalRules.sortedWith(readerReplacementRuleComparator)
     }
@@ -282,7 +283,12 @@ internal fun readerReplacementSaveSyncAction(
     }
     if (previousServerRuleId == null) return ReaderReplacementRemoteSyncAction.Create(saved)
 
-    return if (previous.hasSameWebsiteReplacementSource(saved)) {
+    val sourceUnchanged = if (previous.websiteSource != null) previous.websiteSource == encodeWebsiteReaderReplacementSource(saved)
+        else previous.hasSameWebsiteReplacementSource(saved)
+    if (sourceUnchanged && previous.websiteReplacement != null && previous.websiteReplacement == saved.replacement) {
+        return ReaderReplacementRemoteSyncAction.None
+    }
+    return if (sourceUnchanged) {
         ReaderReplacementRemoteSyncAction.Update(
             serverRuleId = previousServerRuleId,
             replacement = saved.replacement,
@@ -342,15 +348,15 @@ internal fun effectiveReaderReplacementRules(
     val activePersonal = personalRules.filter { rule ->
         rule.isEnabled && ruleAppliesTo(rule, chapterOrder, target) && validateReaderReplacementRule(rule).isValid
     }
-    val personalSources = activePersonal.map { it.source.trim() }.toSet()
+    val personalSources = activePersonal.map(::readerReplacementSourceIdentity).toSet()
     // The server's shared view includes the user's own published rows. A local disabled/scoped
     // override still owns that server row even when it doesn't apply in this chapter.
     val personalServerIds = personalRules.mapNotNull(::readerReplacementPersonalServerRuleId).toSet()
-    val activeShared = sharedRules.filter { rule ->
+    val activeShared = newestReaderReplacementRules(sharedRules).filter { rule ->
         rule.isEnabled &&
             rule.id !in hiddenSharedRuleIds &&
             (rule.websiteRuleId ?: rule.id.removePrefix("shared:").toLongOrNull()) !in personalServerIds &&
-            rule.source.trim() !in personalSources &&
+            readerReplacementSourceIdentity(rule) !in personalSources &&
             ruleAppliesTo(rule, chapterOrder, target) &&
             validateReaderReplacementRule(rule).isValid
     }
@@ -374,8 +380,8 @@ internal fun applyReaderReplacementRules(
     // broad regex consuming a phrase before a more specific literal website rule can match.
     val orderedRules = rules
         .filterNot(ReaderReplacementRule::isRegex)
-        .sortedWith(compareByDescending<ReaderReplacementRule> { it.source.trim().length }.thenBy { it.id }) +
-        rules.filter(ReaderReplacementRule::isRegex)
+        .sortedWith(compareBy<ReaderReplacementRule> { it.order }.thenByDescending { it.source.trim().length }.thenBy { it.id }) +
+        rules.filter(ReaderReplacementRule::isRegex).sortedWith(readerReplacementRuleComparator)
     orderedRules.forEach { rule ->
         if (!rule.isEnabled || !ruleAppliesTo(rule, chapterOrder, target)) return@forEach
         val validation = validateReaderReplacementRule(rule)
@@ -541,30 +547,53 @@ internal fun mergeReaderReplacementPersonalRules(
     localRules: List<ReaderReplacementRule>,
     remoteRules: List<ReaderReplacementRule>,
 ): List<ReaderReplacementRule> {
-    val remoteBySource = remoteRules.associateBy { it.source.trim() }
+    val currentRemote = newestReaderReplacementRules(remoteRules)
+    val remoteBySource = currentRemote.associateBy(::readerReplacementSourceIdentity)
+    val remoteById = currentRemote.mapNotNull { rule -> readerReplacementPersonalServerRuleId(rule)?.let { it to rule } }.toMap()
     val enrichedLocalRules = localRules.map { local ->
-        val remote = remoteBySource[local.source.trim()]
-        if (
-            local.websiteRuleId == null &&
-            remote?.websiteRuleId != null &&
-            local.canSyncReaderReplacementToWebsite() &&
-            local.hasSameWebsiteReplacementSource(remote)
-        ) {
-            local.copy(
-                websiteRuleId = remote.websiteRuleId,
-                createdAt = remote.createdAt ?: local.createdAt,
-                updatedAt = remote.updatedAt ?: local.updatedAt,
+        val remote = readerReplacementPersonalServerRuleId(local)?.let(remoteById::get)
+            ?: remoteBySource[readerReplacementSourceIdentity(local)]
+        if (remote == null) return@map local
+        val sameSource = local.hasSameWebsiteReplacementSource(remote)
+        val hasBaseline = local.websiteSource != null && local.websiteReplacement != null
+        val unchangedSinceSync = hasBaseline && local.websiteSource == encodeWebsiteReaderReplacementSource(local) && local.websiteReplacement == local.replacement
+        val remoteIsNewer = readerRuleTimestamp(remote) > readerRuleTimestamp(local)
+        when {
+            unchangedSinceSync && remoteIsNewer -> local.copy(
+                source = remote.source, isRegex = remote.isRegex, regexFlags = remote.regexFlags,
+                replacement = remote.replacement, websiteRuleId = remote.websiteRuleId ?: local.websiteRuleId,
+                websiteSource = encodeWebsiteReaderReplacementSource(remote), websiteReplacement = remote.replacement,
+                createdAt = remote.createdAt ?: local.createdAt, updatedAt = remote.updatedAt ?: local.updatedAt,
             )
-        } else {
-            local
+            local.websiteRuleId == null && remote.websiteRuleId != null && local.canSyncReaderReplacementToWebsite() && sameSource -> local.copy(
+                websiteRuleId = remote.websiteRuleId, websiteSource = encodeWebsiteReaderReplacementSource(remote), websiteReplacement = remote.replacement,
+                createdAt = remote.createdAt ?: local.createdAt, updatedAt = remote.updatedAt ?: local.updatedAt,
+            )
+            !hasBaseline && sameSource && local.replacement == remote.replacement -> local.copy(
+                websiteSource = encodeWebsiteReaderReplacementSource(remote), websiteReplacement = remote.replacement,
+            )
+            else -> local
         }
     }
     val localIds = enrichedLocalRules.map(ReaderReplacementRule::id).toSet()
-    val localSources = enrichedLocalRules.map { it.source.trim() }.toSet()
-    return enrichedLocalRules + remoteRules.filter { remote ->
-        remote.id !in localIds && remote.source.trim() !in localSources
+    val localServerIds = enrichedLocalRules.mapNotNull(::readerReplacementPersonalServerRuleId).toSet()
+    val localSources = enrichedLocalRules.map(::readerReplacementSourceIdentity).toSet()
+    return enrichedLocalRules + currentRemote.filter { remote ->
+        remote.id !in localIds && readerReplacementPersonalServerRuleId(remote) !in localServerIds && readerReplacementSourceIdentity(remote) !in localSources
     }
 }
+
+internal fun readerReplacementSourceIdentity(rule: ReaderReplacementRule): String =
+    (if (rule.isRegex) "regex:" else "literal:") + encodeWebsiteReaderReplacementSource(rule)
+
+/** The source's combined glossary may include multiple authors' versions of one exact rule. */
+private fun newestReaderReplacementRules(rules: List<ReaderReplacementRule>): List<ReaderReplacementRule> =
+    rules.groupBy(::readerReplacementSourceIdentity).values.map { versions -> versions.maxWith(
+        compareBy<ReaderReplacementRule> { (it.createdAt ?: it.updatedAt).orEmpty().replace('T', ' ').take(19) }
+            .thenBy { it.websiteRuleId ?: it.id.substringAfterLast(':').toLongOrNull() ?: 0L },
+    ) }
+
+private fun readerRuleTimestamp(rule: ReaderReplacementRule): String = (rule.updatedAt ?: rule.createdAt).orEmpty().replace('T', ' ').take(19)
 
 private val readerReplacementRuleComparator = compareBy<ReaderReplacementRule> { it.order }
     .thenByDescending { it.source.length }

@@ -365,6 +365,7 @@ private fun ReaderReplacementRuleEditor(
     var isRegex by remember(initial.id) { mutableStateOf(initial.isRegex) }
     var regexFlags by remember(initial.id) { mutableStateOf(initial.regexFlags) }
     var target by remember(initial.id) { mutableStateOf(initial.target) }
+    var order by remember(initial.id) { mutableStateOf(initial.order.toString()) }
     var scope by remember(initial.id) { mutableStateOf(initial.scope) }
     var rangeStart by remember(initial.id) {
         mutableStateOf(
@@ -452,6 +453,14 @@ private fun ReaderReplacementRuleEditor(
                     )
                 }
                 if (!publishToWebsite) {
+                    OutlinedTextField(
+                        value = order,
+                        onValueChange = { order = it; validationMessage = null },
+                        label = { Text("执行顺序（数字小的优先）") },
+                        supportingText = { Text("文字规则先于正则；同序文字按原文长度匹配。只保存在本机。") },
+                        modifier = Modifier.fillMaxWidth(), singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                    )
                     Text("作用位置", style = MaterialTheme.typography.labelLarge)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         ReaderReplacementTarget.entries.forEach { option ->
@@ -513,6 +522,10 @@ private fun ReaderReplacementRuleEditor(
         },
         confirmButton = {
             Button(onClick = {
+                if (!publishToWebsite && order.toIntOrNull() == null) {
+                    validationMessage = "请输入有效的执行顺序整数"
+                    return@Button
+                }
                 if (publishToWebsite && replacement.isBlank()) {
                     validationMessage = "网站公共规则的替换后不能为空"
                     return@Button
@@ -532,6 +545,7 @@ private fun ReaderReplacementRuleEditor(
                         regexFlags = if (isRegex) regexFlags else emptySet(),
                         target = if (publishToWebsite) ReaderReplacementTarget.Content else target,
                         scope = resolvedScope,
+                        order = if (publishToWebsite) initial.order else order.toInt(),
                     )
                     val candidate = if (publishToWebsite) {
                         readerReplacementWebsitePublicationRule(rawCandidate)

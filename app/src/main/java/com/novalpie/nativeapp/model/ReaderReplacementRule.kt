@@ -47,4 +47,9 @@ data class ReaderReplacementRule(
     val scope: ReaderReplacementScope = ReaderReplacementScope.WholeBook,
     val createdAt: String? = null,
     val updatedAt: String? = null,
+    /** Last acknowledged website pair. Null on legacy rows: never guess away a local edit. */
+    val websiteSource: String? = null,
+    val websiteReplacement: String? = null,
+    /** A new source was saved, but removing its superseded owned row still needs confirmation. */
+    val websiteCleanupRuleId: Long? = null,
 )

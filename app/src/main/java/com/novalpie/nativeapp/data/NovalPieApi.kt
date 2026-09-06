@@ -2076,7 +2076,7 @@ class NovalPieApi(
     suspend fun personalGlossaries(novelId: Long): List<ReaderReplacementRule> = withContext(Dispatchers.IO) {
         require(novelId > 0L) { "novel id is required" }
         normalizeReaderReplacementRules(
-            raw = get("/api/users/me/glossaries", mapOf("novel_id" to novelId.toString())),
+            raw = requireSuccessfulEnvelope(get("/api/users/me/glossaries", mapOf("novel_id" to novelId.toString())), "规则读取被服务器拒绝"),
             novelId = novelId,
             owner = ReaderReplacementOwner.Personal,
         )
@@ -2090,13 +2090,13 @@ class NovalPieApi(
         require(novelId > 0L) { "novel id is required" }
         require(source.isNotBlank()) { "replacement source is required" }
         normalizeReaderReplacementRule(
-            raw = post(
+            raw = requireSuccessfulEnvelope(post(
                 "/api/users/me/glossaries",
                 JSONObject()
                     .put("novel_id", novelId)
                     .put("source_name", source.trim())
                     .put("target_name", replacement),
-            ),
+            ), "公共规则创建被服务器拒绝"),
             novelId = novelId,
             owner = ReaderReplacementOwner.Personal,
         ) ?: throw IOException("Glossary create response is missing a rule")
@@ -2116,10 +2116,10 @@ class NovalPieApi(
     ): ReaderReplacementRule = withContext(Dispatchers.IO) {
         require(ruleId > 0L) { "glossary rule id is required" }
         normalizeReaderReplacementRule(
-            raw = put(
+            raw = requireSuccessfulEnvelope(put(
                 "/api/users/me/glossaries/$ruleId",
                 JSONObject().put("target_name", replacement),
-            ),
+            ), "公共规则更新被服务器拒绝"),
             novelId = 0L,
             owner = ReaderReplacementOwner.Personal,
         ) ?: throw IOException("Glossary update response is missing a rule")
@@ -2127,14 +2127,14 @@ class NovalPieApi(
 
     suspend fun deletePersonalGlossary(ruleId: Long) = withContext(Dispatchers.IO) {
         require(ruleId > 0L) { "glossary rule id is required" }
-        delete("/api/users/me/glossaries/$ruleId")
+        requireSuccessfulEnvelope(delete("/api/users/me/glossaries/$ruleId"), "规则删除被服务器拒绝")
     }
 
     /** Shared glossary rules are intentionally read-only; local visibility is handled on device. */
     suspend fun sharedGlossaries(novelId: Long): List<ReaderReplacementRule> = withContext(Dispatchers.IO) {
         require(novelId > 0L) { "novel id is required" }
         normalizeReaderReplacementRules(
-            raw = get("/api/users/me/novels/$novelId/glossary"),
+            raw = requireSuccessfulEnvelope(get("/api/users/me/novels/$novelId/glossary"), "公共规则读取被服务器拒绝"),
             novelId = novelId,
             owner = ReaderReplacementOwner.Shared,
         )
@@ -4024,6 +4024,8 @@ class NovalPieApi(
             owner = owner,
             sharedRuleId = if (owner == ReaderReplacementOwner.Shared) serverId.toString() else null,
             websiteRuleId = if (owner == ReaderReplacementOwner.Personal) serverId else null,
+            websiteSource = sourceName,
+            websiteReplacement = targetName,
             isRegex = decodedSource.isRegex,
             regexFlags = decodedSource.regexFlags,
             isEnabled = source.firstBooleanOrNull("is_enabled", "isEnabled", "enabled", "active") ?: true,
@@ -4264,12 +4266,14 @@ class NovalPieApi(
     }
 
     /** HTTP 200 is not an acknowledgement when a source envelope explicitly says it failed. */
-    private fun requireMessageResponse(raw: Any): Any {
+    private fun requireMessageResponse(raw: Any): Any = requireSuccessfulEnvelope(raw, "服务器未接受消息请求")
+
+    private fun requireSuccessfulEnvelope(raw: Any, fallback: String): Any {
         val root = raw as? JSONObject ?: return raw
         val envelope = unwrapObject(root, "data", "result")
         if (root.firstBooleanOrNull("success", "ok") == false || envelope.firstBooleanOrNull("success", "ok") == false) {
             throw IllegalStateException(root.firstStringOrNull("message", "msg", "detail")
-                ?: envelope.firstStringOrNull("message", "msg", "detail") ?: "服务器未接受消息请求")
+                ?: envelope.firstStringOrNull("message", "msg", "detail") ?: fallback)
         }
         return raw
     }
@@ -4969,12 +4973,10 @@ class NovalPieApi(
 
     private fun normalizeForumActionResult(raw: Any): ForumActionResult {
         val source = unwrapObject(raw, "data", "result")
-        val success = booleanFromAny(raw)
-            ?: source.firstBooleanOrNull("success", "ok", "status")
-            ?: true
+        val acknowledgement = normalizeMessageActionResult(raw)
         return ForumActionResult(
-            success = success,
-            message = source.firstStringOrNull("message", "msg", "detail"),
+            success = acknowledgement.success,
+            message = acknowledgement.message,
             reply = source.optJSONObject("reply")?.let(::normalizeForumComment),
         )
     }

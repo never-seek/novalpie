@@ -69,3 +69,6 @@ MuMu横屏ADB默认输入目标与逻辑屏幕不一致；显式 `input touchscr
 报告主机副本3,272,819 bytes，SHA256 `d5f9bff970f19de152ef8bb22a52f89779cbb9259e5d7ba015919d5ad6adcc31`。run-as不能写共享/sdcard，因此通过同一已授权run-as stdout只复制生成的脱敏报告到项目证据目录；未读或复制账户存储。
 
 当前网页源码交叉核对（20260905同build）：`CYdeNYoI.js` 的 `_n/yn/hn` 同样先POST `/downloads`申请epub票据再GET源TXT，按章节解析；`e4j1Urtp.js` 的 `de` 为每个有效`[图片…]`分配独立占位，网络缓存按URL复用，**没有按同章URL删除出现次数**。因此“19573次出现、10402个独立URL”与当前源生成语义一致；仍需对典型问题章节阅读正文源数据对照，不能把此源码证明当用户视觉无重复的验收。
+# 公共规则真实创建与四种原生导出（2026-09-06 22:52）
+
+补充报告 `beta7-device/20260906-public-replacement-report.json`：APK830903dd...6482291e，353686真实临时公共规则已创建/回读，并用该规则快照执行原文/替换×TXT/EPUB。四组合均通过，2个EPUB各11XHTML覆盖9章，原文无标记、替换有标记。原章节读取前后相同；临时规则和四个自有下载均已删除、回读确认。`ReplacementLiveDeviceTest`39.306s通过，不代替1GB/动态图等其他独立门禁。

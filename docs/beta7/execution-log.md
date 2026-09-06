@@ -176,3 +176,10 @@
 - 真书TTS第一次选6072568是全书末章，测试明确无next失败，未播。公开v2目录核对9章后改6072567→6072568，49921 **OK1/14.806s**：起读第47段→下章第0段，440段真实派生内容，本地第9章、HOME/熄屏/通知暂停恢复正常。报告20260906-live-tts-353686-report.json保留；测试结束停止服务。当前87502同包Reader7项回归运行，尚无最终优化包/发布。
 - 87502 Reader交互7项、67145分页4项同1c5cc984包全通过；随后MuMu正常shutdown，全量32735正在lint（unit124suites/972tests/0失败已返回）。规则同步风险已列findings，下一片继续；消息/进度这批未push，Beta7无远端发布。
 - 32735最终全量972tests/0失败、lint通过（9m52s）。消息/后台进度本轮实现及设备证据保存本地可回滚节点，未push；MuMu当前shutdown、最后已装1c5cc984包。下一片替换规则Repository/同步/回归以及真实公共规则读写导出验收，仍不发布Beta7。
+- 本轮节点4675917已保存（未push）。替换Identity4项先红65994；新基线字段websiteSource/websiteReplacement仅在确认同步后记录，旧无baseline规则不猜测覆盖。字面/正则身份、公共去重、用户order及安全跨设备更新后24862替换46项通过，尚未打新包。源网页8L_S-edK.js复核合并按created_at/id最新、个人优先，字面最长优先后正则。新增ReplacementRemoteWriter旧序列3项回归23839执行中，尚未接root。
+- 23839旧write三项全红；先create/checkpoint再delete、同值read-reconcile、切书仍绑定store已接root，16758替换50项+Debug/AndroidTest通过（未安装）。额外legacy首次改source缺baseline新增用例71262先缺方法编译红；helper保护previous基线后通过93258其中writer5项。协议93258两项仍红：规则DELETE/读取success:false误判、forum/progress同类ack；已修并在4724全量unit执行中。待新包/真实公共创建及下载，不提前发布。
+- 4724全量984tests通过；补公共规则POST/PUT明确拒绝校验，删除改为确认远端完成才删本机（失败原规则仍在），当前69179全量/Debug/AndroidTest打包中。新增显式opt-in ReplacementLiveDeviceTest仅允许353686，临时创建带Beta7验收标记的单条规则；测试记录自有id后，public开关/单条屏蔽/TTS派生文本/原文及替换TXT与EPUB四组合后删除规则/仅本次下载，尚未执行。
+- 22:45执行环境恢复，旧unified进程handle已失；从daemon-25988日志确认69179在20:05结束：全量984tests/Debug成功，但AndroidTest第78行多写一个.content导致编译失败。没有启动公共规则真实测试/没有线上临时规则。已修该测试语法，当前重新assembleDebug/AndroidTest；MuMu仍未运行，最后已装包仍1c5cc984，不能以20:05新应用包代替未编译的新测试包证据。
+- 48180配套build通过，APK830903DDF5A3EB4F371CC7B77CE92053EEBF4F83694085488597DFBA6482291E、测试8FFEB087...0BA8553B安装成功。MuMu冷启本次84s、App15.6s。64727真实公共规则+4导出 **OK1/39.306s**：公共回读/按书关/单条屏蔽/TTS派生文本/原章节不变、TXT与EPUB原文替换分开均通过；临时公共规则和4下载URI清除、GET确认ruleRemoved=true，pending文件已删除。报告20260906-public-replacement-report.json，详情见replacement-audit。当前无线上测试规则和活跃下载，尚无Beta7发布。
+- 5659 Reader7项同830903dd包回归全通过；MuMu正常shutdown，正在lint，替换本批准备本地commit（未push）。公共规则live临时内容清理已闭环，不得重复清理其他用户规则。
+- 24358 lint通过（5m51s）；此前69179全量984项绿色，48180测试包配套完成，真实公共规则四导出/Reader7已通过。保存本批同步和优先级修复本地节点，未push/未发布；后续账号隔离与正文节点结构仍继续。

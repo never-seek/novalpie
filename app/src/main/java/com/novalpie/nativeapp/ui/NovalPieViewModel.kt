@@ -1155,6 +1155,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     /** Tracks a local rule while its first remote glossary row is being created. */
     private val pendingReaderReplacementCreates = mutableSetOf<String>()
     private val deletedPendingReaderReplacementCreates = mutableSetOf<String>()
+    private val pendingReaderReplacementDeletes = mutableSetOf<Pair<Long, String>>()
+    private val replacementWriter = com.novalpie.nativeapp.feature.reader.replacement.ReplacementRemoteWriter(dependencies.replacementRemoteRepository)
+    private val replacementWriteLocks = mutableMapOf<Pair<Long, String>, Mutex>()
+    private var replacementLoadRevision = 0L
     var appThemeMode by mutableStateOf(appThemeSettingsStore.loadMode())
         private set
     var chineseVariant by mutableStateOf(chineseVariantSettingsStore.loadVariant())
@@ -1200,6 +1204,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             snapshotFlow {authToken to proxySettings}.collect {next->
                 if(next!=previous){previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged();libraryFeature.environmentChanged();bookFeature.environmentChanged()
                     messageInboxFeature.environmentChanged();messageDetailFeature.environmentChanged();conversationFeature.environmentChanged();messageSettingsFeature.environmentChanged()
+                    replacementLoadRevision++;pendingReaderReplacementCreates.clear();deletedPendingReaderReplacementCreates.clear()
+                    readerReplacementState = ReaderReplacementState()
                     when(val route=currentRoute){
                         AppRoute.Home->loadHome()
                         is AppRoute.BookDetail->loadBookDetail(route.bookId)
@@ -1207,6 +1213,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                         is AppRoute.MessageDetail->loadMessageDetail(route.messageId)
                         is AppRoute.MessageConversation->loadMessageConversation(route.targetUserId,route.targetName)
                         AppRoute.MessageSettings->loadMessageSettings()
+                        is AppRoute.Reader->loadReaderReplacementRules(route.bookId)
                         else->Unit
                     }}
             }
@@ -1772,35 +1779,31 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     fun deleteReaderReplacementRule(ruleId: String) {
         val state = readerReplacementState
-        if (state.novelId <= 0L || ruleId.isBlank()) return
-        val removedRule = state.personalRules.firstOrNull { it.id == ruleId } ?: return
-        val syncAction = readerReplacementDeleteSyncAction(removedRule)
-        val nextRules = state.personalRules.filterNot { it.id == ruleId }
-        readerReplacementRulesStore.savePersonalRules(state.novelId, nextRules)
-        readerReplacementState = state.copy(
-            personalRules = nextRules,
-            revision = readerReplacementNextLocalRevision(
-                currentRevision = state.revision,
-                persistedRevision = readerReplacementRulesStore.revision(state.novelId),
-            ),
-            ttsRevision = state.ttsRevision + 1L,
-            actionMessage = if (syncAction == ReaderReplacementRemoteSyncAction.None) {
-                "替换规则已删除"
-            } else {
-                "替换规则已删除，正在同步网页…"
-            },
-        )
+        if (state.novelId <= 0 || ruleId.isBlank()) return
+        val rule = state.personalRules.firstOrNull { it.id == ruleId } ?: return
         if (ruleId in pendingReaderReplacementCreates) {
-            // The server may still finish the in-flight POST; its callback deletes the resulting
-            // row before it can reappear on the website.
             deletedPendingReaderReplacementCreates += ruleId
+            readerReplacementState = state.copy(actionMessage = "正在等待规则保存结果，之后删除本条贡献")
             return
         }
-        syncReaderReplacementDelete(
-            bookId = state.novelId,
-            removedRuleId = ruleId,
-            action = syncAction,
-        )
+        val remote = readerReplacementDeleteSyncAction(rule)
+        if (remote is ReaderReplacementRemoteSyncAction.Delete) {
+            syncReaderReplacementDelete(state.novelId, ruleId, remote)
+        } else {
+            val remaining = state.personalRules.filterNot { it.id == ruleId }
+            readerReplacementRulesStore.savePersonalRules(state.novelId, remaining)
+            readerReplacementState = state.copy(personalRules = remaining, revision = state.revision + 1,
+                ttsRevision = state.ttsRevision + 1, actionMessage = "本机规则已删除")
+        }
+    }
+
+    private fun persistReaderReplacementAcknowledgement(bookId: Long, saved: ReaderReplacementRule, remote: ReaderReplacementRule) {
+        val current = readerReplacementRulesStore.loadPersonalRules(bookId)
+        val merged = com.novalpie.nativeapp.feature.reader.replacement.bindReaderReplacementAcknowledgement(current, saved, remote)
+        if (merged != current) readerReplacementRulesStore.savePersonalRules(bookId, merged)
+        if (readerReplacementState.novelId == bookId) {
+            readerReplacementState = readerReplacementState.copy(personalRules = merged)
+        }
     }
 
     private fun syncReaderReplacementSave(
@@ -1809,104 +1812,67 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         saved: ReaderReplacementRule,
         action: ReaderReplacementRemoteSyncAction,
     ) {
-        if (action == ReaderReplacementRemoteSyncAction.None) return
-        if (action is ReaderReplacementRemoteSyncAction.Create) {
-            pendingReaderReplacementCreates += saved.id
-        }
+        if (action == ReaderReplacementRemoteSyncAction.None && saved.websiteCleanupRuleId == null) return
+        if (action is ReaderReplacementRemoteSyncAction.Create) pendingReaderReplacementCreates += saved.id
+        val environment = dependencies.environment.revision
+        val lock = replacementWriteLocks.getOrPut(bookId to saved.id) { Mutex() }
         viewModelScope.launch {
-            val result = runCatching {
-                when (action) {
-                    ReaderReplacementRemoteSyncAction.None -> null
-                    is ReaderReplacementRemoteSyncAction.Create -> api.createPersonalGlossary(action.rule)
-                    is ReaderReplacementRemoteSyncAction.Update -> api.updatePersonalGlossary(
-                        ruleId = action.serverRuleId,
-                        replacement = action.replacement,
-                    )
-                    is ReaderReplacementRemoteSyncAction.Replace -> {
-                        // Source/regex flags are immutable in the website API. Delete then create
-                        // keeps the server vocabulary unambiguous; the local rule remains usable
-                        // even if the network drops between those two operations.
-                        api.deletePersonalGlossary(action.serverRuleId)
-                        api.createPersonalGlossary(action.rule)
+            lock.withLock {
+                if (environment != dependencies.environment.revision) return@withLock
+                var executedAction = action
+                val result = runCatching {
+                    var latest = readerReplacementRulesStore.loadPersonalRules(bookId).firstOrNull { it.id == saved.id }
+                    if (latest?.websiteCleanupRuleId != null) {
+                        latest = replacementWriter.cleanup(latest) { remote ->
+                            check(environment == dependencies.environment.revision)
+                            persistReaderReplacementAcknowledgement(bookId, saved, remote)
+                        }
                     }
-                    is ReaderReplacementRemoteSyncAction.Delete -> {
-                        api.deletePersonalGlossary(action.serverRuleId)
-                        null
+                    // The stored acknowledged pair, not a later UI edit, is the next write's baseline.
+                    val outgoing = saved.copy(
+                        websiteRuleId = latest?.websiteRuleId ?: saved.websiteRuleId,
+                        websiteSource = latest?.websiteSource ?: saved.websiteSource,
+                        websiteReplacement = latest?.websiteReplacement ?: saved.websiteReplacement,
+                        websiteCleanupRuleId = latest?.websiteCleanupRuleId,
+                    )
+                    executedAction = readerReplacementSaveSyncAction(
+                        com.novalpie.nativeapp.feature.reader.replacement.readerReplacementSyncBaseline(previous, latest), outgoing,
+                    )
+                    replacementWriter.execute(executedAction) { remote ->
+                        check(environment == dependencies.environment.revision)
+                        persistReaderReplacementAcknowledgement(bookId, saved, remote)
+                    }
+                }
+                if (action is ReaderReplacementRemoteSyncAction.Create) pendingReaderReplacementCreates -= saved.id
+                if (environment != dependencies.environment.revision) return@withLock
+                result.onFailure { failure ->
+                    if (readerReplacementState.novelId == bookId) {
+                        readerReplacementState = readerReplacementState.copy(
+                            actionMessage = "规则已保存在本机，网页同步未完成：${apiFailureMessage("替换规则", failure)}",
+                        )
+                    }
+                }.onSuccess { remoteRule ->
+                    val currentRule = readerReplacementRulesStore.loadPersonalRules(bookId).firstOrNull { it.id == saved.id }
+                    if (saved.id in deletedPendingReaderReplacementCreates) {
+                        deletedPendingReaderReplacementCreates -= saved.id
+                        remoteRule?.websiteRuleId?.let { id ->
+                            // This is the user's already requested deletion, not cancellation rollback.
+                            syncReaderReplacementDelete(bookId, saved.id, ReaderReplacementRemoteSyncAction.Delete(id))
+                        }
+                        return@onSuccess
+                    }
+                    if (readerReplacementState.novelId == bookId) {
+                        readerReplacementState = readerReplacementState.copy(actionMessage =
+                            if (remoteRule != null) "替换规则已同步到网页" else "规则已保存在本机")
+                    }
+                    if (executedAction is ReaderReplacementRemoteSyncAction.Create && currentRule != null && remoteRule != null &&
+                        (currentRule.source != saved.source || currentRule.replacement != saved.replacement ||
+                            currentRule.isRegex != saved.isRegex || currentRule.regexFlags != saved.regexFlags)) {
+                        val followUp = readerReplacementSaveSyncAction(currentRule, currentRule)
+                        syncReaderReplacementSave(bookId, currentRule, currentRule, followUp)
                     }
                 }
             }
-            if (action is ReaderReplacementRemoteSyncAction.Create) {
-                pendingReaderReplacementCreates -= saved.id
-            }
-            result.onFailure { failure ->
-                if (readerReplacementState.novelId == bookId) {
-                    readerReplacementState = readerReplacementState.copy(
-                        actionMessage = "规则已保存在本机，网页同步失败：${apiFailureMessage("替换规则", failure)}",
-                    )
-                }
-            }.onSuccess { remoteRule ->
-                reconcileReaderReplacementSave(
-                    bookId = bookId,
-                    previous = previous,
-                    saved = saved,
-                    action = action,
-                    remoteRule = remoteRule,
-                )
-            }
-        }
-    }
-
-    private fun reconcileReaderReplacementSave(
-        bookId: Long,
-        previous: ReaderReplacementRule?,
-        saved: ReaderReplacementRule,
-        action: ReaderReplacementRemoteSyncAction,
-        remoteRule: ReaderReplacementRule?,
-    ) {
-        if (readerReplacementState.novelId != bookId) return
-        val current = readerReplacementState
-        val currentRule = current.personalRules.firstOrNull { it.id == saved.id }
-
-        if (saved.id in deletedPendingReaderReplacementCreates) {
-            deletedPendingReaderReplacementCreates -= saved.id
-            remoteRule?.websiteRuleId?.let { serverRuleId ->
-                viewModelScope.launch { runCatching { api.deletePersonalGlossary(serverRuleId) } }
-            }
-            return
-        }
-        if (currentRule == null) return
-
-        val remoteId = remoteRule?.websiteRuleId ?: currentRule.websiteRuleId
-        val synchronizedRule = currentRule.copy(
-            websiteRuleId = remoteId,
-            createdAt = remoteRule?.createdAt ?: currentRule.createdAt,
-            updatedAt = remoteRule?.updatedAt ?: currentRule.updatedAt,
-        )
-        val nextRules = current.personalRules.map { rule ->
-            if (rule.id == synchronizedRule.id) synchronizedRule else rule
-        }
-        if (nextRules != current.personalRules) {
-            readerReplacementRulesStore.savePersonalRules(bookId, nextRules)
-        }
-        readerReplacementState = current.copy(
-            personalRules = nextRules,
-            actionMessage = if (remoteId != null) "替换规则已同步到网页" else "替换规则已保存",
-        )
-
-        // If the reader edited the local row again while its initial POST was in flight, bind the
-        // newly returned server ID to the newest rule and perform exactly one follow-up mutation.
-        if (action is ReaderReplacementRemoteSyncAction.Create && currentRule != saved && remoteId != null) {
-            val remoteBaseline = saved.copy(websiteRuleId = remoteId)
-            val followUp = readerReplacementSaveSyncAction(
-                previous = remoteBaseline,
-                saved = synchronizedRule,
-            )
-            syncReaderReplacementSave(
-                bookId = bookId,
-                previous = remoteBaseline,
-                saved = synchronizedRule,
-                action = followUp,
-            )
         }
     }
 
@@ -1916,23 +1882,39 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         action: ReaderReplacementRemoteSyncAction,
     ) {
         val delete = action as? ReaderReplacementRemoteSyncAction.Delete ?: return
+        val environment = dependencies.environment.revision
+        val identity = bookId to removedRuleId
+        if (!pendingReaderReplacementDeletes.add(identity)) return
+        val lock = replacementWriteLocks.getOrPut(identity) { Mutex() }
+        if (readerReplacementState.novelId == bookId) readerReplacementState =
+            readerReplacementState.copy(actionMessage = "正在删除本条规则；确认成功前保留本机内容")
         viewModelScope.launch {
-            runCatching { api.deletePersonalGlossary(delete.serverRuleId) }
-                .onFailure { failure ->
-                    if (
-                        readerReplacementState.novelId == bookId &&
-                        readerReplacementState.personalRules.none { it.id == removedRuleId }
-                    ) {
-                        readerReplacementState = readerReplacementState.copy(
-                            actionMessage = "规则已从本机删除，网页同步失败：${apiFailureMessage("删除替换规则", failure)}",
+            try {
+                lock.withLock {
+                    if (environment != dependencies.environment.revision) return@withLock
+                    val current = readerReplacementRulesStore.loadPersonalRules(bookId).firstOrNull { it.id == removedRuleId }
+                    val ids = listOfNotNull(current?.websiteCleanupRuleId, current?.websiteRuleId ?: delete.serverRuleId).distinct()
+                    val result = runCatching {
+                        for (id in ids) {
+                            try { api.deletePersonalGlossary(id) }
+                            catch (failure: com.novalpie.nativeapp.data.NovalPieApiException) {
+                                if (failure.statusCode != 404) throw failure
+                            }
+                        }
+                    }
+                    if (environment != dependencies.environment.revision) return@withLock
+                    if (result.isSuccess) {
+                        val remaining = readerReplacementRulesStore.loadPersonalRules(bookId).filterNot { it.id == removedRuleId }
+                        readerReplacementRulesStore.savePersonalRules(bookId, remaining)
+                        if (readerReplacementState.novelId == bookId) readerReplacementState = readerReplacementState.copy(
+                            personalRules = remaining, revision = readerReplacementState.revision + 1,
+                            ttsRevision = readerReplacementState.ttsRevision + 1, actionMessage = "替换规则已从网站及本机删除",
                         )
-                    }
+                    } else if (readerReplacementState.novelId == bookId) readerReplacementState = readerReplacementState.copy(
+                        actionMessage = "删除未完成，原规则已保留，可重试：${apiFailureMessage("删除规则", result.exceptionOrNull()!!)}",
+                    )
                 }
-                .onSuccess {
-                    if (readerReplacementState.novelId == bookId) {
-                        readerReplacementState = readerReplacementState.copy(actionMessage = "替换规则已从网页删除")
-                    }
-                }
+            } finally { pendingReaderReplacementDeletes.remove(identity) }
         }
     }
 
@@ -1967,6 +1949,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     private fun loadReaderReplacementRules(bookId: Long) {
         if (bookId <= 0L) return
+        val serial = ++replacementLoadRevision
+        val environment = dependencies.environment.revision
         // The server glossary contract only represents a simple source/target pair. Import it as
         // a useful baseline, but preserve edits locally so scoped and regex rules cannot be
         // silently flattened or race a delayed remote create/delete response.
@@ -1990,7 +1974,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             val sharedRequest = async { runCatching { api.sharedGlossaries(bookId) } }
             val personal = personalRequest.await()
             val shared = sharedRequest.await()
-            if (readerReplacementState.novelId != bookId) return@launch
+            if (readerReplacementState.novelId != bookId || serial != replacementLoadRevision || environment != dependencies.environment.revision) return@launch
             val current = readerReplacementState
             val mergedPersonalRules = personal.getOrNull()?.let { remoteRules ->
                 mergeReaderReplacementPersonalRules(

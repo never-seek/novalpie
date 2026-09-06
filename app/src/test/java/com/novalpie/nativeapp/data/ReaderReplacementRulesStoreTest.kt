@@ -69,11 +69,13 @@ class ReaderReplacementRulesStoreTest {
 
     @Test
     fun websiteRuleIdSurvivesLocalPersistenceSoFutureEditsUpdateInsteadOfCreate() {
-        val remoteBacked = rule(id = "local-1").copy(websiteRuleId = 42L)
+        val remoteBacked = rule(id = "local-1").copy(websiteRuleId = 42L, websiteSource = "原名local-1", websiteReplacement = "译名local-1")
 
         store.savePersonalRules(12L, listOf(remoteBacked))
 
         assertEquals(42L, store.loadPersonalRules(12L).single().websiteRuleId)
+        assertEquals(remoteBacked.websiteSource, store.loadPersonalRules(12L).single().websiteSource)
+        assertEquals(remoteBacked.websiteReplacement, store.loadPersonalRules(12L).single().websiteReplacement)
     }
 
     @Test
