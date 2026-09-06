@@ -42,4 +42,31 @@ class DownloadCoordinatorTest {
         finish.complete(Unit);runCurrent()
         assertEquals(DownloadPhase.Cancelled,coordinator.state.value.task?.phase)
     }
+
+    @Test fun cancellingWhilePausedDuringAuthorizationStillRequiresReceiptConfirmation()=runTest {
+        val awaitingReceipt=CompletableDeferred<Unit>()
+        val coordinator=DownloadCoordinator(backgroundScope,{},DownloadTaskRunner{current,_,checkpoint->
+            checkpoint(current.copy(phase=DownloadPhase.Authorizing,authorizationAttempted=true))
+            awaitingReceipt.await()
+            current.copy(phase=DownloadPhase.Completed)
+        })
+        coordinator.start(task());runCurrent()
+        coordinator.pause();runCurrent()
+        coordinator.cancel();runCurrent()
+        assertEquals(DownloadPhase.AuthorizationUncertain,coordinator.state.value.task?.phase)
+        assertFalse(coordinator.state.value.task!!.mayAuthorizeAgain)
+    }
+
+    @Test fun operatingSystemTimeoutPreservesResumableWorkRatherThanCancellingIt()=runTest {
+        val coordinator=DownloadCoordinator(backgroundScope,{},DownloadTaskRunner{current,_,checkpoint->
+            checkpoint(current.copy(phase=DownloadPhase.Packaging,authorizationFile="receipt",completedAssets=3))
+            CompletableDeferred<Unit>().await()
+            current
+        })
+        coordinator.start(task());runCurrent()
+        coordinator.interrupt();runCurrent()
+        assertEquals(DownloadPhase.NeedsRetry,coordinator.state.value.task?.phase)
+        assertEquals(3,coordinator.state.value.task?.completedAssets)
+        assertEquals("receipt",coordinator.state.value.task?.authorizationFile)
+    }
 }

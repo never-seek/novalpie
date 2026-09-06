@@ -1,8 +1,8 @@
 # Beta 7 验证记录与发布门禁
 
-当前：**NOT READY TO RELEASE**。Beta 7 业务代码尚未替换，以下门禁没有完成。
+当前：**NOT READY TO RELEASE**。Beta 7 已开始接线，但以下完整发布门禁尚未完成。
 
-续接更新（2026-09-05）：少量缺陷修复已接到旧业务入口（TTS查询、文本节点替换、共享本地开关和search freshness）；其余新模块仍未接线。当前全量单测100 suites/888 tests/0失败，lint已通过，构建仍在执行。MuMu开发包`2e3d244f...eaa6f`的TTS2项、章评/长按/繁体/宽度5项通过并有`agent-bridge/artifacts/beta7-device/`日志；这些不是最终Beta7全量/优化包证据。见[执行记录](execution-log.md)。
+续接更新（2026-09-05）：TTS前台服务、真实行分页、文本节点管线、公共本机开关已接阅读器，搜索状态已拆出。已完成一轮101 suites/892 tests/0失败、开发APK安装及定向阅读器7项/分页原型1项/后台服务1项实机验证，证据位于`agent-bridge/artifacts/beta7-device/`。后续改动逐轮重测；具体包hash及测试状态见[执行记录](execution-log.md)。这些不是最终Beta7全量/优化包证据。
 
 ## 记录格式
 

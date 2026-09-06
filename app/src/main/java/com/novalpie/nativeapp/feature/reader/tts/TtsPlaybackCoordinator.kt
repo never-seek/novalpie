@@ -1,6 +1,7 @@
 package com.novalpie.nativeapp.feature.reader.tts
 
 import com.novalpie.nativeapp.data.ReaderTtsSettings
+import com.novalpie.nativeapp.ui.readerTtsEngineSettingsChanged
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -16,6 +17,9 @@ internal data class SpeechChapter(
     val segments: List<String>,
     val nextChapterId: Long? = null,
     val textRevision: Long = 0,
+    val positions:List<SpeechTextPosition> = emptyList(),
+    val chapterNumber:Int?=null,
+    val chapterCount:Int?=null,
 )
 
 internal fun interface SpeechChapterSource {
@@ -46,6 +50,7 @@ internal class TtsPlaybackCoordinator(
     private val engine: SpeechEngine,
     private val source: SpeechChapterSource,
     private val scope: CoroutineScope,
+    private val onPosition:(SpeechChapter,Int)->Unit={_,_->},
 ) {
     private val mutable = MutableStateFlow(SpeechPlaybackState())
     val state = mutable.asStateFlow()
@@ -83,6 +88,7 @@ internal class TtsPlaybackCoordinator(
                 onSegment={position->
                     if(generation==serial && position in snapshot.segments.indices && position>=mutable.value.segmentIndex) {
                         mutable.value=mutable.value.copy(status=SpeechStatus.Speaking,segmentIndex=position,message=null)
+                        onPosition(snapshot,position)
                     }
                 },
                 onFinished={
@@ -136,8 +142,9 @@ internal class TtsPlaybackCoordinator(
 
     fun updateSettings(next:ReaderTtsSettings) {
         if(next==settings)return
+        val engineChanged=readerTtsEngineSettingsChanged(settings,next)
         settings=next
-        if(mutable.value.status in setOf(SpeechStatus.Loading,SpeechStatus.Speaking))pause()
+        if(engineChanged && mutable.value.status in setOf(SpeechStatus.Loading,SpeechStatus.Speaking))pause()
     }
 
     fun retry() {

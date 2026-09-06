@@ -4,6 +4,8 @@ import android.util.AtomicFile
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 internal enum class DownloadFormat { Epub, Txt }
 internal enum class DownloadPhase {
@@ -29,6 +31,9 @@ internal data class DownloadTask(
     val failure: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,
+    val totalChapters:Int=0,
+    val totalAssets:Int=0,
+    val failedAssets:Int=0,
 ) {
     val mayAuthorizeAgain: Boolean get() = !authorizationAttempted && authorizationFile == null &&
         phase !in setOf(DownloadPhase.AuthorizationUncertain,DownloadPhase.Completed,DownloadPhase.Cancelled)
@@ -41,6 +46,8 @@ internal data class RecoveredDownloads(val tasks: List<DownloadTask>, val unread
 /** Synchronous disk contract; callers use an IO dispatcher, never Compose or a viewport callback. */
 internal class DownloadTaskStore(directory: File) {
     private val root = directory.canonicalFile
+    private val changes=MutableStateFlow(0L)
+    val revisions=changes.asStateFlow()
     init { if (!root.isDirectory && !root.mkdirs()) throw IOException("无法创建下载任务目录") }
 
     @Synchronized fun save(task: DownloadTask) {
@@ -55,18 +62,23 @@ internal class DownloadTaskStore(directory: File) {
             .put("authorization_attempted", task.authorizationAttempted)
             .put("authorization_file", task.authorizationFile ?: JSONObject.NULL)
             .put("completed_chapters", task.completedChapters).put("completed_assets", task.completedAssets)
+            .put("total_chapters",task.totalChapters).put("total_assets",task.totalAssets).put("failed_assets",task.failedAssets)
             .put("destination_uri", task.destinationUri ?: JSONObject.NULL).put("failure", task.failure ?: JSONObject.NULL)
             .put("created_at", task.createdAt).put("updated_at", task.updatedAt).toString().toByteArray(Charsets.UTF_8)
         val atomic = AtomicFile(file)
         val output = atomic.startWrite()
-        try { output.write(data); atomic.finishWrite(output) }
+        try { output.write(data); atomic.finishWrite(output);changes.value++ }
         catch (failure: Throwable) { atomic.failWrite(output); throw failure }
     }
 
     @Synchronized fun recover(accountId: Long): RecoveredDownloads {
         val tasks = mutableListOf<DownloadTask>()
         val errors = mutableListOf<String>()
-        root.listFiles()?.filter { it.isFile && it.extension == "json" }?.sortedBy { it.name }?.forEach { file ->
+        // AtomicFile can leave only .bak after an interrupted replacement on older Android.
+        // Open the logical base through AtomicFile so its recovery runs; .new is uncommitted.
+        root.listFiles()?.filter { it.isFile && (it.name.endsWith(".json") || it.name.endsWith(".json.bak")) }
+            ?.map { File(root,it.name.removeSuffix(".bak")) }?.distinctBy {it.name}
+            ?.sortedBy { it.name }?.forEach { file ->
             try {
                 require(file.canonicalFile.parentFile == root)
                 val value = JSONObject(String(AtomicFile(file).readFully(), Charsets.UTF_8))
@@ -89,6 +101,7 @@ internal class DownloadTaskStore(directory: File) {
                     authorizationFile=ticket,completedChapters=value.getInt("completed_chapters"),completedAssets=value.getInt("completed_assets"),
                     destinationUri=value.nullableString("destination_uri"),failure=value.nullableString("failure"),
                     createdAt=value.getLong("created_at"),updatedAt=value.getLong("updated_at"),
+                    totalChapters=value.optInt("total_chapters"),totalAssets=value.optInt("total_assets"),failedAssets=value.optInt("failed_assets"),
                 )
             } catch (_: Exception) {
                 // A corrupt/newer record stays on disk for recovery, never becomes an empty task.

@@ -10,6 +10,9 @@ import com.novalpie.nativeapp.ui.ReaderContentBlock
 import com.novalpie.nativeapp.ui.readerBlocksForContent
 import com.novalpie.nativeapp.ui.readerBlocksForDisplay
 import com.novalpie.nativeapp.ui.toAnnotatedString
+import com.novalpie.nativeapp.model.ChineseVariant
+import com.novalpie.nativeapp.ui.convertChineseVariantAnnotatedText
+import com.novalpie.nativeapp.feature.reader.text.readerAnnotatedTextWithWordSpacing
 
 internal data class ChapterDocument(
     val bookId: Long,
@@ -35,12 +38,15 @@ internal fun chapterDocumentFromContent(
     revision: String,
     showImages: Boolean = true,
     removeDuplicateLines: Boolean = false,
+    chineseVariant: ChineseVariant = ChineseVariant.Original,
+    wordSpacing: Float = 0f,
 ): ChapterDocument {
+    fun display(text:AnnotatedString)=readerAnnotatedTextWithWordSpacing(convertChineseVariantAnnotatedText(text,chineseVariant),wordSpacing)
     val blocks = buildList {
-        derived.title?.takeIf(String::isNotBlank)?.let { add(ChapterDocumentBlock.Paragraph("$chapterId:title", AnnotatedString(it), true)) }
+        derived.title?.takeIf(String::isNotBlank)?.let { add(ChapterDocumentBlock.Paragraph("$chapterId:title", display(AnnotatedString(it)), true)) }
         readerBlocksForDisplay(readerBlocksForContent(derived),removeDuplicateLines).forEachIndexed { index, block ->
             when (block) {
-                is ReaderContentBlock.Text -> add(ChapterDocumentBlock.Paragraph("$chapterId:p:$index", block.formatted?.toAnnotatedString() ?: AnnotatedString(block.value)))
+                is ReaderContentBlock.Text -> add(ChapterDocumentBlock.Paragraph("$chapterId:p:$index", display(block.formatted?.toAnnotatedString() ?: AnnotatedString(block.value))))
                 is ReaderContentBlock.Image -> if(showImages) add(ChapterDocumentBlock.Image("$chapterId:i:$index", block.url, block.originalUrl, block.alt))
             }
         }

@@ -44,14 +44,16 @@ class ReaderPlaybackServiceDeviceTest {
             assertEquals("暂停",pause!!.actions[0].title.toString())
             pause.actions[0].actionIntent.send()
             withTimeout(5000){playback.state.first{it.status==SpeechStatus.Paused}}
-            SystemClock.sleep(300)
+            withTimeout(5000) {
+                while(notifications.activeNotifications.firstOrNull{it.id==7101}?.notification?.actions?.firstOrNull()?.title?.toString()!="继续")kotlinx.coroutines.delay(100)
+            }
             val resume=notifications.activeNotifications.first{it.id==7101}.notification
             assertEquals("继续",resume.actions[0].title.toString())
             resume.actions[0].actionIntent.send()
             withTimeout(10000){playback.state.first{it.status==SpeechStatus.Speaking}}
             notifications.activeNotifications.first{it.id==7101}.notification.actions[1].actionIntent.send()
             withTimeout(5000){playback.state.first{it.status==SpeechStatus.Stopped}}
-            SystemClock.sleep(300)
+            withTimeout(5000) {while(notifications.activeNotifications.any{it.id==7101})kotlinx.coroutines.delay(100)}
             assertFalse(notifications.activeNotifications.any{it.id==7101})
         } finally {
             instrumentation.uiAutomation.executeShellCommand("input keyevent 224").close()

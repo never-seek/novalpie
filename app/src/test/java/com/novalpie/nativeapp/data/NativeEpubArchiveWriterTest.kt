@@ -20,6 +20,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeEpubArchiveWriterTest {
+    @Test fun failedDeclaredCoverDoesNotBecomeASuccessfulCoverlessArchive()=runBlocking {
+        val result=runCatching {
+            NativeEpubArchiveWriter.write(ByteArrayOutputStream(),
+                NativeEpubMetadata("测试","作者",coverUrl="https://cover.test/cover.webp"),StringReader("第1章 正文\n完整文字"),
+                openAsset={throw java.io.IOException("cover network failure")})
+        }
+        assertTrue("有封面URL却获取失败，不能静默生成成功包",result.isFailure)
+    }
     @Test
     fun appliesTheCapturedChapterTransformerToEpubTitleAndBody() = runBlocking {
         val output = ByteArrayOutputStream()

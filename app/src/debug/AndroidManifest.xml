@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <activity android:name="com.novalpie.nativeapp.audit.ReaderTestActivity" android:exported="false" android:screenOrientation="portrait" />
         <!-- Debug-only source-site QA. Shell can launch; ordinary installed apps cannot. -->
         <activity
             android:name="com.novalpie.nativeapp.audit.SourceAuditActivity"

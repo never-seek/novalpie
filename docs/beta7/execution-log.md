@@ -76,3 +76,62 @@
 - 已新增直接在完整ReaderScreen点击“听书”、离开到桌面仍朗读的设备回归测试。当前全量unit/lint/build/AndroidTest构建在exec91178运行，等待结果，尚未跑接线后的实机按钮用例。此阶段尚未做最终R8或Beta7发布。
 - exec91178全量通过：100 suites/890 tests，lint0错误27提醒，Debug/AndroidTest均打包。已装开发APK`bcfc03c7ff40d1c771d5d016f3038d03f3cf3b68606fdc6ea0ef1b31c082dd4a`。
 - 接线后设备UI测试发现2项失败：中央段落tap后未找到听书label，展开章评后写评论不在当前视口。正在增加截图/语义树定位真实触控路径，不用服务独立测试通过代替按钮可用。失败日志`beta7-device/20260905-reader-service-ui.log`。服务后台测试已经通过，但页面接线未验收。
+- 失败定位补充：测试的普通ComponentActivity没有主App的手机竖屏锁定，实际1098×540横屏，“短段落中心”在左翻页区域；不是屏幕中央。测试现与MainActivity一样设置手机竖屏，真实点屏幕中央，章评滚动到达。`20260905-reader-ui-portrait.log`最终6项通过，包括点击听书→应用服务Speaking→退桌面仍Speaking；对应bcfc...开发APK。这些证据已包含运行朝向记录，旧wm size不能独自证明竖屏。
+- Root账号/代理变更现通知AppContainer刷新环境，停止旧会话播放防串号；服务销毁释放语音引擎，Error通知“继续”走retry。上述后续改动重新跑unit/build/device，不用bcfc证据替代。
+- exec94443包含上述会话保护的unit/Debug/AndroidTest gate通过。额外把TTS进度跟随改为读取ReaderBodyLayout的预建textLocations，不再每句话主线程重新解析全部章节HTML；该改动尚待重新build。
+- 最新分页原型`NativePagedReader`已写：真实分页画布、章节尾评论页、分页注册事件、锚点重排、图片尺寸更新与原图长按。仍未替换ReaderScreen的旧分页分支。`ReaderAnchorStore`独立schema保存book/chapter/block/offset；新的13项分页/真实字形/锚点测试通过；exec26106的assemble仍在跑。
+- 新增`NativePaginationDeviceTest`，合成长段落、连续前后翻、章末请求一次；待AndroidTest构建和实机。不要把PagePlan单测代替最终EP49/EP50实机覆盖。
+- `NativePaginationDeviceTest`已在MuMu通过（2.655秒，开发包7cd6193e...59556d0，日志`beta7-device/20260905-native-page-prototype.*`）：实际长段落多页前进、返回同页、末页仅跨章一次。
+- NativePagedReader已接ReaderScreen的pageTurnMode分支；普通连续滚动暂保持旧LazyColumn。页眉/页脚为分页预留真实预算，音量/点击都调用同一page table，末尾单独章评页有返回末页/阅读菜单/下一章。隐藏插图/去重设置补齐，TTS followText定位实测页；仍在build，未拿固定EP49/EP50验收，不宣称最终通过。
+- 当前running build为exec27871（unit/assembleDebug/assembleDebugAndroidTest），上一exec92274因新增设置回归缺参数按预期红灯后已修。新增showImages/removeDuplicateLines策略先红后修，仍待结果。
+- exec27871完成：101 suites/892 tests/0失败，Debug/AndroidTest打包成功。新包SHA256`82EF9F779584FAAB28831C0A0F94BE85C9189E4AEC8E60CD01AAA09BC2B0B49E`，无损install-r。
+- 正式ReaderScreen新分页接线实机测试通过（`beta7-device/20260905-reader-paged-integrated.*`）：7项，含真实左右屏幕点击→下一页/上一页→同锚点、章评展开/滚动、长按不复制不轮盘、繁体、布局宽度可达、听书按钮启动应用服务并退桌面继续。
+- 新分页仍需完成：固定真实EP49/EP50含图前后循环、迟到图片/多设置组合/字体迁移、全部动画（当前simulated为缩放+横移还需纸张效果提升）、按页TTS关闭highlight仍跟随、分页背景图、精确锚点与滚动切换。不能以当前7项测试宣告Beta7完成。
+- 搜索状态已从全局VM迁入feature/search/SearchViewModel：根只暴露兼容getter/action，query/page/history/tags/scroll/request generation属于feature，切账号/代理invalidate，返回保留搜索。旧重复performSearch/goToPage逻辑已移除，根onCleared关闭子scope。exec25790搜索相关测试+assemble通过。下一步补全量tag/字数输入/高级语法隔离和运行证据。
+- 搜索全量tag offset分页/繁简检索与双端字数+直接输入已实现，先红SearchCatalogTest后修，构建exec9968运行；尚未安装验证。标签默认先显示24个，输入过滤全量再逐页展开，避免一次Compose全部。
+- SearchCatalog的tag分页/字数输入/繁简测试已通过；高级模式继承基础来源/标签导致混书的新测试红灯，已按当前网页源函数L()修为独立默认+语法参数，等待全量。exec60284漏import ChineseVariant编译失败已补；当前running全量unit+assemble为exec54879。未新发布。
+- 360dp原生截图`20260905-beta7-progress-current.png`暴露收藏列数说明挤成单行，列数文案与说明相贴；属于布局微调待修（不影响书名/作者保留要求）。当前处于历史tab，收藏数0不代表真实65本被删除，需切收藏进行最新数量验收。
+- 当前源码已把下载执行从root VM迁到DownloadCoordinator/NativeDownloadTaskRunner/NativeDownloadService：AppScope、dataSync FGS通知、AtomicFile任务、冻结规则序列化、source.txt及assets检查点、失败拒绝发布缺图文件。原root约700行下载实现与危险全局孤儿清理已移除，UI按钮兼容委派并恢复未完成任务；正等待全量编译/实机测试，不能称已验收。
+- 下载原型Node/核心单测曾通过，但后续runner/service新实现尚未完整build；当前running exec32689（unit/Debug/AndroidTest）。源码表明早前native tags分页offset使用过滤后条目数不稳，新增空标签TDD已修；实机曾出现分页不继续，仍需再验证当前包。
+- 仅下载/听书/阅读等任务拥有的临时资源可以清理；没有执行新的D盘大清理，也没有动GitHub资产。
+- 公共GET核对标签目录18351条，offset0/1000/2000与尾18000均正常，原生实机错误不是源站整体分页坏。当前修复按原始数组长度前移offset（不能按过滤后数量），去重不等于没有下一页；仍需最新包复验。
+- 下载新增并发同URL锁与SHA256检查点校验，复用字节不得只比文件大小；中途坏图会重取。账号/代理切换会取消旧下载防混会话；服务pending启动去重。还没实测真实EPUB/TXT与扣分/恢复，发布门禁仍未通过。
+- 标签实机已成功，全量列表显示12834；再次完整公开GET对照18351原始行/12834独立ID/5517重复，原生按原始offset遍历去重完全对应；来源不是缺失5517标签。
+- 原生下载首次真实小书（353686透明龙，9章，allowDownload=true）测试失败：TXT流已落私有文件，但MediaStore未发布行的SIZE数据库列滞后返回0，被新完整性检查误判。已改用实际文件描述符statSize/读字节校验，不放宽完整性；重测将复用持久授权和source检查点，不重新扣这一步积分。
+- 当前最新APK已装`15c384c6...691573b`，不是Beta7成品。当前exec41452正在重新build下载publisher修订与live test。真实下载测试只删本次新生成URI，现有用户下载未动；失败私有检查点保留。
+- `NativeDownloadTaskRunnerTest`通过：模拟最终磁盘保存失败后重跑，只调用1次授权POST、1次正文GET，输出字节完整。当前live TXT第一次失败没有生成公开成功文件；私有缓存可恢复，下一次live测试明确选同book/format/mode的既有授权任务。
+- 小书353686真实原文/替换×TXT/EPUB四组合全部通过，43.605秒。开发APK187e04d9...24a2f6b1，EPUB两包均9个chapter文件、1封面、无重复zip entry。规则仅任务快照，没有发布公共规则。4个本次公开下载URI已删，私有验收副本保留，见download-device-evidence.md；大书/插图/OEM/任务恢复仍未全验收。
+- 最新下载修订build通过；现在exec11924运行最新全量unit+lint，完成后保存模块可回滚提交。尚无Beta7版本号/R8/Release，不能上传当前开发包。
+- 最新187e04d9包原生收藏切换验证65条，与网页65一致，记录`beta7-device/collection-count.xml`；当前历史tab的0收藏仅未加载分区计数，仍需修为未加载不显示误导0，冷启动全矩阵待做。窄屏列数说明已分行，截图20260906-home-retry.png。
+- exec11924最终完整unit/lint通过：104 suites/899 tests/0 failures/errors，lint0错误27依赖提示。已保存app/src模块重构为本地中间提交（不push、不tag、不发布），用于后续继续拆分和修复；当前只是开发基线，不是Beta7完成。
+- 中间源码提交为9297dd4；后续正在补新版原站的用户/作品屏蔽功能：v2列表/状态/设置接口、ProfileTab.BlockedUsers、他人主页屏蔽按钮、书籍菜单屏蔽按钮。blockedUsers分页/DELETE协议先红后绿（exec99013），新增界面仍待build/设备。没有在真实网站屏蔽任何人或书。
+- 屏蔽列表原生已可打开，显示已屏蔽0位/暂无用户，与源站一致，截图20260906-native-blocked-list.png；未操作他人账号资产。全局返回栈改用AppNavigator原子不可变列表，AppContainer统一API实例；readerSessionKey绑定environment revision，换账号/代理不能复用旧密钥。新增protocol test先红后绿，exec90084全量unit+assemble通过。
+- 外部Readest虽然提示WebView过旧，但取消提示后可走正常本地文件选择器导入本任务215265字节替换EPUB，书架显示《透明龙》；正在点开正文/目录验证，不先认定失败或成功。
+- 统一容器后APK350173e7...2ade32dd已覆盖安装。后台测试失败仅在Paused后300ms通知仍旧label，改成bounded wait观察实际通知状态（保持必须变为继续/停止后消失断言）。之后MuMu退出，ADBoffline，info is_android_started=false；当前已请求launch，等待恢复。Readest仅证导入封面/书架，还未证正文打开。
+- 当前build为exec63952（AndroidTest）。本轮新增block API/UI、AppNavigator接线、requestRevision隔离、统一AppContainer尚未commit。最近完整unit+assemble exec90084已通过，门禁不得混用不同hash。
+
+## 2026-09-06 继续至成品：恢复协议与分页设置回归
+
+- 上轮exec39294 lint通过，105suites/901tests是此前完整unit基线；后台TTS通知bounded-wait复验`20260906-container-tts-retest`通过，不是通知行为放宽。
+- 下载新增两条实测红灯（exec87437）：AtomicFile仅剩`.json.bak`漏恢复；授权期间暂停再取消丢失Uncertain状态。修为逻辑base恢复、持久写串行/读取最新状态、写入未知不重扣，Android15 `onTimeout(startId,fgsType)`保留NeedsRetry检查点。
+- exec30398下载11项通过/Debug打包，AndroidTest因多余assertExists import失败（测试接口成员不是扩展），移除import后exec2129通过。开发包25cab2...76c818安装成功。
+- MuMu对25cab2包新增分页繁体/富文本词距用例实测失败：未找到“龍書”；旧连续前后翻测试仍通过，证据`20260906-pagination-settings-before.*`。修复真实分页转换/词距映射、原样span、背景图、高亮独立跟页，新增替换拆段/插段锚点映射。接入ReaderPageNavigator统一普通页/边界移动。
+- exec79908全量106suites/908tests/0失败，Debug/AndroidTest成功；APK`BBD994E5BF6047454889DEEAD00965BAF97BEB0B449F49E3A3D5C54ECAB181E1`无损install-r，MuMu分页3项通过，`20260906-pagination-settings-after.*`：前后同页/边界一次、繁体+粗体词距、无高亮听书跟页+字号重排。不是固定EP49/50最终门禁。
+- 后续2条新红灯（exec39013）：同长度坏source.txt被复用；只改高亮/自动滚动设置竟暂停TTS。修为正文SHA256检查点、任务内URL锁释放范围、仅声音参数变化暂停，exec26039相关14项通过。尚未装入bbd994开发包。
+- 屏蔽功能迁入独立BlockingRepository/BlockingViewModel/BlockTargetViewModel；界面只读不可变state、账号/环境变更失效，写入结果不明先刷新。个人屏蔽列表用户名路由已接onOpenUser。当前全量unit/assemble/AndroidTest/lint执行于exec10307，等待完成。
+- 独立Librera已验证本轮小书替换EPUB实际正文及目录跳章；官方F-Droid证书与文件hash记录于download-device-evidence。设备验收副本hash一致，已精确删除本次公开测试EPUB；用户旧下载未动。Readest旧WebView问题不当成功证据。
+- 新community-review.md逐帖保存115个反馈帖完整正文/嵌套回复分类（剩余仍未完成），构建间持续核对，不以关键词索引代替人工意见审查。
+- 未发布/未推送。还需固定真书EP49/50、分页锚点/动画/布局/音量综合、TTS后台进度、大下载/任务记录/恢复、其余feature拆分、全站控件/反馈/角色矩阵及优化包升级验收。当前所有开发APK仍Beta6版本字段，不作为Beta7成品。
+- exec10307最终全量107suites/912tests/0失败，unit/Debug/AndroidTest/lint成功（11m34s）。当前已装开发APK`6F685654539C56205EE936D0191CE5CFF86C8F70133E5D82A87755EC8DE7D8AD`；ReaderChapterCommentsInteractionTest7项通过、TTS后台锁屏通知服务1项通过，证据`20260906-reader-all-followfix.*`和`20260906-tts-after-display.*`。下一切片为用户可见下载任务记录/完成文件打开分享/进程恢复继续。
+- 后续社区基线456/456全部逐帖阅读分类完成，community-review.md机器比对无遗漏/额外/重复；不是仅关键词分类。网页App帖最新读取root14条，新增4621（2026-09-05 19:02:45）附图内容为实体露码，与此前4620同类，源图341×50已查看并保存comment-4621.png；没有自动回帖或修改投票。
+- 下载历史已接独立DownloadHistoryViewModel/Panel，“我的→下载”真实显示旧任务（APKbd1ca2...3b7a49），文件已删时打开明确提示不崩溃。FileProvider仅暴露应用外部Download目录，内容URI正常只读分享；账号不符不能恢复。
+- 两下载新回归exec24707红灯：封面失败仍生成成功包；末次进度被节流丢total。修复后exec71492定向27项通过。不是大书完整验收。
+- 新分页横滑实机红灯20260906-page-swipe-before；加入横向拖动阈值共用navigator后通过对应项。新增图失败空白页红灯20260906-swipe-image-before，改为加载/失败/重试插图；20260906-swipe-image-after该项通过，但繁体case首次锚点等待超时（同机器重编译+Lint负载，未放宽断言），正隔离复测session7078。
+- 账号读回包过期/失败写入自动cookie重发两测试exec64821红灯；网络层绑定environment revision，GET/HEAD才可fallback、写入禁OkHttp自动重试，签名请求和章节取数间隔检查同一revision。exec51766全量108suites/919tests/0失败及unit/Debug/AndroidTest/lint通过（16m52s）。APK9e5320...1a77f4已安装，不是Beta7发布身份。
+- 正在新增forum feed独立ViewModel、分区page/query/scroll缓存与环境清理；尚未接root。新“成功GET确认网页会话后，后续写入直接用已确认会话且不自动重发”测试尚待实现，避免禁重试导致续期后写入长期不可用。
+- forum feed4项测试已过，接root移除约150行旧逻辑，AppContainer提供Repository，分区各自页码/搜索/滚动，账号变更清缓存。合法GET确认Cookie后以opaque revision标记后续直接使用，不让写入自动重发；新回归先红后修，exec90127unit/Debug/AndroidTest通过（11m15s）。
+- 分页4项复测出现No compose hierarchy/启动ANR，最新exit-info为process failed to complete startup、尚未进Activity；主机可用物理内存约1GB。测试换debug-only固定竖屏ReaderTestActivity并保持测试屏幕常亮，未改正式UI。MuMu实例0已正常shutdown，未卸载或清数据；可用内存回到3.5GB，构建完成后再launch独占QA。不要把这些失败当通过或未经验证归为产品分页缺陷。
+- 流下载新测试exec21905确证两失败：原图外站请求携带本站token（仅fixture验证，没有泄露真实登录值）；取消卡住的stream要等completion无法及时关socket。已修同源会话限制/重定向剥除站点会话，onCancelling关闭socket并保留CancellationException。当前全量gate正在下一工具session执行。
+- 论坛反应/书评提交写入补ContentMutationIdentity路由/代次/环境检查，旧操作返回不再覆盖另一本书/另一帖当前状态；尚待本轮完整build/实机。
+- TTS后台进度切片新增SpeechDocument（段落/UTF16偏移、可见图开关对应item索引）与SpeechProgressRecorder：只有实际utterance onStart写本地进度/锚点，按章节同步网站；根观察进度store变化更新收藏和继续阅读。来源与UI共用buildSpeechChapter，移除从全局LazyColumn索引直接比较单章索引的起读偏差。新用例先编译红灯后接实现，当前完整build34016执行中，尚无实机后台进度验收。
+- 实机最新startup ANR细节：exit-info `failed to complete startup`，MainActivity am start -W也超时115738ms，MuMu下uiautomator自身还存在SIGSEGV记录。主机内存压力存在但不能单凭此断言是模拟器问题；实例0已安全shutdown等待构建后重启、不清数据。保持发布blocked-by-verification，其他代码工作仍继续。

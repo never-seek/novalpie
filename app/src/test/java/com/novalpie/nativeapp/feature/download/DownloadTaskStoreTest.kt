@@ -19,13 +19,16 @@ class DownloadTaskStoreTest {
     @Test fun processRecoveryPreservesAuthorizationSnapshotAndExplicitlyRequiresRetry() {
         val root=temporary.newFolder()
         val store=DownloadTaskStore(root)
-        store.save(task().copy(phase=DownloadPhase.Transferring,authorizationFile="authorized.txt",completedChapters=15,completedAssets=32))
+        store.save(task().copy(phase=DownloadPhase.Transferring,authorizationFile="authorized.txt",completedChapters=15,completedAssets=32,totalChapters=90,totalAssets=100,failedAssets=2))
         val recovered=DownloadTaskStore(root).recover(100).tasks.single()
         assertEquals(DownloadPhase.NeedsRetry,recovered.phase)
         assertEquals("authorized.txt",recovered.authorizationFile)
         assertEquals("{\"test\":\"frozen\"}",recovered.replacementSnapshot)
         assertEquals(32,recovered.completedAssets)
         assertEquals(15,recovered.completedChapters)
+        assertEquals(90,recovered.totalChapters)
+        assertEquals(100,recovered.totalAssets)
+        assertEquals(2,recovered.failedAssets)
         assertFalse(recovered.mayAuthorizeAgain)
     }
 
@@ -70,5 +73,19 @@ class DownloadTaskStoreTest {
         assertEquals(8,effectiveDownloadConcurrency(9999,64L*1024*1024))
         assertEquals(16,effectiveDownloadConcurrency(9999,512L*1024*1024))
         assertEquals(1,effectiveDownloadConcurrency(0,1024))
+    }
+
+    @Test fun atomicBackupWithoutBaseIsRecoveredOnceAndNewUncommittedFilesAreIgnored() {
+        val root=temporary.newFolder()
+        val store=DownloadTaskStore(root)
+        store.save(task().copy(phase=DownloadPhase.Paused,authorizationFile="ticket"))
+        val base=File(root,"test-task.json")
+        assertTrue(base.renameTo(File(root,"test-task.json.bak")))
+        File(root,"unfinished.json.new").writeText("partial")
+        val recovered=store.recover(100)
+        assertTrue(recovered.unreadableFiles.isEmpty())
+        assertEquals(listOf("test-task"),recovered.tasks.map {it.id})
+        assertEquals("ticket",recovered.tasks.single().authorizationFile)
+        assertTrue(base.exists())
     }
 }

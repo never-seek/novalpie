@@ -36,7 +36,8 @@ internal class AppContainer(context: Context) {
     val environment = RequestEnvironment(AuthSessionStore(application), NetworkConfigStore(application))
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val speechEngine by lazy { AndroidSpeechEngine(application,applicationScope) }
-    private val playbackDelegate = lazy { TtsPlaybackCoordinator(speechEngine,WebsiteSpeechChapterSource(application,api),applicationScope) }
+    private val speechProgress by lazy {com.novalpie.nativeapp.feature.reader.tts.SpeechProgressRecorder(application,api,applicationScope){environment.revision}}
+    private val playbackDelegate = lazy { TtsPlaybackCoordinator(speechEngine,WebsiteSpeechChapterSource(application,api),applicationScope,speechProgress::record) }
     val playback by playbackDelegate
     fun refreshEnvironmentFromStores() {
         val revision=environment.revision
@@ -66,9 +67,16 @@ internal class AppContainer(context: Context) {
                 }.getOrNull()
             },
             proxySelectorProvider = { environment.proxy.toProxySelector(isEmulatorRuntime()) },
+            requestRevisionProvider = { environment.revision },
         )
     }
     val searchRepository: SearchRepository by lazy { WebsiteSearchRepository(api) }
+    val forumFeedRepository: com.novalpie.nativeapp.feature.forum.ForumFeedRepository by lazy {
+        com.novalpie.nativeapp.feature.forum.WebsiteForumFeedRepository(api)
+    }
+    val blockingRepository: com.novalpie.nativeapp.feature.profile.BlockingRepository by lazy {
+        com.novalpie.nativeapp.feature.profile.WebsiteBlockingRepository(api)
+    }
     val searchPreferences: SearchPreferences by lazy {
         StoredSearchPreferences(SearchSettingsStore(application), SearchHistoryStore(application))
     }

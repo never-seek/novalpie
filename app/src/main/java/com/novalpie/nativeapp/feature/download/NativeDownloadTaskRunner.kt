@@ -25,7 +25,6 @@ internal class NativeDownloadTaskRunner(
 ):DownloadTaskRunner {
     private val app=context.applicationContext
     private val root=File(app.noBackupFilesDir,"download-work")
-    private val resourceLocks=ConcurrentHashMap<String,Mutex>()
 
     override suspend fun run(task:DownloadTask,control:NativeDownloadControl,checkpoint:suspend(DownloadTask)->Unit):DownloadTask = withContext(Dispatchers.IO) {
         require(task.id.matches(Regex("[A-Za-z0-9][A-Za-z0-9_-]{0,95}")))
@@ -34,6 +33,8 @@ internal class NativeDownloadTaskRunner(
         require(work.parentFile==root.canonicalFile)
         if(!work.isDirectory&&!work.mkdirs())throw IOException("无法创建下载任务目录")
         val current=AtomicReference(task)
+        // Locks are task-scoped; completing many downloads must not retain all historical URLs.
+        val resourceLocks=ConcurrentHashMap<String,Mutex>()
         suspend fun save(update:DownloadTask){current.set(update);checkpoint(update)}
         control.awaitIfPaused()
         if(task.applyReplacement&&task.replacementSnapshot==null) {
@@ -58,13 +59,14 @@ internal class NativeDownloadTaskRunner(
         }
         val source=File(work,"source.txt")
         val sourceComplete=File(work,"source.complete")
-        if(!source.isFile||sourceComplete.readTextOrNull()?.toLongOrNull()!=source.length()) {
+        val sourceReceipt=sourceComplete.readTextOrNull()?.let{runCatching{JSONObject(it)}.getOrNull()}
+        if(!source.isFile||sourceReceipt?.optLong("bytes")!=source.length()||sourceReceipt.optString("sha256")!=fileDigest(source)) {
             val part=File(work,"source.part")
             part.outputStream().use {output->api.streamDownloadFile(ticket!!){input->copyNativeDownloadStream(input,output,control::awaitIfPaused)}}
             if(part.length()==0L)throw IOException("源站返回空下载文件")
             if(source.exists()&&!source.delete())throw IOException("无法重建下载正文")
             if(!part.renameTo(source))throw IOException("无法保存下载正文检查点")
-            sourceComplete.writeText(source.length().toString())
+            sourceComplete.writeText(JSONObject().put("bytes",source.length()).put("sha256",fileDigest(source)).toString())
         }
         control.awaitIfPaused()
         val transformed=current.get().replacementSnapshot?.let(DownloadRulesSnapshot::decode)
@@ -87,7 +89,7 @@ internal class NativeDownloadTaskRunner(
             val progressLock=Any()
             finished.outputStream().use {output->source.reader(Charsets.UTF_8).use {reader->
                 NativeEpubArchiveWriter.write(output,NativeEpubMetadata(task.title,metadata.author ?: "未知作者",metadata.description.orEmpty(),coverUrl=metadata.coverUrl),reader,
-                    openAsset={url->openResource(assets,url,control)},
+                    openAsset={url->openResource(assets,url,control,resourceLocks)},
                     transformChapter={number,title,body->transformed?.transform(number,title,body)?.let{NativeDownloadChapterText(it.title,it.body)} ?: NativeDownloadChapterText(title,body)},
                     imageConcurrency=effectiveDownloadConcurrency(task.requestedConcurrency,Runtime.getRuntime().maxMemory()/4),
                     stagingDirectory=staging,awaitIfPaused=control::awaitIfPaused,
@@ -97,13 +99,16 @@ internal class NativeDownloadTaskRunner(
                             val now=System.currentTimeMillis()
                             if(now-lastSaved>400||progress.completedChapters!=current.get().completedChapters) {
                                 lastSaved=now
-                                val update=current.get().copy(completedChapters=progress.completedChapters,completedAssets=progress.completedImages,updatedAt=now)
+                                val update=current.get().copy(completedChapters=progress.completedChapters,completedAssets=progress.completedImages,
+                                    totalChapters=progress.totalChapters,totalAssets=progress.totalImages,failedAssets=progress.failedImages,updatedAt=now)
                                 current.set(update)
                                 runBlocking {checkpoint(update)}
                             }
                         }
                     })
             }}
+            save(current.get().copy(completedChapters=lastProgress.completedChapters,completedAssets=lastProgress.completedImages,
+                totalChapters=lastProgress.totalChapters,totalAssets=lastProgress.totalImages,failedAssets=lastProgress.failedImages))
             if(lastProgress.failedImages>0)throw IOException("${lastProgress.failedImages}张插图失败，文件未发布；重试将复用已完成资源")
         }
         if(!finished.isFile||finished.length()==0L)throw IOException("下载生成结果为空")
@@ -117,7 +122,7 @@ internal class NativeDownloadTaskRunner(
         completed
     }
 
-    private suspend fun openResource(root:File,url:String,control:NativeDownloadControl):NativeEpubAsset {
+    private suspend fun openResource(root:File,url:String,control:NativeDownloadControl,resourceLocks:ConcurrentHashMap<String,Mutex>):NativeEpubAsset {
         val key=MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString(""){"%02x".format(it)}
         return resourceLocks.getOrPut(root.absolutePath+key){Mutex()}.withLock {openResourceLocked(root,url,key,control)}
     }

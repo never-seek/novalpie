@@ -10,6 +10,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
+import com.novalpie.nativeapp.feature.reader.text.readerSpokenTextRange
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.text
@@ -30,6 +32,7 @@ internal fun PagedChapterCanvas(
     pageIndex: Int,
     textColor: Color,
     modifier: Modifier = Modifier,
+    highlightText: String? = null,
     image: @Composable (ChapterDocumentBlock.Image, Modifier) -> Unit,
 ) {
     val page = measured.plan.pages[pageIndex.coerceIn(measured.plan.pages.indices)]
@@ -41,8 +44,14 @@ internal fun PagedChapterCanvas(
         Canvas(Modifier.fillMaxSize()) {
             page.fragments.filterIsInstance<PageFragment.Text>().forEach { slice ->
                 clipRect(left = 0f, top = slice.yPx, right = size.width, bottom = slice.yPx + slice.heightPx) {
+                    val layout=measured.textLayouts.getValue(slice.blockId)
+                    highlightText?.let {readerSpokenTextRange(layout.layoutInput.text.text,it)}?.let{range->
+                        translate(top=slice.yPx-slice.sourceTopPx) {
+                            drawPath(layout.getPathForRange(range.first,range.last+1),textColor.copy(alpha=.18f))
+                        }
+                    }
                     drawText(
-                        textLayoutResult = measured.textLayouts.getValue(slice.blockId),
+                        textLayoutResult = layout,
                         color = textColor,
                         topLeft = Offset(0f, slice.yPx - slice.sourceTopPx),
                     )

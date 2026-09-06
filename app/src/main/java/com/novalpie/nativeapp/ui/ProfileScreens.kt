@@ -1,5 +1,7 @@
 package com.novalpie.nativeapp.ui
 
+import com.novalpie.nativeapp.feature.profile.BlockedUsersPanel
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
@@ -109,6 +111,7 @@ internal fun ProfileScreen(
     onOpenActivity: (UserActivity) -> Unit,
     onActivityFilterSelected: (ProfileActivityFilter) -> Unit,
     onOpenBook: (Long) -> Unit,
+    onOpenUser: (Long) -> Unit,
     onPersonalizationTabSelected: (PersonalizationTab) -> Unit,
     onPurchaseShopItem: (ShopItem) -> Unit,
     onEquipInventoryItem: (UserInventoryItem) -> Unit,
@@ -378,6 +381,12 @@ internal fun ProfileScreen(
                             onPurchaseItem = onPurchaseShopItem,
                             onEquipItem = onEquipInventoryItem,
                         )
+                    }
+                    ProfileTab.BlockedUsers -> item {
+                        state.profile.value.id?.let {BlockedUsersPanel(it,onOpenUser)}
+                    }
+                    ProfileTab.Downloads -> item {
+                        state.profile.value.id?.let {com.novalpie.nativeapp.feature.download.DownloadHistoryPanel(it,onOpenBook)}
                     }
                 }
             }
@@ -1544,6 +1553,8 @@ private fun profileTabLabel(tab: ProfileTab): String = when (tab) {
     ProfileTab.Activities -> "动态"
     ProfileTab.Books -> "书籍"
     ProfileTab.Inventory -> "装扮"
+    ProfileTab.BlockedUsers -> "屏蔽列表"
+    ProfileTab.Downloads -> "下载"
 }
 
 private fun personalizationTabLabel(tab: PersonalizationTab): String = when (tab) {

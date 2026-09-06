@@ -36,6 +36,42 @@ import java.io.ByteArrayOutputStream
 
 @RunWith(RobolectricTestRunner::class)
 class NovalPieApiTest {
+    @Test fun accountChangeDuringAReadDiscardsThePreviousAccountsPayload()=runBlocking {
+        var revision=1L
+        val isolated=NovalPieApi(baseUrl=server.url("/").toString().trimEnd('/'),requestRevisionProvider={revision})
+        server.dispatcher=object:Dispatcher(){override fun dispatch(request:RecordedRequest):MockResponse {
+            revision=2L
+            return MockResponse().setBody("""{"groups":[{"id":42,"name":"旧账号收藏夹"}]}""")
+        }}
+        val result=runCatching{isolated.favoriteGroups()}
+        assertTrue("切账号后不能返回前一账号读取结果",result.exceptionOrNull() is java.util.concurrent.CancellationException)
+        assertEquals(1,server.requestCount)
+    }
+
+    @Test fun forbiddenJsonWriteIsNeverAutomaticallyRetriedWithBrowserCookies()=runBlocking {
+        var cookieReads=0
+        val isolated=NovalPieApi(baseUrl=server.url("/").toString().trimEnd('/'),authTokenProvider={"test-only-token"},cookieProvider={cookieReads++;"test-only-cookie=value"})
+        server.enqueue(MockResponse().setResponseCode(403).setBody("""{"message":"Forbidden"}"""))
+        server.enqueue(MockResponse().setBody("""{"success":true}"""))
+        assertTrue(runCatching{isolated.setUserBlocked(42,true)}.isFailure)
+        assertEquals(1,server.requestCount)
+        assertEquals(0,cookieReads)
+    }
+
+    @Test fun successfulReadSessionFallbackIsReusedForASubsequentWriteWithoutReplayingIt()=runBlocking {
+        val isolated=NovalPieApi(baseUrl=server.url("/").toString().trimEnd('/'),authTokenProvider={"expired-token-fixture"},cookieProvider={"test-session=fixture"})
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"message":"token expired"}"""))
+        server.enqueue(MockResponse().setBody("""{"groups":[]}"""))
+        isolated.favoriteGroups()
+        server.enqueue(MockResponse().setBody("""{"success":true}"""))
+        isolated.setUserBlocked(42,true)
+        server.takeRequest();server.takeRequest()
+        val write=server.takeRequest()
+        assertEquals("POST",write.method)
+        assertEquals("test-session=fixture",write.getHeader("cookie"))
+        assertNull(write.getHeader("authorization"))
+        assertEquals(3,server.requestCount)
+    }
     private lateinit var server: MockWebServer
     private lateinit var api: NovalPieApi
 
@@ -2531,6 +2567,22 @@ class NovalPieApiTest {
             secondContentRequest.requestUrl?.queryParameter("session"),
         )
         assertEquals(3, server.requestCount)
+    }
+
+    @Test
+    fun aChangedRequestEnvironmentNeverReusesThePreviousAccountsReaderSession() = runBlocking {
+        var revision=0L
+        val api=NovalPieApi(baseUrl=server.url("/").toString().trimEnd('/'),requestRevisionProvider={revision})
+        server.enqueue(MockResponse().setBody("""{"session_id":"a","session_key":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}"""))
+        server.enqueue(MockResponse().setBody("""{"title":"one","content":"first"}"""))
+        assertEquals("first",api.chapterContent(1).content)
+        revision++
+        server.enqueue(MockResponse().setBody("""{"session_id":"b","session_key":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="}"""))
+        server.enqueue(MockResponse().setBody("""{"title":"two","content":"second"}"""))
+        assertEquals("second",api.chapterContent(2).content)
+        val requests=List(4){server.takeRequest()}
+        assertEquals("/api/reader/session-key",requests[2].requestUrl?.encodedPath)
+        assertEquals("b",requests[3].requestUrl?.queryParameter("session"))
     }
 
     @Test

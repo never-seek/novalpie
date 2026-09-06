@@ -3,9 +3,18 @@ package com.novalpie.nativeapp.data
 import android.content.Context
 import com.novalpie.nativeapp.model.FavoriteEntry
 import com.novalpie.nativeapp.model.ReaderProgress
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.conflate
 
 class ReaderProgressStore(context: Context) {
     private val prefs = context.getSharedPreferences("novalpie_native_reader_progress", Context.MODE_PRIVATE)
+    fun changes()=callbackFlow {
+        val listener=android.content.SharedPreferences.OnSharedPreferenceChangeListener{_,key->if(key==KEY_UPDATED_AT||key==KEY_BOOK_ID)trySend(Unit)}
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        trySend(Unit)
+        awaitClose{prefs.unregisterOnSharedPreferenceChangeListener(listener)}
+    }.conflate()
 
     fun load(): ReaderProgress? {
         val bookId = prefs.getLong(KEY_BOOK_ID, 0L)

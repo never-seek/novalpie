@@ -459,6 +459,7 @@ object NativeEpubArchiveWriter {
                             path = "images/cover.${imageExtension(staged.mediaType, coverUrl)}",
                             awaitIfPaused = awaitIfPaused,
                         )
+                        if(record.path==null)throw java.io.IOException("封面获取失败，未生成缺图 EPUB；可从检查点重试")
                         stagedAssets.trim()
                         record
                     }

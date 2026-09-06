@@ -915,6 +915,7 @@ fun NovalPieApp(
                     onOpenActivity = viewModel::openUserActivity,
                     onActivityFilterSelected = viewModel::selectProfileActivityFilter,
                     onOpenBook = viewModel::openBook,
+                    onOpenUser = viewModel::openUserProfile,
                     onPersonalizationTabSelected = viewModel::selectPersonalizationTab,
                     onPurchaseShopItem = viewModel::purchaseCurrentUserShopItem,
                     onEquipInventoryItem = viewModel::toggleCurrentUserEquipment
@@ -1133,6 +1134,7 @@ private fun UserProfileDetailRoute(
         onOpenBook = viewModel::openBook,
         onMessageUser = viewModel::openMessageConversation,
         onOpenLogin = viewModel::openLoginFallback,
+        currentUserId = viewModel.toolsUserProfile()?.id,
     )
 }
 
@@ -6962,16 +6964,10 @@ internal fun ReaderScreen(
 
     fun speechChapterFor(chapter: ReaderChapterContent): SpeechChapter {
         val index = chapters.indexOfFirst { it.id == chapter.chapterId }
-        return SpeechChapter(
-            bookId = state.bookId,
-            chapterId = chapter.chapterId,
-            bookTitle = state.bookTitle ?: "小说听书",
-            chapterTitle = chapter.title ?: chapter.content.title.orEmpty(),
-            segments = readerTtsSegments(readerBlocksForContent(chapter.content)
-                .filterIsInstance<ReaderContentBlock.Text>().map { it.value }),
-            nextChapterId = if (index >= 0) chapters.getOrNull(index + 1)?.id else null,
-            textRevision = replacementState.revision,
-        )
+        return com.novalpie.nativeapp.feature.reader.tts.buildSpeechChapter(state.bookId,chapter.chapterId,state.bookTitle ?: "小说听书",
+            chapter.content.copy(title=chapter.title ?: chapter.content.title),if(index>=0)chapters.getOrNull(index+1)?.id else null,
+            chapters.getOrNull(index)?.number ?: (index+1).takeIf{it>0},chapters.size.takeIf{it>0},replacementState.revision,
+            options.showImages,options.removeDuplicateLines,readerBodyLayout.chapters.firstOrNull{it.chapter.chapterId==chapter.chapterId}?.visibleBlocks)
     }
 
     fun startTts() {
@@ -6980,10 +6976,9 @@ internal fun ReaderScreen(
         val chapter = chapterContents.firstOrNull { it.chapterId == visibleId } ?: return
         val document = speechChapterFor(chapter)
         // Begin at the visible paragraph instead of rereading every previously appended chapter.
-        val visibleIndex = if(pageTurnEnabled)nativePagedAnchor?.itemIndexWithinChapter ?: 0 else listState.firstVisibleItemIndex
-        val first = document.segments.indexOfFirst { segment ->
-            (readerBodyItemIndexForText(readerBodyLayout, segment, chapter.chapterId) ?: Int.MAX_VALUE) >= visibleIndex
-        }.takeIf { it >= 0 } ?: document.segments.lastIndex.coerceAtLeast(0)
+        val visibleIndex = if(pageTurnEnabled)nativePagedAnchor?.itemIndexWithinChapter ?: 0 else
+            readerViewportAnchorForBodyItem(readerBodyLayout,listState.firstVisibleItemIndex,listState.firstVisibleItemScrollOffset)?.itemIndexWithinChapter ?: 0
+        val first = document.positions.indexOfFirst {it.itemIndexWithinChapter>=visibleIndex}.takeIf{it>=0} ?: document.segments.lastIndex.coerceAtLeast(0)
         runCatching { ReaderPlaybackService.start(context,document,ttsSettings,first) }
             .onFailure { Toast.makeText(context,"无法启动后台听书：${it.message}",Toast.LENGTH_LONG).show() }
     }
@@ -7025,8 +7020,9 @@ internal fun ReaderScreen(
         SpeechStatus.Paused -> ReaderTtsState.Paused
         SpeechStatus.Error -> ReaderTtsState.Error
     }
-    val ttsHighlightText = speech.chapter?.takeIf { speechBelongsToBook && ttsSettings.enableHighlight && speech.status == SpeechStatus.Speaking }
+    val ttsActiveText = speech.chapter?.takeIf { speechBelongsToBook && speech.status == SpeechStatus.Speaking }
         ?.segments?.getOrNull(speech.segmentIndex)
+    val ttsHighlightText=ttsActiveText.takeIf {ttsSettings.enableHighlight}
     val readerSystemBarModifier = if (readerFullscreenArticleUsesSystemBarInsets(readerFullscreen)) {
         Modifier.windowInsetsPadding(WindowInsets.systemBars)
     } else {
@@ -7074,7 +7070,8 @@ internal fun ReaderScreen(
                 onBoundary={direction->openReaderPageBoundary(if(direction<0)ReaderPageBoundaryTarget.PreviousChapter else ReaderPageBoundaryTarget.NextChapter)},
                 registerTurn={nativePageTurn=it},
                 onAnchor={nativePagedAnchor=it;onViewportAnchorChanged(it)},onPreview=onPreviewImage,
-                followText=ttsHighlightText.takeIf {ttsSettings.enableAutoScroll},
+                followText=ttsActiveText.takeIf {ttsSettings.enableAutoScroll},highlightText=ttsHighlightText,
+                backgroundImageUri=palette.backgroundImageUri,
                 modifier=Modifier.align(Alignment.Center).widthIn(max=options.contentWidthDp.dp).fillMaxSize()
                     .then(readerSystemBarModifier)
                     .padding(start=paragraphLayout.horizontalPaddingDp.dp,end=paragraphLayout.horizontalPaddingDp.dp,
@@ -10447,6 +10444,10 @@ private fun BookDetailBottomActionBar(
                     )
                     HorizontalDivider()
                 }
+                item {
+                    val blockAccount=remember(context){com.novalpie.nativeapp.data.AuthSessionStore(context).loadToken()?.let{com.novalpie.nativeapp.data.decodeAuthTokenProfile(it)}?.id}
+                    com.novalpie.nativeapp.feature.profile.UserBlockButton(bookId,blockAccount,book=true)
+                }
                 items(menuActions, key = { action -> action.name }) { action ->
                     val enabled = action != BookDetailMenuAction.RequestNewChapter || !requestNewChapterLoading
                     val label = when (action) {
@@ -11680,23 +11681,15 @@ private fun ReaderParagraph(
     palette: ReaderPalette,
     highlightedText: String? = null,
 ) {
-    val displayText = readerTextWithWordSpacing(value.text, textLayout.wordSpacingSp)
-        val highlight = highlightedText?.trim()?.takeIf(String::isNotBlank)
-        val annotated = if (highlight == null || !value.spanStyles.isEmpty()) {
-            value.toAnnotatedString()
-        } else buildAnnotatedString {
-            val start = highlight?.let(displayText::indexOf)?.takeIf { it >= 0 }
-            if (start == null) {
-                append(displayText)
-            } else {
-                val match = highlight.orEmpty()
-                append(displayText.substring(0, start))
-                withStyle(SpanStyle(background = palette.text.copy(alpha = 0.2f))) {
-                    append(displayText.substring(start, start + match.length))
-                }
-                append(displayText.substring(start + match.length))
-            }
-        }
+    val display = remember(value,textLayout.wordSpacingSp) {
+        com.novalpie.nativeapp.feature.reader.text.readerAnnotatedTextWithWordSpacing(value.toAnnotatedString(),textLayout.wordSpacingSp)
+    }
+    val annotated=remember(display,highlightedText,palette.text) {
+        val range=highlightedText?.let{com.novalpie.nativeapp.feature.reader.text.readerSpokenTextRange(display.text,it)}
+        if(range==null)display else androidx.compose.ui.text.AnnotatedString.Builder(display).apply{
+            addStyle(SpanStyle(background=palette.text.copy(alpha=.2f)),range.first,range.last+1)
+        }.toAnnotatedString()
+    }
         Text(
             text = annotated,
             style = MaterialTheme.typography.bodyLarge.copy(

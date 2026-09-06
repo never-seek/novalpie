@@ -16,6 +16,35 @@ import org.junit.Test
 class TtsPlaybackCoordinatorTest {
     private fun chapter(id: Long,next:Long?=null)=SpeechChapter(1,id,"测试书","第$id 章",listOf("首句$id","次句$id"),next)
 
+    @Test fun progressOnlyTracksAnActuallyStartedUtteranceAndNeverAPreloadOrLateCallback()=runTest {
+        val seen=mutableListOf<Pair<Long,Int>>()
+        val engine=FakeEngine()
+        val coordinator=TtsPlaybackCoordinator(engine,SpeechChapterSource{_,id->chapter(id)},backgroundScope,onPosition={value,index->seen+=value.chapterId to index})
+        coordinator.start(chapter(10,11),ReaderTtsSettings(enableAutoNextChapter=true))
+        assertTrue(seen.isEmpty())
+        engine.segment(0)
+        engine.finish();runCurrent()
+        assertEquals(listOf(10L to 0),seen)
+        engine.segment(0)
+        val old=engine.calls.last()
+        coordinator.stop();old.onSegment(1)
+        assertEquals(listOf(10L to 0,11L to 0),seen)
+    }
+
+    @Test fun togglingVisualFollowPreferencesDoesNotPauseOrFlushAnActiveVoice()=runTest {
+        val engine=FakeEngine()
+        val coordinator=TtsPlaybackCoordinator(engine,SpeechChapterSource{_,id->chapter(id)},backgroundScope)
+        val settings=ReaderTtsSettings(enableHighlight=true,enableAutoScroll=true)
+        coordinator.start(chapter(10,11),settings)
+        engine.segment(0)
+        coordinator.updateSettings(settings.copy(enableHighlight=false,enableAutoScroll=false,enableAutoNextChapter=false))
+        assertEquals(SpeechStatus.Speaking,coordinator.state.value.status)
+        assertEquals(1,engine.calls.size)
+        engine.finish();runCurrent()
+        assertEquals(SpeechStatus.Stopped,coordinator.state.value.status)
+        assertEquals(1,engine.calls.size)
+    }
+
     @Test fun deniedAudioFocusNeverStartsTheEngineButKeepsAnExplicitResumePoint()=runTest {
         val engine=FakeEngine()
         val coordinator=TtsPlaybackCoordinator(engine,SpeechChapterSource{_,id->chapter(id)},backgroundScope)

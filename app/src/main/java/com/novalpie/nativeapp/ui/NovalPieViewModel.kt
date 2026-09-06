@@ -12,6 +12,7 @@ import android.provider.OpenableColumns
 import android.provider.MediaStore
 import android.webkit.CookieManager
 import com.novalpie.nativeapp.core.AppContainer
+import com.novalpie.nativeapp.core.AppNavigator
 import com.novalpie.nativeapp.feature.download.DownloadTask
 import com.novalpie.nativeapp.feature.download.DownloadFormat
 import com.novalpie.nativeapp.feature.download.DownloadPhase
@@ -308,7 +309,9 @@ enum class ProfileTab {
     Checkin,
     Activities,
     Books,
-    Inventory
+    Inventory,
+    BlockedUsers,
+    Downloads,
 }
 
 /** The same activity categories exposed by the website profile ActivityTab. */
@@ -1017,37 +1020,16 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     var authToken by mutableStateOf(authSessionStore.loadToken())
         private set
 
-    private val api: NovalPieApi = NovalPieApi(
-        // Native requests are authenticated with AuthSessionStore's bearer token. Do not query
-        // WebView's CookieManager here: the first query initializes Chromium during a cold API
-        // request and can freeze the native app for tens of seconds on MuMu/low-end devices.
-        // Web fallback login captures its own auth_token back into this store. If that token is
-        // rejected, NovalPieApi invokes this provider lazily and replays only the rejected JSON/
-        // GET request with the current first-party WebView cookie.
-        authTokenProvider = { authToken },
-        cookieProvider = {
-            runCatching {
-                CookieManager.getInstance()
-                    .getCookie("https://novalpie.cc")
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-            }.getOrNull()
-        },
-        proxySelectorProvider = {
-            proxySettings.toProxySelector(
-                emulatorRuntime = isEmulatorRuntime()
-            )
-        }
-    )
+    private val dependencies = AppContainer.from(application).also { it.refreshEnvironmentFromStores() }
+    private val api: NovalPieApi = dependencies.api
 
     private val startupReaderSession: ReaderSession? = readerSessionStore.load()
     private val searchFeature = SearchViewModel(
         WebsiteSearchRepository(api),StoredSearchPreferences(searchSettingsStore,searchHistoryStore),
     )
-    private val routes = mutableStateListOf<AppRoute>().apply {
-        addAll(readerSessionRouteStack(startupReaderSession))
-    }
-    private var forumRequestSerial = 0L
+    private val navigator = AppNavigator(readerSessionRouteStack(startupReaderSession))
+    private val routes:List<AppRoute> get() = navigator.entries
+    private val forumFeature=com.novalpie.nativeapp.feature.forum.ForumFeedViewModel(dependencies.forumFeedRepository)
     private var forumPostDetailRequestSerial = 0L
     private var forumPostBodyRequestSerial = 0L
     private var forumPostCommentsRequestSerial = 0L
@@ -1093,10 +1075,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     var currentTab by mutableStateOf(BottomTab.Collection)
         private set
-    var forumState by mutableStateOf(ForumState())
-        private set
-    internal var forumScrollPosition by mutableStateOf(GridScrollPosition())
-        private set
+    val forumState:ForumState get()=forumFeature.state.feed
+    internal val forumScrollPosition:GridScrollPosition get()=forumFeature.state.scroll
     var forumPostDetailState by mutableStateOf(ForumPostDetailState())
         private set
     var forumCreateState by mutableStateOf(ForumCreateState())
@@ -1211,14 +1191,30 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     init {
         configureNovalPieImageLoader(application, proxySettings)
         viewModelScope.launch {
+            readerProgressStore.changes().collect {
+                val latest=withContext(Dispatchers.IO){readerProgressStore.load() to readerProgressStore.loadRecent(READER_PROGRESS_HISTORY_LIMIT)}
+                if(latest.first!=readerProgress||latest.second!=recentReaderProgresses) {
+                    readerProgress=latest.first;recentReaderProgresses=latest.second
+                    readerProgressRevision++
+                    updateLoadedCollectionProgress()
+                    if(bookDetailState.bookId>0)bookDetailState=bookDetailState.copy(readerProgress=readerProgressStore.load(bookDetailState.bookId))
+                }
+            }
+        }
+        viewModelScope.launch {
             snapshotFlow {currentRoute==AppRoute.Search}.collect {visible->
                 if(visible)searchFeature.enter() else searchFeature.leave()
             }
         }
         viewModelScope.launch {
+            snapshotFlow {currentRoute==AppRoute.Forum}.collect {visible->
+                if(visible)forumFeature.enter()else forumFeature.leave()
+            }
+        }
+        viewModelScope.launch {
             var previous=authToken to proxySettings
             snapshotFlow {authToken to proxySettings}.collect {next->
-                if(next!=previous){previous=next;searchFeature.environmentChanged()}
+                if(next!=previous){previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged()}
             }
         }
         viewModelScope.launch {
@@ -1228,8 +1224,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     bookId=task.bookId,format=if(task.format==DownloadFormat.Epub)NativeBookDownloadFormat.Epub else NativeBookDownloadFormat.Txt,
                     replacementMode=if(task.applyReplacement)NativeDownloadReplacementMode.EffectiveReaderRules else NativeDownloadReplacementMode.Source,
                     busy=state.busy,paused=task.phase==DownloadPhase.Paused,
-                    progress=NativeEpubExportProgress(completedChapters=task.completedChapters,completedImages=task.completedAssets),
-                    message=downloadStatusText(state),canRetry=task.phase in setOf(DownloadPhase.Failed,DownloadPhase.NeedsRetry,DownloadPhase.Cancelled),
+                    progress=NativeEpubExportProgress(completedChapters=task.completedChapters,completedImages=task.completedAssets,
+                        totalChapters=task.totalChapters,totalImages=task.totalAssets,failedImages=task.failedAssets),
+                    message=downloadStatusText(state),canRetry=!state.busy&&task.phase in setOf(DownloadPhase.Failed,DownloadPhase.NeedsRetry,DownloadPhase.Cancelled,DownloadPhase.Paused),
                 )
             }
         }
@@ -1477,7 +1474,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     private fun openBookDetailSearch(target: BookDetailSearchTarget) {
         val stack = routes.toList()
-        routes.replaceWith(pushDistinctRoute(stack, AppRoute.Search))
+        navigator.replaceAll(pushDistinctRoute(stack, AppRoute.Search))
         currentTab = BottomTab.Discover
         searchFeature.openTarget(target)
     }
@@ -2354,8 +2351,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         if (tab == BottomTab.Tools) loadTools()
         if (tab == BottomTab.Profile) loadProfile()
 
-        routes.clear()
-        routes.add(targetRoute)
+        navigator.reset(targetRoute)
         currentTab = tab
     }
 
@@ -2371,7 +2367,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         forumState.posts is LoadResult.Idle || forumState.posts is LoadResult.Error
 
     fun openSettings() {
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.Settings))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.Settings))
     }
 
     fun loadProfile() {
@@ -2818,12 +2814,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val ownId = currentUserProfile()?.id
         if (ownId != null && ownId == userId) {
             currentTab = BottomTab.Profile
-            routes.clear()
-            routes.add(AppRoute.Profile)
+            navigator.reset(AppRoute.Profile)
             loadProfile()
             return
         }
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.UserProfileDetail(userId)))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.UserProfileDetail(userId)))
         loadUserProfile(userId)
     }
 
@@ -3066,7 +3061,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     fun openAdminSection(section: AdminSection) {
         if (!isAdminProfile(currentUserProfile())) return
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.Admin(section)))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.Admin(section)))
         loadAdminSection(section)
     }
 
@@ -3388,7 +3383,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun openMessageCenter() {
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.MessageCenter))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.MessageCenter))
         loadMessageCenter()
     }
 
@@ -3529,7 +3524,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     fun openMessageDetail(messageId: Long) {
         if (messageId <= 0) return
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.MessageDetail(messageId)))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.MessageDetail(messageId)))
         loadMessageDetail(messageId)
     }
 
@@ -3611,7 +3606,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     fun openMessageConversation(targetUserId: Long, targetName: String?) {
         if (targetUserId <= 0) return
         val route = AppRoute.MessageConversation(targetUserId, targetName)
-        routes.replaceWith(pushDistinctRoute(routes.toList(), route))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), route))
         loadMessageConversation(targetUserId, targetName)
     }
 
@@ -3671,7 +3666,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun openMessageSettings() {
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.MessageSettings))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.MessageSettings))
         loadMessageSettings()
     }
 
@@ -3827,14 +3822,14 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         if (sanitizedStack == currentStack) return
 
         adminRequestSerial++
-        routes.replaceWith(sanitizedStack)
+        navigator.replaceAll(sanitizedStack)
         currentTab = BottomTab.Tools
         adminState = AdminState()
     }
 
     fun openUploadBook() {
         if (uploadBookState.existingNovelId != null) uploadBookState = UploadBookState()
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.UploadBook))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.UploadBook))
     }
 
     fun updateUploadBookDraft(draft: UploadBookDraft) {
@@ -4015,7 +4010,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             selectedAiConfigId = selectedAiConfigId,
             actionMessage = null
         )
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.UploadEditor))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.UploadEditor))
     }
 
     fun selectEditorTab(tab: EditorTab) {
@@ -4806,7 +4801,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 val withoutEditor = routes.toMutableList().apply {
                     if (lastOrNull() is AppRoute.UploadEditor) removeAt(lastIndex)
                 }
-                routes.replaceWith(pushDistinctRoute(withoutEditor, target))
+                navigator.replaceAll(pushDistinctRoute(withoutEditor, target))
             }.onFailure { failure ->
                 uploadEditorState = uploadEditorState.copy(busy = false, actionMessage = apiFailureMessage("生成上传文件", failure))
             }
@@ -4825,7 +4820,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     fun openPoliticalExam() {
         refreshPoliticalExamTimer()
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.PoliticalExam))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.PoliticalExam))
     }
 
     fun startPoliticalExam() {
@@ -5095,7 +5090,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     )
 
     fun openWorkspace() {
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.Workspace))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.Workspace))
         loadWorkspace()
     }
 
@@ -5315,184 +5310,30 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun updateForumSearchQuery(value: String) {
-        if (forumState.searchQuery == value) return
-        val wasSearching = forumState.searchQuery.isNotBlank()
-        ++forumRequestSerial
-        forumState = forumState.copy(
-            searchQuery = value,
-            reviewTotal = null,
-            page = 1,
-            totalPages = null,
-            canLoadMore = false,
-            loadingMore = false,
-            loadMoreError = null
-        )
-        // Clearing the field should restore the source feed immediately; new text is submitted
-        // explicitly from the search IME action so typing does not spawn a request per character.
-        if (wasSearching && value.isBlank()) loadForum()
-    }
+    fun updateForumSearchQuery(value: String) = forumFeature.updateQuery(value)
 
-    fun selectForumCategory(type: String) {
-        val normalizedType = type.trim().ifBlank { "discussion" }
-        if (forumState.selectedType == normalizedType) return
-        forumState = forumState.copy(
-            selectedType = normalizedType,
-            reviewTotal = null,
-            page = 1,
-            totalPages = null,
-            canLoadMore = false,
-            loadingMore = false,
-            loadMoreError = null
-        )
-        resetForumScrollPosition()
-        loadForum()
-    }
+    fun selectForumCategory(type: String) = forumFeature.selectCategory(type)
 
     fun updateForumHideSpoilers(hideSpoilers: Boolean) {
-        val current = forumState
-        if (current.hideSpoilers == hideSpoilers) return
-        forumState = if (current.selectedType == "review") {
-            current.copy(
-                hideSpoilers = hideSpoilers,
-                page = 1,
-                totalPages = null,
-                canLoadMore = false,
-                loadingMore = false,
-                loadMoreError = null
-            )
-        } else {
-            // Other forum surfaces only need a local redraw. The review endpoint alone uses the
-            // preference as a request filter for pure-spoiler records.
-            current.copy(hideSpoilers = hideSpoilers)
-        }
-        if (current.selectedType == "review") loadForum()
-        when (val route = currentRoute) {
+        if(forumState.hideSpoilers==hideSpoilers)return
+        forumFeature.setHideSpoilers(hideSpoilers)
+        when(val route=currentRoute) {
             AppRoute.Profile -> loadProfile()
             is AppRoute.UserProfileDetail -> loadUserProfile(route.userId)
             else -> Unit
         }
     }
 
-    fun loadForum() = loadForumPage(forumState.page)
-
-    /** Direct source-page navigation replaces the former load-more-only forum footer. */
-    fun goToForumPage(page: Int) {
-        val current = forumState
-        val totalPages = current.totalPages?.coerceAtLeast(1) ?: return
-        val targetPage = page.coerceIn(1, totalPages)
-        if (targetPage == current.page || current.posts is LoadResult.Loading) return
-        loadForumPage(targetPage)
-    }
-
-    private fun loadForumPage(targetPage: Int) {
-        resetForumScrollPosition()
-        val requestSerial = ++forumRequestSerial
-        val request = forumState
-        val requestedPage = targetPage.coerceAtLeast(1)
-        forumState = request.copy(
-            posts = LoadResult.Loading,
-            page = requestedPage,
-            canLoadMore = false,
-            loadingMore = false,
-            loadMoreError = null
-        )
-        viewModelScope.launch {
-            val result = runCatching {
-                api.forumPostsPage(
-                    page = requestedPage,
-                    limit = PAGE_SIZE,
-                    type = request.selectedType,
-                    search = request.searchQuery,
-                    hideSpoilers = request.hideSpoilers
-                )
-            }
-            if (!isFreshRequestSerial(requestSerial, forumRequestSerial)) return@launch
-            forumState = result.fold(
-                onSuccess = { resultPage ->
-                    val posts = resultPage.posts
-                    val resolvedPage = resultPage.page.coerceAtLeast(1)
-                    forumState.copy(
-                        posts = LoadResult.Success(posts),
-                        reviewTotal = if (request.selectedType == "review") resultPage.total else null,
-                        page = resolvedPage,
-                        totalPages = resultPage.totalPages,
-                        canLoadMore = resultPage.totalPages?.let { resolvedPage < it } ?: posts.size == PAGE_SIZE,
-                        loadingMore = false,
-                        loadMoreError = null
-                    )
-                },
-                onFailure = { failure ->
-                    forumState.copy(
-                        posts = LoadResult.Error(apiFailureMessage("论坛", failure)),
-                        canLoadMore = false,
-                        loadingMore = false,
-                        loadMoreError = null
-                    )
-                }
-            )
-        }
-    }
-
-    fun loadMoreForum() {
-        val current = forumState
-        current.totalPages?.let { totalPages ->
-            val nextPage = (current.page + 1).takeIf { it <= totalPages } ?: return
-            goToForumPage(nextPage)
-            return
-        }
-        val currentPosts = (current.posts as? LoadResult.Success)?.value ?: return
-        if (current.loadingMore || !current.canLoadMore) return
-
-        val requestSerial = forumRequestSerial
-        val nextPage = current.page + 1
-        forumState = current.copy(loadingMore = true, loadMoreError = null)
-        viewModelScope.launch {
-            val result = runCatching {
-                api.forumPostsPage(
-                    page = nextPage,
-                    limit = PAGE_SIZE,
-                    type = current.selectedType,
-                    search = current.searchQuery,
-                    hideSpoilers = current.hideSpoilers
-                )
-            }
-            if (!isFreshRequestSerial(requestSerial, forumRequestSerial)) return@launch
-            if (forumState.selectedType != current.selectedType || forumState.searchQuery != current.searchQuery) return@launch
-            forumState = result.fold(
-                onSuccess = { resultPage ->
-                    val nextPosts = resultPage.posts
-                    forumState.copy(
-                        posts = LoadResult.Success((currentPosts + nextPosts).distinctBy(ForumPost::id)),
-                        reviewTotal = if (current.selectedType == "review") {
-                            resultPage.total ?: current.reviewTotal
-                        } else {
-                            null
-                        },
-                        page = nextPage,
-                        totalPages = resultPage.totalPages ?: current.totalPages,
-                        canLoadMore = nextPosts.size == PAGE_SIZE,
-                        loadingMore = false,
-                        loadMoreError = null
-                    )
-                },
-                onFailure = { failure ->
-                    // A failed additional page never erases the already visible forum feed.
-                    forumState.copy(
-                        loadingMore = false,
-                        loadMoreError = apiFailureMessage("论坛", failure)
-                    )
-                }
-            )
-        }
-    }
+    fun loadForum() = forumFeature.refresh()
+    fun goToForumPage(page: Int) = forumFeature.goToPage(page)
+    fun loadMoreForum() = forumFeature.loadMore()
 
     fun openForumPost(postId: Long) {
         if (postId <= 0) return
         val currentStack = routes.toList()
         val nextStack = pushDistinctRoute(currentStack, AppRoute.ForumPostDetail(postId))
         if (nextStack === currentStack) return
-        routes.replaceWith(nextStack)
+        navigator.replaceAll(nextStack)
         loadForumPostDetail(postId)
     }
 
@@ -5510,7 +5351,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 null
             }
         )
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.ForumCreate))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.ForumCreate))
     }
 
     fun updateForumCreateDraft(draft: ForumCreateDraft) {
@@ -5564,10 +5405,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                             if (lastOrNull() is AppRoute.ForumCreate) removeAt(lastIndex)
                             add(AppRoute.ForumPostDetail(postId))
                         }
-                        routes.replaceWith(nextStack)
+                        navigator.replaceAll(nextStack)
                         loadForumPostDetail(postId)
                     } else if (routes.lastOrNull() is AppRoute.ForumCreate) {
-                        routes.removeAt(routes.lastIndex)
+                        navigator.pop()
                     }
                     forumCreateState = ForumCreateState(isAdmin = state.isAdmin)
                 },
@@ -6036,9 +5877,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private fun reactOnForumPost(label: String, action: suspend () -> com.novalpie.nativeapp.model.ForumActionResult) {
         if (forumPostDetailState.postId <= 0 || forumPostDetailState.actionLoading) return
         val postId = forumPostDetailState.postId
+        val identity=ContentMutationIdentity(AppRoute.ForumPostDetail(postId),forumPostDetailRequestSerial,dependencies.environment.revision)
         forumPostDetailState = forumPostDetailState.copy(actionLoading = true, actionMessage = null)
         viewModelScope.launch {
+            if(!isCurrentContentMutation(identity,currentRoute,forumPostDetailRequestSerial,dependencies.environment.revision))return@launch
             val result = runCatching { action() }
+            if(!isCurrentContentMutation(identity,currentRoute,forumPostDetailRequestSerial,dependencies.environment.revision))return@launch
             forumPostDetailState = result.fold(
                 onSuccess = {
                     forumPostDetailState.copy(
@@ -6053,16 +5897,19 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     )
                 }
             )
-            loadForumPostDetail(postId)
+            if(result.getOrNull()?.success==true)loadForumPostDetail(postId,preservedActionMessage=forumPostDetailState.actionMessage,retainVisibleComments=true)
         }
     }
 
     private fun reactOnForumComment(comment: ForumComment, label: String, action: suspend () -> com.novalpie.nativeapp.model.ForumActionResult) {
         if (comment.id <= 0 || forumPostDetailState.postId <= 0 || forumPostDetailState.actionLoading) return
         val postId = forumPostDetailState.postId
+        val identity=ContentMutationIdentity(AppRoute.ForumPostDetail(postId),forumPostDetailRequestSerial,dependencies.environment.revision)
         forumPostDetailState = forumPostDetailState.copy(actionLoading = true, actionMessage = null)
         viewModelScope.launch {
+            if(!isCurrentContentMutation(identity,currentRoute,forumPostDetailRequestSerial,dependencies.environment.revision))return@launch
             val result = runCatching { action() }
+            if(!isCurrentContentMutation(identity,currentRoute,forumPostDetailRequestSerial,dependencies.environment.revision))return@launch
             forumPostDetailState = result.fold(
                 onSuccess = {
                     forumPostDetailState.copy(
@@ -6113,8 +5960,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         if (bookId <= 0 || content.isBlank() || bookDetailState.actionLoading) return
         val replyId = bookDetailState.replyingToCommentId
         val replyToName = bookDetailState.replyingToName
+        val identity=ContentMutationIdentity(AppRoute.BookDetail(bookId),bookDetailRequestSerial,dependencies.environment.revision)
         bookDetailState = bookDetailState.copy(actionLoading = true, actionMessage = null)
         viewModelScope.launch {
+            if(!isCurrentContentMutation(identity,currentRoute,bookDetailRequestSerial,dependencies.environment.revision))return@launch
             val result = runCatching {
                 if (replyId != null) {
                     api.createCommentReply(commentId = replyId, content = content, replyToName = replyToName)
@@ -6122,6 +5971,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     api.createBookComment(bookId = bookId, content = content)
                 }
             }
+            if(!isCurrentContentMutation(identity,currentRoute,bookDetailRequestSerial,dependencies.environment.revision))return@launch
             bookDetailState = bookCommentAfterSubmission(
                 bookDetailState,
                 result,
@@ -6163,9 +6013,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private fun reactOnBookComment(comment: ChapterComment, label: String, action: suspend () -> com.novalpie.nativeapp.model.ForumActionResult) {
         if (comment.id <= 0 || bookDetailState.bookId <= 0 || bookDetailState.actionLoading) return
         val bookId = bookDetailState.bookId
+        val identity=ContentMutationIdentity(AppRoute.BookDetail(bookId),bookDetailRequestSerial,dependencies.environment.revision)
         bookDetailState = bookDetailState.copy(actionLoading = true, actionMessage = null)
         viewModelScope.launch {
+            if(!isCurrentContentMutation(identity,currentRoute,bookDetailRequestSerial,dependencies.environment.revision))return@launch
             val result = runCatching { action() }
+            if(!isCurrentContentMutation(identity,currentRoute,bookDetailRequestSerial,dependencies.environment.revision))return@launch
             bookDetailState = result.fold(
                 onSuccess = {
                     bookDetailState.copy(
@@ -6382,7 +6235,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             return
         }
         if (!hasBookManagementAccess(bookId)) return
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.BookEditInfo(bookId)))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.BookEditInfo(bookId)))
         loadBookEditInfo(bookId)
     }
 
@@ -6583,7 +6436,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             return
         }
         if (!hasBookManagementAccess(bookId)) return
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.BookChapters(bookId)))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.BookChapters(bookId)))
         loadManagedChapters(bookId)
     }
 
@@ -6893,7 +6746,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         if (!hasBookManagementAccess(bookId)) return
         uploadRequestSerial++
         uploadBookState = UploadBookState(existingNovelId = bookId)
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.BookAppend(bookId)))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.BookAppend(bookId)))
     }
 
     fun openBook(bookId: Long) {
@@ -6902,7 +6755,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val currentStack = routes.toList()
         val nextStack = pushDistinctRoute(currentStack, AppRoute.BookDetail(bookId))
         if (nextStack === currentStack) return
-        routes.replaceWith(nextStack)
+        navigator.replaceAll(nextStack)
         loadBookDetail(bookId)
     }
 
@@ -6912,7 +6765,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val currentStack = routes.toList()
         val nextStack = pushDistinctRoute(currentStack, AppRoute.Terminology(bookId))
         if (nextStack === currentStack) return
-        routes.replaceWith(nextStack)
+        navigator.replaceAll(nextStack)
         // A terminology query is meaningful only within its book. Do not carry a previous
         // title's source/translation term into a newly opened glossary.
         val query = terminologyKeywordForBook(terminologyState, bookId)
@@ -6976,7 +6829,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val currentStack = routes.toList()
         val nextStack = replaceTopReaderRoute(currentStack, next)
         if (nextStack === currentStack) return
-        routes.replaceWith(nextStack)
+        navigator.replaceAll(nextStack)
         loadReader(
             bookId,
             chapterId,
@@ -6987,11 +6840,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     fun continueReading(progress: ReaderProgress) {
         currentTab = BottomTab.Collection
-        routes.clear()
-        routes.add(AppRoute.Home)
-        routes.add(AppRoute.BookDetail(progress.bookId))
+        navigator.replaceAll(listOf(AppRoute.Home,AppRoute.BookDetail(progress.bookId),AppRoute.Reader(progress.bookId,progress.chapterId)))
         loadBookDetail(progress.bookId)
-        routes.add(AppRoute.Reader(progress.bookId, progress.chapterId))
         loadReader(progress.bookId, progress.chapterId, restoreViewport = true)
     }
 
@@ -7007,7 +6857,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     fun openWebFallback(url: String) {
         clearReaderSessionWhenLeaving()
-        routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.WebFallback(url)))
+        navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.WebFallback(url)))
     }
 
     fun openLoginFallback() {
@@ -7026,7 +6876,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         } else {
             pushDistinctRoute(stack, route)
         }
-        routes.replaceWith(next)
+        navigator.replaceAll(next)
         authRequestSerial++
         authState = AuthState(resetToken = resetToken.orEmpty())
     }
@@ -7201,7 +7051,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         }
         if (state.captchaToken.isNullOrBlank()) {
             authState = state.copy(pendingCaptchaAction = action, actionMessage = "请先完成源站安全验证")
-            routes.replaceWith(pushDistinctRoute(routes.toList(), AppRoute.AuthCaptcha))
+            navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.AuthCaptcha))
             return
         }
         executeAuthCaptchaAction(action)
@@ -7250,8 +7100,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     AppContainer.from(getApplication()).refreshEnvironmentFromStores()
                     authState = AuthState()
                     currentTab = BottomTab.Collection
-                    routes.clear()
-                    routes.add(AppRoute.Home)
+                    navigator.reset(AppRoute.Home)
                     loadHome()
                 },
                 onFailure = { failure ->
@@ -7334,8 +7183,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     private fun resetToTabRoot(tab: BottomTab) {
         currentTab = tab
-        routes.clear()
-        routes.add(
+        navigator.reset(
             when (tab) {
                 BottomTab.Collection -> AppRoute.Home
                 BottomTab.Discover -> AppRoute.Search
@@ -7489,14 +7337,14 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         }
 
         resetToTabRoot(BottomTab.Collection)
-        routes.add(AppRoute.BookDetail(bookId))
+        navigator.push(AppRoute.BookDetail(bookId))
         loadBookDetail(bookId)
         viewModelScope.launch {
             val permissions = runCatching { api.managedBookPermissions(bookId) }.getOrNull()
             if (!bookManagementActionsVisible(permissions)) return@launch
             if (currentRoute != AppRoute.BookDetail(bookId)) return@launch
 
-            routes.add(route)
+            navigator.push(route)
             when (route) {
                 is AppRoute.BookEditInfo -> loadBookEditInfo(bookId)
                 is AppRoute.BookChapters -> loadManagedChapters(bookId)
@@ -7512,7 +7360,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     fun goBack(): Boolean {
         if (routes.size <= 1) return false
         val leavingReader = currentRoute as? AppRoute.Reader
-        routes.removeAt(routes.lastIndex)
+        navigator.pop()
         rootRouteTab(currentRoute)?.let { currentTab = it }
         if (leavingReader != null) {
             readerSessionStore.clear()
@@ -7539,8 +7387,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun saveForumScrollPosition(firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int) {
-        val next = GridScrollPosition.from(firstVisibleItemIndex, firstVisibleItemScrollOffset)
-        if (forumScrollPosition != next) forumScrollPosition = next
+        forumFeature.saveScroll(firstVisibleItemIndex,firstVisibleItemScrollOffset)
     }
 
     fun saveSearchGridScrollPosition(firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int) {
@@ -8080,7 +7927,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
     fun resumeNativeBookDownload(bookId:Long) {
         val coordinator=AppContainer.from(getApplication()).downloads
-        if(coordinator.state.value.task?.bookId==bookId)coordinator.resume()
+        if(coordinator.state.value.task?.bookId==bookId) {
+            if(coordinator.state.value.busy)coordinator.resume()else retryNativeBookDownload(bookId)
+        }
     }
     fun toggleNativeBookDownloadPause(bookId:Long) {
         if(nativeEpubDownloadState.paused)resumeNativeBookDownload(bookId)else pauseNativeBookDownload(bookId)
@@ -8786,7 +8635,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun resetForumScrollPosition() {
-        if (forumScrollPosition != GridScrollPosition()) forumScrollPosition = GridScrollPosition()
+        forumFeature.resetScroll()
     }
 
     private fun mergeBooksById(current: List<NovelCard>, next: List<NovelCard>): List<NovelCard> {
@@ -8816,6 +8665,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     override fun onCleared() {
         searchFeature.close()
+        forumFeature.close()
         super.onCleared()
     }
 

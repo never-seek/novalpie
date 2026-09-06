@@ -1,6 +1,8 @@
 package com.novalpie.nativeapp.data
 
 import kotlinx.coroutines.ensureActive
+import com.novalpie.nativeapp.feature.profile.BlockedUser
+import com.novalpie.nativeapp.feature.profile.BlockedUsersPage
 
 import android.os.SystemClock
 import android.util.Log
@@ -169,11 +171,13 @@ class NovalPieApi(
     private val cookieProvider: () -> String? = { null },
     private val authTokenProvider: () -> String? = { null },
     private val proxyProvider: () -> Proxy? = { null },
-    private val proxySelectorProvider: () -> ProxySelector? = { null }
+    private val proxySelectorProvider: () -> ProxySelector? = { null },
+    private val requestRevisionProvider: () -> Long = { 0L },
 ) {
     @Volatile
     private var cachedReaderSession: ReaderSessionKey? = null
     private val readerSessionLock = Any()
+    @Volatile private var verifiedWebSessionRevision:Long?=null
 
     /** Current source contract: POST /api/sessions with a provider-agnostic CAPTCHA token. */
     suspend fun loginPassword(
@@ -463,6 +467,37 @@ class NovalPieApi(
 
     suspend fun currentUser(): UserProfile = withContext(Dispatchers.IO) {
         normalizeUser(get("/api/users/me"))
+    }
+
+    suspend fun blockedUsers(page:Int=1):BlockedUsersPage=withContext(Dispatchers.IO) {
+        val root=unwrapObject(get("/api/v2/users/me/blocks",mapOf("page" to page.coerceAtLeast(1).toString(),"limit" to "20")),"data","result")
+        val users=extractArray(root,"blocked_users").mapNotNull {value->
+            val user=value as? JSONObject ?: return@mapNotNull null
+            val id=user.longOrNull("id") ?: return@mapNotNull null
+            BlockedUser(id,user.firstStringOrNull("username","name") ?: "用户$id",normalizeAssetUrl(user.firstStringOrNull("avatar","avatar_url")))
+        }
+        val pagination=root.optJSONObject("pagination")
+        BlockedUsersPage(users,pagination?.intOrNull("page") ?: page,pagination?.intOrNull("total") ?: users.size,pagination?.intOrNull("pages") ?: 1)
+    }
+    suspend fun userBlocked(userId:Long):Boolean=withContext(Dispatchers.IO) {
+        require(userId>0)
+        unwrapObject(get("/api/v2/users/$userId/block"),"data","result").firstBooleanOrNull("is_blocked","blocked") ?: false
+    }
+    suspend fun setUserBlocked(userId:Long,blocked:Boolean)=withContext(Dispatchers.IO) {
+        require(userId>0)
+        val path="/api/v2/users/$userId/block"
+        if(blocked)post(path,JSONObject()) else delete(path)
+        Unit
+    }
+    suspend fun bookBlocked(bookId:Long):Boolean=withContext(Dispatchers.IO) {
+        require(bookId>0)
+        unwrapObject(get("/api/v2/novels/$bookId/block"),"data","result").firstBooleanOrNull("is_blocked","blocked") ?: false
+    }
+    suspend fun setBookBlocked(bookId:Long,blocked:Boolean)=withContext(Dispatchers.IO) {
+        require(bookId>0)
+        val path="/api/v2/novels/$bookId/block"
+        if(blocked)post(path,JSONObject())else delete(path)
+        Unit
     }
 
     /**
@@ -2275,6 +2310,7 @@ class NovalPieApi(
                 // The website keeps this short-lived reader session around for adjacent chapters.
                 // Reusing it removes one proxy round trip from every infinite-scroll append.
                 val session = readerSessionKey(forceRefresh = attempt > 0)
+                requireCurrentEnvironment(session.requestRevision)
                 return@withContext normalizeReaderContent(
                     raw = get(
                         "/api/chapters/$chapterId/content",
@@ -2727,16 +2763,19 @@ class NovalPieApi(
         callTimeoutSeconds: Long? = null,
         readTimeoutSeconds: Long? = null,
     ): Any {
+        val requestRevision=requestRevisionProvider()
         if (includeSession) applySessionHeaders(requestBuilder)
 
         val request = requestBuilder.build()
 
         val explicitProxy = proxyProvider()
         val proxySelector = if (explicitProxy == null) proxySelectorProvider() else null
-        val callClient = if (callTimeoutSeconds != null || readTimeoutSeconds != null ||
+        val isRead=request.method in setOf("GET","HEAD")
+        val callClient = if (!isRead || callTimeoutSeconds != null || readTimeoutSeconds != null ||
             explicitProxy != null || proxySelector != null
         ) {
             client.newBuilder().apply {
+                if(!isRead)retryOnConnectionFailure(false)
                 when {
                     explicitProxy != null -> proxy(explicitProxy)
                     proxySelector != null -> this.proxySelector(proxySelector)
@@ -2749,12 +2788,13 @@ class NovalPieApi(
         }
 
         return try {
-            executeRequest(callClient, path, request)
+            executeRequest(callClient, path, request,requestRevision)
         } catch (failure: NovalPieApiException) {
             // A WebView login can outlive the short native bearer token. Retry only after the
-            // server explicitly rejects that token, and only for replayable JSON/GET requests;
-            // multipart uploads must never be replayed implicitly.
-            if (!includeSession || failure.statusCode !in setOf(401, 403)) throw failure
+            // server explicitly rejects that token, and only for safe reads. A later write may
+            // use an already-verified session directly, but must never be replayed implicitly.
+            if (!isRead || !includeSession || failure.statusCode !in setOf(401, 403)) throw failure
+            requireCurrentEnvironment(requestRevision)
             val cookie = runCatching { cookieProvider() }
                 .getOrNull()
                 ?.takeIf { it.isNotBlank() }
@@ -2770,7 +2810,8 @@ class NovalPieApi(
                     .removeHeader("cookie")
                     .header("cookie", cookie)
                     .build(),
-            )
+                requestRevision,
+            ).also {verifiedWebSessionRevision=requestRevision}
         }
     }
 
@@ -2778,11 +2819,14 @@ class NovalPieApi(
         callClient: OkHttpClient,
         path: String,
         request: Request,
+        requestRevision:Long,
     ): Any {
+        requireCurrentEnvironment(requestRevision)
         val startedAt = SystemClock.elapsedRealtime()
         try {
             callClient.newCall(request).execute().use { response ->
                 val responseBody = response.body?.string().orEmpty()
+                requireCurrentEnvironment(requestRevision)
                 if (!response.isSuccessful) {
                     // The body was already read; carry the server's own explanation instead of
                     // discarding it and leaving the user with only a status code.
@@ -2808,6 +2852,10 @@ class NovalPieApi(
                 "request path=$path elapsedMs=${SystemClock.elapsedRealtime() - startedAt} finished",
             )
         }
+    }
+
+    private fun requireCurrentEnvironment(revision:Long) {
+        if(requestRevisionProvider()!=revision)throw CancellationException("账号或网络配置已改变，旧请求结果已丢弃")
     }
 
     private fun executeExternal(
@@ -2848,11 +2896,19 @@ class NovalPieApi(
         callTimeoutSeconds: Long,
         readTimeoutSeconds: Long,
     ) {
-        applySessionHeaders(requestBuilder)
+        val requestRevision=requestRevisionProvider()
+        val site=baseUrl.toHttpUrl()
+        fun isSiteUrl(url:okhttp3.HttpUrl)=url.scheme==site.scheme&&url.host==site.host&&url.port==site.port
+        val includeSession=isSiteUrl(requestBuilder.build().url)
+        if(includeSession)applySessionHeaders(requestBuilder)
 
         val explicitProxy = proxyProvider()
         val proxySelector = if (explicitProxy == null) proxySelectorProvider() else null
         val callClient = client.newBuilder().apply {
+            addNetworkInterceptor{chain->
+                val incoming=chain.request()
+                chain.proceed(if(isSiteUrl(incoming.url))incoming else incoming.newBuilder().removeHeader("authorization").removeHeader("cookie").build())
+            }
             when {
                 explicitProxy != null -> proxy(explicitProxy)
                 proxySelector != null -> this.proxySelector(proxySelector)
@@ -2862,14 +2918,20 @@ class NovalPieApi(
         }.build()
 
         val request = requestBuilder.build()
+        val guardedConsumer:suspend(InputStream,String?)->Unit={input,type->
+            requireCurrentEnvironment(requestRevision)
+            consumer(input,type)
+            requireCurrentEnvironment(requestRevision)
+        }
         try {
-            consumeStreamResponse(callClient, label, request, consumer)
+            consumeStreamResponse(callClient, label, request, guardedConsumer)
         } catch (failure: NovalPieApiException) {
             // Downloads and original illustrations are streamed, but their authentication contract
             // is the same as ordinary JSON calls: a surviving WebView session may be valid after
             // the short native bearer expires. Do not touch cookies until the server has actually
             // rejected the first request, and never expose a rejected response body to the consumer.
-            if (failure.statusCode !in setOf(401, 403)) throw failure
+            if (!includeSession || failure.statusCode !in setOf(401, 403)) throw failure
+            requireCurrentEnvironment(requestRevision)
             val cookie = runCatching { cookieProvider() }
                 .getOrNull()
                 ?.takeIf { it.isNotBlank() }
@@ -2882,11 +2944,12 @@ class NovalPieApi(
                     .removeHeader("cookie")
                     .header("cookie", cookie)
                     .build(),
-                consumer = consumer,
+                consumer = guardedConsumer,
             )
         }
     }
 
+    @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class)
     private suspend fun consumeStreamResponse(
         callClient: OkHttpClient,
         label: String,
@@ -2897,7 +2960,9 @@ class NovalPieApi(
         // OkHttp's synchronous execute is blocking.  Tie the call to the coroutine so an
         // explicit native-download cancel (or ViewModel teardown) closes the socket immediately
         // instead of leaving the UI in a busy state until the long read timeout expires.
-        val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion {
+        // A completion-only handler runs AFTER blocking execute finishes, too late to cancel it.
+        // Observe the cancelling transition so a stalled read releases its socket immediately.
+        val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion(onCancelling=true,invokeImmediately=true) {
             call.cancel()
         }
         try {
@@ -2915,6 +2980,9 @@ class NovalPieApi(
                     consumer(input, response.header("content-type"))
                 }
             }
+        } catch(failure:IOException) {
+            currentCoroutineContext().ensureActive()
+            throw failure
         } finally {
             cancellationHandle?.dispose()
         }
@@ -2927,6 +2995,11 @@ class NovalPieApi(
      * returns 401/403, so cookie access is both lazy and strictly an authentication fallback.
      */
     private fun applySessionHeaders(requestBuilder: Request.Builder) {
+        if(verifiedWebSessionRevision==requestRevisionProvider()) {
+            val cookie=runCatching{cookieProvider()}.getOrNull()?.takeIf{it.isNotBlank()}
+            if(cookie!=null){requestBuilder.removeHeader("authorization").header("cookie",cookie);return}
+            verifiedWebSessionRevision=null
+        }
         val token = authTokenProvider()?.takeIf { it.isNotBlank() }
         if (token != null) {
             requestBuilder.header("authorization", "Bearer $token")
@@ -3415,21 +3488,24 @@ class NovalPieApi(
         val sessionId: String,
         val sessionKey: String,
         val cacheUntilMillis: Long,
+        val requestRevision: Long,
     ) {
         fun isUsableAt(nowMillis: Long): Boolean = nowMillis < cacheUntilMillis
     }
 
     private fun readerSessionKey(forceRefresh: Boolean = false): ReaderSessionKey {
         val now = System.currentTimeMillis()
-        cachedReaderSession?.takeIf { !forceRefresh && it.isUsableAt(now) }?.let { return it }
+        val requestRevision = requestRevisionProvider()
+        cachedReaderSession?.takeIf { !forceRefresh && it.requestRevision==requestRevision && it.isUsableAt(now) }?.let { return it }
 
         return synchronized(readerSessionLock) {
             val synchronizedNow = System.currentTimeMillis()
             cachedReaderSession
-                ?.takeIf { !forceRefresh && it.isUsableAt(synchronizedNow) }
+                ?.takeIf { !forceRefresh && it.requestRevision==requestRevision && it.isUsableAt(synchronizedNow) }
                 ?.let { return@synchronized it }
 
             val raw = get("/api/reader/session-key", headers = readerSignatureHeaders())
+            requireCurrentEnvironment(requestRevision)
             val source = unwrapObject(raw, "data", "result", "session")
             val sessionId = source.firstStringOrNull("session_id", "sessionId", "id")
                 ?: throw IOException("Reader session id is empty.")
@@ -3439,7 +3515,8 @@ class NovalPieApi(
                 sessionId = sessionId,
                 sessionKey = sessionKey,
                 cacheUntilMillis = readerSessionCacheUntilMillis(source, synchronizedNow),
-            ).also { cachedReaderSession = it }
+                requestRevision = requestRevision,
+            ).also { if(requestRevisionProvider()==requestRevision)cachedReaderSession = it }
         }
     }
 

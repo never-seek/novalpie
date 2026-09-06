@@ -42,10 +42,7 @@ internal class WebsiteSpeechChapterSource(context: Context, private val api: Nov
         val text=DerivedTextPipeline.transform(content.content,rules,order)
         val titleRules=readerReplacementRulesForChapter(replacement,order,ReaderReplacementTarget.Title)
         val title=applyReaderReplacementRules(content.title ?: chapters[index].title,titleRules,order,ReaderReplacementTarget.Title).text
-        SpeechChapter(
-            bookId=bookId,chapterId=chapterId,bookTitle=api.bookDetail(bookId).title,chapterTitle=title,
-            segments=readerTtsSegments(readerBlocksForContent(content.copy(content=text.markup)).filterIsInstance<ReaderContentBlock.Text>().map { it.value }),
-            nextChapterId=chapters.getOrNull(index+1)?.id,textRevision=store.revision(bookId),
-        )
+        buildSpeechChapter(bookId,chapterId,api.bookDetail(bookId).title,content.copy(title=title,content=text.markup),
+            chapters.getOrNull(index+1)?.id,order,chapters.size,store.revision(bookId),settings.showImages,settings.removeDuplicateLines)
     }
 }

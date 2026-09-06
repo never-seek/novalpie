@@ -13,6 +13,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -37,6 +38,7 @@ import androidx.compose.ui.text.style.TextIndent
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.novalpie.nativeapp.model.ReaderContent
 import com.novalpie.nativeapp.model.ReaderViewportAnchor
@@ -45,6 +47,11 @@ import com.novalpie.nativeapp.ui.ReaderContentBlock
 import com.novalpie.nativeapp.ui.ReaderUiOptions
 import com.novalpie.nativeapp.ui.longPressOnly
 import com.novalpie.nativeapp.ui.readerTextLayout
+import com.novalpie.nativeapp.ui.LocalChineseVariant
+import com.novalpie.nativeapp.ui.convertChineseVariantText
+import com.novalpie.nativeapp.feature.reader.text.readerAnnotatedTextWithWordSpacing
+import com.novalpie.nativeapp.feature.reader.text.readerSpokenTextRange
+import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -70,15 +77,19 @@ internal fun NativePagedReader(
     onPreview:(ReaderContentBlock.Image,String)->Unit,
     modifier:Modifier=Modifier,
     followText:String?=null,
+    highlightText:String?=null,
+    backgroundImageUri:String?=null,
     comments:@Composable ()->Unit,
 ) {
     val context=LocalContext.current
     val density=LocalDensity.current
+    val chineseVariant=LocalChineseVariant.current
     val store=remember(context){ReaderAnchorStore(context)}
     val textLayout=readerTextLayout(options)
     val measurer=rememberTextMeasurer(cacheSize=0)
     var anchor by remember(bookId,chapterId){mutableStateOf<ReaderAnchor?>(null)}
     var measured by remember(bookId,chapterId){mutableStateOf<MeasuredChapterDocument?>(null)}
+    var navigator by remember(bookId,chapterId){mutableStateOf<ReaderPageNavigator?>(null)}
     var pageIndex by remember(bookId,chapterId){mutableIntStateOf(0)}
     var initialized by remember(bookId,chapterId){mutableStateOf(false)}
     var awaitingChapter by remember(bookId,chapterId){mutableStateOf(false)}
@@ -102,19 +113,24 @@ internal fun NativePagedReader(
         } else {
             val target=pageIndex+if(direction<0)-1 else 1
             if(target in current.plan.pages.indices) {
-                pageIndex=target
-                anchor=current.plan.pages[target].startAnchor
+                val move=if(direction<0)navigator?.previous()else navigator?.next()
+                if(move !is PageMove.Page)return
+                pageIndex=move.index
+                anchor=current.plan.pages[move.index].startAnchor
                 turnBusy=options.pageTurnEffect!="none"
                 return
             }
             if(direction>0&&options.showComments){showComments=true;return}
         }
         if((direction<0&&hasPrevious)||(direction>0&&hasNext)) {
+            val move=if(direction<0)navigator?.previous()else navigator?.next()
+            if(move !is PageMove.Chapter)return
             awaitingChapter=true
             latestBoundary(direction)
         }
     }
     val latestMove by rememberUpdatedState<(Int)->Unit>(::move)
+    LaunchedEffect(options.showComments){if(!options.showComments)showComments=false}
     LaunchedEffect(pageIndex) {
         if(turnBusy)kotlinx.coroutines.delay(if(options.pageTurnEffect=="simulated")240 else 180)
         turnBusy=false
@@ -133,22 +149,23 @@ internal fun NativePagedReader(
         val titleStyle=bodyStyle.copy(fontSize=textLayout.titleFontSizeSp.sp,lineHeight=(textLayout.titleFontSizeSp*1.4f).sp,
             textIndent=TextIndent.None,fontWeight=FontWeight.Bold,textAlign=TextAlign.Center)
         val key=PageLayoutKey(bookId,chapterId,revision,width.coerceAtLeast(1),height.coerceAtLeast(1),
-            "$bodyStyle:${density.density}:${density.fontScale}:${options.emptyLine}:${options.wordSpacing}:${options.showImages}:${options.removeDuplicateLines}",images.hashCode().toString())
+            "$bodyStyle:${density.density}:${density.fontScale}:${options.emptyLine}:${options.wordSpacing}:${options.showImages}:${options.removeDuplicateLines}:$chineseVariant",images.hashCode().toString())
         LaunchedEffect(key) {
             if(width<=0||height<=0)return@LaunchedEffect
             val ticket=generation.request(key)
             measuring=true
             error=null
             try {
-                val oldAnchor=anchor ?: if(!initialized)withContext(Dispatchers.IO){store.load(bookId,chapterId)}else null
+                val oldAnchor=anchor ?: if(!initialized&&legacyAnchor!=null)withContext(Dispatchers.IO){store.load(bookId,chapterId)}else null
+                val oldDocument=measured?.document
                 val result=withContext(Dispatchers.Default) {
-                    val document=chapterDocumentFromContent(bookId,chapterId,original,derived,revision,options.showImages,options.removeDuplicateLines)
+                    val document=chapterDocumentFromContent(bookId,chapterId,original,derived,revision,options.showImages,options.removeDuplicateLines,chineseVariant,options.wordSpacing)
                     measureChapterDocument(document,key,measurer,bodyStyle,titleStyle,
                         paragraphSpacingPx=with(density){textLayout.paragraphSpacingDp.dp.toPx()},
                         headingSpacingPx=with(density){textLayout.titleBottomSpacingDp.dp.toPx()},imageDimensions=images)
                 }
                 if(!generation.isCurrent(ticket))return@LaunchedEffect
-                val restored=oldAnchor ?: legacyAnchor?.let { legacy ->
+                val restored=oldAnchor?.let{remapReaderAnchor(it,oldDocument,result.document)} ?: legacyAnchor?.let { legacy ->
                     result.document.blocks.getOrNull(legacy.itemIndexWithinChapter)?.let { block ->
                         val text=result.textLayouts[block.id]
                         val line=if(text!=null)text.getLineForVerticalPosition(legacy.itemScrollOffsetPx.toFloat()) else 0
@@ -159,18 +176,22 @@ internal fun NativePagedReader(
                     else restored?.let(result.plan::pageForAnchor) ?: 0
                 measured=result
                 anchor=result.plan.pages[pageIndex].startAnchor
+                navigator=ReaderPageNavigator(result.plan,anchor)
                 initialized=true
             } catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled}
             catch(failure:Exception){if(generation.isCurrent(ticket))error=failure.message ?: "分页失败，请调整字号后重试"}
             finally {if(generation.isCurrent(ticket))measuring=false}
         }
         LaunchedEffect(followText,measured) {
-            val query=followText?.takeIf(String::isNotBlank) ?: return@LaunchedEffect
+            val query=followText?.takeIf(String::isNotBlank)?.let{convertChineseVariantText(it,chineseVariant)} ?: return@LaunchedEffect
             val current=measured ?: return@LaunchedEffect
-            val block=current.document.blocks.filterIsInstance<ChapterDocumentBlock.Paragraph>().firstOrNull {it.text.text.contains(query)} ?: return@LaunchedEffect
-            val target=ReaderAnchor(bookId,chapterId,block.id,block.text.text.indexOf(query))
+            val block=current.document.blocks.filterIsInstance<ChapterDocumentBlock.Paragraph>().firstNotNullOfOrNull {paragraph->
+                readerSpokenTextRange(paragraph.text.text,query)?.let{paragraph to it.first}
+            } ?: return@LaunchedEffect
+            val target=ReaderAnchor(bookId,chapterId,block.first.id,block.second)
             pageIndex=current.plan.pageForAnchor(target)
             anchor=current.plan.pages[pageIndex].startAnchor
+            navigator?.jump(current.plan,anchor)
             showComments=false
         }
         LaunchedEffect(anchor) {
@@ -207,23 +228,53 @@ internal fun NativePagedReader(
                             else->fadeIn(tween(150)) togetherWith fadeOut(tween(150))
                         }
                     }) { visiblePage ->
+                    Box(Modifier.fillMaxSize().background(background)) {
+                        backgroundImageUri?.let{uri->AsyncImage(model=uri,contentDescription=null,contentScale=ContentScale.Crop,
+                            modifier=Modifier.fillMaxSize().graphicsLayer{alpha=.14f})}
                     PagedChapterCanvas(current,visiblePage,textColor,
-                        Modifier.fillMaxSize().background(background).pointerInput(bookId,chapterId) {
+                        Modifier.fillMaxSize().pointerInput(bookId,chapterId,touchSlop) {
+                            var distance=0f
+                            detectHorizontalDragGestures(
+                                onDragStart={distance=0f},onDragCancel={distance=0f},
+                                onDragEnd={
+                                    if(kotlin.math.abs(distance)>=maxOf(touchSlop*3,size.width*.15f))latestMove(if(distance<0)1 else -1)
+                                    distance=0f
+                                },
+                                onHorizontalDrag={change,delta->distance+=delta;change.consume()},
+                            )
+                        }.pointerInput(bookId,chapterId) {
                             detectTapGestures(onTap={latestTap(it.x/size.width,it.y/size.height)})
-                        }) { image, placement ->
-                        AsyncImage(model=ImageRequest.Builder(context).data(image.url).crossfade(false).build(),
-                            contentDescription=image.alt ?: "正文插图，长按查看原图",contentScale=ContentScale.Fit,
-                            modifier=placement.longPressOnly(touchSlop){onPreview(ReaderContentBlock.Image(image.url,image.alt,image.originalUrl),image.alt ?: "正文插图")},
-                            onSuccess={success->
-                                val drawable=success.result.drawable
-                                if(drawable.intrinsicWidth>0&&drawable.intrinsicHeight>0) {
-                                    val value=ImageDimensions(drawable.intrinsicWidth,drawable.intrinsicHeight)
-                                    if(images[image.id]!=value)images=images+(image.id to value)
-                                }
-                            })
+                        },highlightText=highlightText?.let{convertChineseVariantText(it,chineseVariant)}) { image, placement ->
+                        PageIllustration(image,placement,textColor,
+                            onPreview={onPreview(ReaderContentBlock.Image(image.url,image.alt,image.originalUrl),image.alt ?: "正文插图")},
+                            onDimensions={value->if(images[image.id]!=value)images=images+(image.id to value)})
+                    }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun PageIllustration(image:ChapterDocumentBlock.Image,placement:Modifier,textColor:Color,onPreview:()->Unit,onDimensions:(ImageDimensions)->Unit) {
+    val context=LocalContext.current
+    val touchSlop=LocalViewConfiguration.current.touchSlop
+    var retry by remember(image.url){mutableIntStateOf(0)}
+    Box(placement.longPressOnly(touchSlop,onPreview),contentAlignment=Alignment.Center) {
+        key(image.url,retry) {
+            SubcomposeAsyncImage(model=ImageRequest.Builder(context).data(image.url).crossfade(false).build(),
+                contentDescription=image.alt ?: "正文插图，长按查看原图",contentScale=ContentScale.Fit,modifier=Modifier.fillMaxSize(),
+                loading={Column(Modifier.fillMaxSize(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) {
+                    CircularProgressIndicator();Text("正在加载插图",color=textColor)
+                }},
+                error={Column(Modifier.fillMaxSize(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) {
+                    Text("插图加载失败",color=textColor)
+                    TextButton(onClick={retry++}){Text("重试插图")}
+                }},
+                onSuccess={success->success.result.drawable.let{drawable->
+                    if(drawable.intrinsicWidth>0&&drawable.intrinsicHeight>0)onDimensions(ImageDimensions(drawable.intrinsicWidth,drawable.intrinsicHeight))
+                }})
         }
     }
 }

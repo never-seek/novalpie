@@ -70,7 +70,8 @@ class NativeDownloadService:Service() {
     private fun command(action:String)=PendingIntent.getService(this,action.hashCode(),Intent(this,NativeDownloadService::class.java).setAction(action),PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     override fun onBind(intent:Intent?):IBinder?=null
     override fun onDestroy(){scope.cancel();super.onDestroy()}
-    override fun onTimeout(startId:Int){container.downloads.cancel();stopSelf()}
+    override fun onTimeout(startId:Int){container.downloads.interrupt();stopSelf()}
+    override fun onTimeout(startId:Int,fgsType:Int){container.downloads.interrupt();stopSelf()}
     companion object {
         private const val CHANNEL="novalpie-native-downloads"
         private const val ID=7102
@@ -81,6 +82,7 @@ class NativeDownloadService:Service() {
         internal fun start(context:Context,task:DownloadTask) {
             val container=AppContainer.from(context)
             container.refreshEnvironmentFromStores()
+            require(container.environment.token?.let{com.novalpie.nativeapp.data.decodeAuthTokenProfile(it)}?.id==task.accountId){"请使用创建任务的账号继续下载"}
             if(container.downloads.state.value.busy || container.pendingDownload!=null)return
             container.pendingDownload=task
             try{ContextCompat.startForegroundService(context,Intent(context,NativeDownloadService::class.java).setAction(START))}

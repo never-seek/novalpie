@@ -1,5 +1,7 @@
 package com.novalpie.nativeapp.ui
 
+import com.novalpie.nativeapp.feature.profile.UserBlockButton
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -45,7 +47,8 @@ internal fun UserProfileDetailScreen(
     onOpenActivity: (UserActivity) -> Unit,
     onOpenBook: (Long) -> Unit,
     onMessageUser: (Long, String?) -> Unit,
-    onOpenLogin: () -> Unit
+    onOpenLogin: () -> Unit,
+    currentUserId:Long?=null,
 ) {
     val spoilerPreference = LocalForumSpoilerPreference.current
     val stats = (state.checkinStats as? LoadResult.Success)?.value
@@ -67,6 +70,7 @@ internal fun UserProfileDetailScreen(
             }
             is LoadResult.Success -> {
                 item { ProfileHeroCard(state.profile.value, stats) }
+                item {UserBlockButton(state.userId,currentUserId)}
                 item {
                     if (hasAuthToken) {
                         Button(
