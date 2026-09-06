@@ -28,7 +28,7 @@ internal fun DownloadHistoryPanel(accountId:Long,onOpenBook:(Long)->Unit) {
     val state=model.state
     Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(12.dp)) {
         Text("下载记录",style=MaterialTheme.typography.titleLarge)
-        Text("本机 EPUB / TXT · 已完成文件可打开或分享",style=MaterialTheme.typography.bodySmall)
+        Text("EPUB / TXT · 优先系统下载目录；兼容保存的本机文件请在卸载前分享备份",style=MaterialTheme.typography.bodySmall)
         state.message?.let{Text(it,color=MaterialTheme.colorScheme.onSurfaceVariant)}
         if(state.loading)CircularProgressIndicator()
         else if(state.entries.isEmpty())Text("暂无本机下载任务，从书籍详情选择 EPUB 或 TXT 下载")

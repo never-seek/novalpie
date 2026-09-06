@@ -102,7 +102,9 @@ internal fun downloadStatusText(state:DownloadUiState):String {
         DownloadPhase.Packaging->"已整理${task.completedChapters}章 · ${task.completedAssets}张插图"
         DownloadPhase.Saving->"正在保存到下载目录…"
         DownloadPhase.Paused->"下载已暂停"
-        DownloadPhase.Completed->"已保存到下载目录"
+        DownloadPhase.Completed->if(task.destinationUri?.contains(".downloads/local_downloads/")==true)
+            "系统下载目录不可用，已保存到 App 本机下载区，可打开或分享；卸载会移除本机文件"
+            else "已保存到下载目录"
         DownloadPhase.NeedsRetry->"下载被中断，可从检查点重试"
         DownloadPhase.Failed->task.failure ?: "下载失败，可重试"
         DownloadPhase.Cancelled->"已取消，已完成资源可供重试"

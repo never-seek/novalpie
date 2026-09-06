@@ -8,6 +8,7 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="novalpie_native_auth.xml" />
+        <exclude domain="file" path="native-downloads/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="novalpie_native_auth.xml" />

@@ -8,4 +8,6 @@
 -->
 <full-backup-content>
     <exclude domain="sharedpref" path="novalpie_native_auth.xml" />
+    <!-- Large offline exports must not exhaust Android's small cloud-backup quota. -->
+    <exclude domain="file" path="native-downloads/" />
 </full-backup-content>

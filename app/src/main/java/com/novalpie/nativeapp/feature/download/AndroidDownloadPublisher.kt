@@ -9,9 +9,14 @@ import android.provider.OpenableColumns
 import com.novalpie.nativeapp.data.copyNativeDownloadFilePausable
 import java.io.File
 import java.io.IOException
+import androidx.core.content.FileProvider
+import kotlinx.coroutines.CancellationException
 
 /** Publish only a finished file, and remove only the MediaStore row created by this call on failure. */
-internal class AndroidDownloadPublisher(private val context:Context) {
+internal class AndroidDownloadPublisher(
+    private val context:Context,
+    private val localUri:(File)->android.net.Uri={FileProvider.getUriForFile(context,"${context.packageName}.downloads",it)},
+) {
     suspend fun publish(task:DownloadTask,file:File,paused:suspend()->Unit):String {
         require(file.isFile&&file.length()>0){"下载结果为空"}
         val extension=if(task.format==DownloadFormat.Epub)"epub" else "txt"
@@ -36,7 +41,15 @@ internal class AndroidDownloadPublisher(private val context:Context) {
                 val committed=resolver.update(uri,ContentValues().apply{put(MediaStore.Downloads.IS_PENDING,0)},null,null)
                 if(committed<=0)throw IOException("下载文件发布失败")
                 return uri.toString()
-            } catch(failure:Throwable){runCatching{resolver.delete(uri,null,null)};throw failure}
+            } catch(failure:Throwable){
+                runCatching{resolver.delete(uri,null,null)}
+                if(failure is CancellationException)throw failure
+                if(failure !is IOException)throw failure
+                // Some OEM/emulator public FUSE providers reject very large files even though
+                // the app-private archive is already complete. Keep that exact verified file;
+                // history/notification explicitly label this as App-local, not system Downloads.
+                return keepCompletedFileLocally(task,file,name)
+            }
         }
         val root=context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: throw IOException("无法打开下载目录")
         root.mkdirs()
@@ -48,5 +61,18 @@ internal class AndroidDownloadPublisher(private val context:Context) {
             if(!part.renameTo(target))throw IOException("无法发布下载文件")
             return target.toURI().toString()
         } finally {part.delete()}
+    }
+
+    internal fun keepCompletedFileLocally(task:DownloadTask,file:File,name:String):String {
+        val allowedWork=File(context.noBackupFilesDir,"download-work/${task.id}").canonicalFile
+        require(file.canonicalFile.parentFile==allowedWork){"只有本任务的完整打包文件可转存"}
+        val root=File(context.filesDir,"native-downloads").canonicalFile
+        if(!root.isDirectory&&!root.mkdirs())throw IOException("公共目录保存失败，本机下载目录也不可写；完整文件已保留待重试")
+        val destination=File(root,name).canonicalFile
+        require(destination.parentFile==root)
+        if(destination.exists())throw IOException("本机已存在同名下载，完整临时文件已保留")
+        val uri=localUri(destination)
+        if(!file.renameTo(destination))throw IOException("无法转存本机下载；完整临时文件已保留待重试")
+        return uri.toString()
     }
 }
