@@ -69,6 +69,8 @@ data class NativeEpubExportProgress(
 data class NativeDownloadChapterText(
     val title: String,
     val body: String,
+    val originalBody: String? = null,
+    val transformTextNode: ((String) -> String)? = null,
 )
 
 /** Metadata captured during the same pass that copies an asset to its staging file. */
@@ -491,7 +493,8 @@ object NativeEpubArchiveWriter {
                     )
                     val chapterTitle = transformed.title.ifBlank { sourceTitle }
                     val renderedBody = renderBody(
-                        rawBody = transformed.body,
+                        rawBody = transformed.originalBody ?: transformed.body,
+                        transformTextNode = transformed.transformTextNode ?: { it },
                         zip = zip,
                         imageRecords = images,
                         stagedAssets = stagedAssets,
@@ -623,7 +626,17 @@ object NativeEpubArchiveWriter {
                 )
                 writer.write(transformed.title.ifBlank { sourceTitle })
                 writer.write('\n'.code)
-                writer.write(transformed.body)
+                val original = transformed.originalBody
+                val textTransform = transformed.transformTextNode
+                if (original != null && textTransform != null) {
+                    var cursor = 0
+                    imageMatches(original).forEach { image ->
+                        writer.write(textTransform(original.substring(cursor, image.range.first)))
+                        writer.write(original.substring(image.range.first, image.range.last + 1))
+                        cursor = image.range.last + 1
+                    }
+                    writer.write(textTransform(original.substring(cursor)))
+                } else writer.write(transformed.body)
                 writer.write('\n'.code)
                 nextChapterIndex += 1
             }
@@ -658,6 +671,7 @@ object NativeEpubArchiveWriter {
 
     private suspend fun renderBody(
         rawBody: String,
+        transformTextNode: (String) -> String,
         zip: ZipOutputStream,
         imageRecords: MutableList<ImageRecord>,
         stagedAssets: NativeEpubStagedAssetCache,
@@ -669,7 +683,7 @@ object NativeEpubArchiveWriter {
         onImageResult: (url: String, succeeded: Boolean) -> Unit,
     ): String {
         val matches = imageMatches(rawBody)
-        if (matches.isEmpty()) return paragraphs(escapeXml(rawBody))
+        if (matches.isEmpty()) return paragraphs(escapeXml(transformTextNode(rawBody)))
 
         // Fetch assets concurrently, but keep ZIP writes below in source order. This mirrors the
         // website's six-worker image phase without allowing completion order to change chapter
@@ -687,7 +701,7 @@ object NativeEpubArchiveWriter {
         var cursor = 0
         for (match in matches) {
             awaitIfPaused()
-            rendered.append(escapeXml(rawBody.substring(cursor, match.range.first)))
+            rendered.append(escapeXml(transformTextNode(rawBody.substring(cursor, match.range.first))))
             val url = match.url
             // A failed first staging attempt must be retried for this occurrence, just as the
             // website retries each descriptor independently. Successful staged bytes are shared.
@@ -714,7 +728,7 @@ object NativeEpubArchiveWriter {
             rendered.append(token)
             cursor = match.range.last + 1
         }
-        rendered.append(escapeXml(rawBody.substring(cursor)))
+        rendered.append(escapeXml(transformTextNode(rawBody.substring(cursor))))
 
         val tokenPattern = Regex("${Regex.escape(IMAGE_TOKEN_PREFIX)}(\\d+)${Regex.escape(IMAGE_TOKEN_SUFFIX)}")
         val withImages = tokenPattern.replace(rendered.toString()) { result ->

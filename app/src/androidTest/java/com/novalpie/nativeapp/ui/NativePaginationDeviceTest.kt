@@ -19,6 +19,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.assertCountEquals
 import com.novalpie.nativeapp.feature.reader.pagination.NativePagedReader
 import com.novalpie.nativeapp.model.ReaderContent
 import com.novalpie.nativeapp.model.ReaderViewportAnchor
@@ -30,6 +31,25 @@ import java.util.concurrent.atomic.AtomicReference
 
 class NativePaginationDeviceTest {
     @get:Rule val compose=createAndroidComposeRule<com.novalpie.nativeapp.audit.ReaderTestActivity>()
+
+    @Test fun replacementMarkupStaysTextAndReflowDoesNotInventAnIllustrationPage() {
+        val chapterId = System.currentTimeMillis()
+        val original = ReaderContent(null, "<p>前面 <b>Alice</b> 后面</p>", "test")
+        val rules = ReaderReplacementState(novelId = 900109, personalRules = listOf(
+            com.novalpie.nativeapp.model.ReaderReplacementRule("fixture", 900109, "Alice", "**名字** ![文字](https://host.test/one.png)"),
+        ))
+        val derived = effectiveReaderChapterContent(com.novalpie.nativeapp.model.ReaderChapterContent(chapterId, null, original), 1, rules).content
+        val anchor = AtomicReference<ReaderViewportAnchor?>()
+        compose.setContent { MaterialTheme {
+            NativePagedReader(900109, chapterId, original, derived, ReaderUiOptions(pageTurnMode = true, pageTurnEffect = "none", showComments = false),
+                ReaderChapterEntryPosition.Start, null, FontFamily.Default, Color.Black, Color.White, false, false,
+                onTap = { _, _ -> }, onBoundary = {}, registerTurn = {}, onAnchor = { anchor.set(it) }, onPreview = { _, _ -> }, modifier = Modifier.fillMaxSize()) {}
+        } }
+        compose.waitUntil(15000) { anchor.get() != null }
+        compose.onNodeWithText("**名字**", substring = true).assertExists()
+        compose.onNodeWithText("![文字](https://host.test/one.png)", substring = true).assertExists()
+        compose.onAllNodesWithText("插图加载失败").assertCountEquals(0)
+    }
 
     @Test fun failedPageIllustrationHasAnExplicitRetryInsteadOfAnEmptyPage() {
         val chapterId=System.currentTimeMillis()

@@ -31,3 +31,10 @@ APK `830903ddf5a3eb4f371cc7b77ce92053eebf4f83694085488597dfba6482291e`，MuMu An
 - `OK (1 test)` 39.306秒，总测试核心15.55秒（先读取准备不在核心计时内）。报告`beta7-device/20260906-public-replacement-report.json`；门禁`20260906-public-replacement-live.{json,log}`含安装包hash。
 - 结束删除精确新建规则ID及四个本次公开下载URI，随后GET确认无该规则，`ruleRemoved=true`；本机pending清理检查点不存在。没有修改用户原有规则/原始章节，没有把读取正文写入报告。
 - 这是实际API/管线/服务导出验收；正文显示和TTS文本判定在App真实管线中完成，不冒充用户触控了所有规则UI按钮，实际规则UI及R8终验仍待。
+
+## 文字节点边界（后续开发中）
+
+- `ReaderDerivedStructureTest`21963四项2红，实际旧路径把替换输出`![...](...)`解析成图、`**...**`解析成新格式；旧源强调/标签实体控制样本保持通过。
+- 现增加仅内存`ReaderTextDerivation`，`readerBlocksForContent`先解析原章结构，再在已有文字/格式节点间派生，保持原图片块与span范围。原缓存序列化不保存派生字段。前台阅读与后台TTS使用同一入口；67261相关定向已通过。
+- `DownloadReplacementStructureTest`87890确认替换能触发额外图片请求。EPUB改为原文先切图、再对文字区段调用冻结规则，不再对替换后字符串重新找图；73820相关用例通过。
+- TXT标签字符被HTML转义的边界58838先失败，当前改为输出原图标记+替换后的原样可见文本，与EPUB的XML编码分开。74945全量/打包正在运行，未安装此节点改动。

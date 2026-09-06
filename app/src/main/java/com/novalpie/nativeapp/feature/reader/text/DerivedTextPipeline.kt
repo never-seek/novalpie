@@ -16,6 +16,21 @@ internal data class DerivedTextResult(
  * Replacement output is text, with a narrow compatibility exception for line-break syntax.
  */
 internal object DerivedTextPipeline {
+    /** Input has already been decoded/parsed. Never decode entities or interpret output markup. */
+    fun transformVisibleText(original: String, rules: List<ReaderReplacementRule>, chapterOrder: Int?): String {
+        if (rules.isEmpty()) return original
+        val result = StringBuilder(original.length)
+        var cursor = 0
+        val urls = Regex("https?://[^\\s<>\"']+", RegexOption.IGNORE_CASE)
+        fun append(until: Int) {
+            if (until > cursor) result.append(breakTag.replace(
+                applyReaderReplacementRules(original.substring(cursor, until), rules, chapterOrder, ReaderReplacementTarget.Content).text, "\n"))
+        }
+        urls.findAll(original).forEach { url -> append(url.range.first); result.append(url.value); cursor = url.range.last + 1 }
+        append(original.length)
+        return result.toString()
+    }
+
     fun transform(original: String, rules: List<ReaderReplacementRule>, chapterOrder: Int?): DerivedTextResult =
         transformNodes(original, rules, chapterOrder, 0)
 

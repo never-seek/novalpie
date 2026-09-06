@@ -42,7 +42,8 @@ internal class WebsiteSpeechChapterSource(context: Context, private val api: Nov
         val text=DerivedTextPipeline.transform(content.content,rules,order)
         val titleRules=readerReplacementRulesForChapter(replacement,order,ReaderReplacementTarget.Title)
         val title=applyReaderReplacementRules(content.title ?: chapters[index].title,titleRules,order,ReaderReplacementTarget.Title).text
-        buildSpeechChapter(bookId,chapterId,api.bookDetail(bookId).title,content.copy(title=title,content=text.markup),
+        buildSpeechChapter(bookId,chapterId,api.bookDetail(bookId).title,content.copy(title=title,content=text.markup,
+            textDerivation=com.novalpie.nativeapp.model.ReaderTextDerivation(content.content,rules,order)),
             chapters.getOrNull(index+1)?.id,order,chapters.size,store.revision(bookId),settings.showImages,settings.removeDuplicateLines)
     }
 }

@@ -52,11 +52,13 @@ internal fun readerImagePlaceholdersFromIllustrations(
         }
 
 /** Keeps source text, Markdown/HTML images, and separately supplied illustrations in one order. */
-internal fun readerBlocksForContent(content: ReaderContent): List<ReaderContentBlock> =
-    readerBlocksFromContent(
-        raw = content.content,
+internal fun readerBlocksForContent(content: ReaderContent): List<ReaderContentBlock> {
+    val blocks = readerBlocksFromContent(
+        raw = content.textDerivation?.originalMarkup ?: content.content,
         imagePlaceholders = readerImagePlaceholdersFromIllustrations(content.illustrations)
     )
+    return content.textDerivation?.let { com.novalpie.nativeapp.feature.reader.text.deriveReaderTextNodes(blocks, it) } ?: blocks
+}
 
 internal fun readerBlocksFromContent(
     raw: String,

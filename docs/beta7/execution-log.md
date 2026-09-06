@@ -186,3 +186,8 @@
 - 本批节点8279cf4本地提交完成，未push。下一规则账号隔离14278两项先红；每账号key+原登录归属+保留legacy副本迁移实现，无原身份时不自动迁给新登录者，增加确认恢复本书旧规则为停用/无远端ID副本的入口。30853三项隔离/六项store定向正在跑，尚未安装；新增ReplacementUpgradeDeviceTest在设备内部核对原账号旧规则/开关，不导出实际规则或登录材料。MuMu仍shutdown、最后830903dd包。
 - 30853规则隔离+store9项通过，94223全量128 suites/987 tests/0失败、Debug/AndroidTest通过（3m7s）。APK41FF74ED99D3E09E053E711FE0ABAE5DC69BD1C287882B9D250968106EBDFC1B已无损install-r，App冷启8.565s；ReplacementUpgradeDeviceTest实机通过：legacyBook1/legacyRule1/loaded1，逐字段比对/原开关保留、外账号为空、备份仍在。报告20260906-replacement-upgrade-report.json。79176同包Reader回归进行；尚不是整个Beta6→最终优化Beta7升级验收。
 - 79176同包Reader7项通过，87186 lint通过（6m55s），规则账号迁移切片保存本地提交；未push/未发布。MuMu当前shutdown、最后41ff74ed包，下一片派生正文结构保护的实测回归及剩余领域继续。
+- 节点a5b1eb4已保存。正文结构21963四项2红：替换新Markdown图被下载、星号变格式。新增ReaderTextDerivation（仅内存、不入原文cache）先解析原图/格式再逐文字节点应用，阅读与后台TTS共享；67261结构/替换/句群定向通过。下载同问题87890单项先红，EPUB改原图匹配优先、文字callback后替换，当前73820相关回归执行，尚未打包/安装这一切片。又全文读15相关交流并分类，公共规则旧样本清理保持完成。
+- 73820节点/EPUB/替换定向通过；TXT纯文本标签输出58838先红，分开原图标记与纯文本callback后74945全量130suites/993tests/0失败、Debug/AndroidTest通过（4m55s）。新APK1D29E7940885331FB6CFD04F1EB3BDCE06A3D9F21D7CF9527AB9D3B08CC0EB83，MuMu正在launch待安装，再跑新增节点分页/真实TTS/公共规则4导出，尚未实机此包。
+- 1d29e794节点版已install-r，冷启4.243s；NativePaginationDeviceTest新增替换输出保留文本等共5项MuMu通过（20260906-text-nodes-paging）。现同包真实353686第8→9章TTS回归进行，再做公共规则导出；不能运行中安装或重启。
+- 76012真书TTS复测目录GET SocketTimeout；97531只读重试源准备60s超时，均未开始TTS。电脑同代理目录15s超时，直连403/cloudflare；现有Edge连接不存在且未确认前台挑战页，cf-human-cursor按技能限制未盲点运行。没有发布新QA规则；已有成功830903公共规则报告不能冒充新节点包验证。25572离线Reader7全通过，系统TTS同包测试继续；网络问题单独记录，其他工程推进。
+- 51693同包中文系统TTS2项真实发声通过；44301 lint通过（5m4s），与993全量/5分页/7Reader构成节点保护分片证据。节点新包联网TTS/公共规则导出仍受代理源读取超时影响未闭环；本地保存切片不发布，MuMu当前shutdown、最后1d29e794包。下一性能片将连续阅读解析/替换移到后台，避免追加整章在Main上执行。

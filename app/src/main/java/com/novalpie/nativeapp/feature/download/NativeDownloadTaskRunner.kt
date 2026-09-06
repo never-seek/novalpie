@@ -5,6 +5,7 @@ import com.novalpie.nativeapp.data.*
 import com.novalpie.nativeapp.model.LoadResult
 import com.novalpie.nativeapp.ui.ReaderReplacementState
 import com.novalpie.nativeapp.ui.mergeReaderReplacementPersonalRules
+import com.novalpie.nativeapp.ui.toNativeDownloadText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -84,7 +85,7 @@ internal class NativeDownloadTaskRunner(
                 if(transformed==null)source.inputStream().use{copyNativeDownloadStream(it,output,control::awaitIfPaused)}
                 else source.reader(Charsets.UTF_8).use {reader->output.writer(Charsets.UTF_8).use {writer->
                     NativeEpubArchiveWriter.writeTransformedTxt(writer,reader,{number,title,body->
-                        transformed.transform(number,title,body).let{NativeDownloadChapterText(it.title,it.body)}
+                        transformed.transform(number,title,body).toNativeDownloadText()
                     },control::awaitIfPaused)
                 }}
             }
@@ -96,7 +97,7 @@ internal class NativeDownloadTaskRunner(
             finished.outputStream().use {output->source.reader(Charsets.UTF_8).use {reader->
                 NativeEpubArchiveWriter.write(output,NativeEpubMetadata(task.title,metadata.author ?: "未知作者",metadata.description.orEmpty(),coverUrl=metadata.coverUrl),reader,
                     openAsset={url->openResource(assets,url,control,resourceLocks)},
-                    transformChapter={number,title,body->transformed?.transform(number,title,body)?.let{NativeDownloadChapterText(it.title,it.body)} ?: NativeDownloadChapterText(title,body)},
+                    transformChapter={number,title,body->transformed?.transform(number,title,body)?.toNativeDownloadText() ?: NativeDownloadChapterText(title,body)},
                     imageConcurrency=effectiveDownloadConcurrency(task.requestedConcurrency,Runtime.getRuntime().maxMemory()/4),
                     stagingDirectory=staging,awaitIfPaused=control::awaitIfPaused,
                     onProgress={progress->

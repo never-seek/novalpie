@@ -61,8 +61,12 @@ data class ReaderContent(
     val title: String?,
     val content: String,
     val source: String,
-    val illustrations: List<ChapterIllustration> = emptyList()
+    val illustrations: List<ChapterIllustration> = emptyList(),
+    /** In-memory only: parse authored structure before applying reader text rules. Never cached. */
+    val textDerivation: ReaderTextDerivation? = null,
 )
+
+data class ReaderTextDerivation(val originalMarkup: String, val rules: List<ReaderReplacementRule>, val chapterOrder: Int?)
 
 /** A chapter payload kept in the reader's continuous-scroll window. */
 data class ReaderChapterContent(

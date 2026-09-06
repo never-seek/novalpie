@@ -134,6 +134,12 @@ internal fun readerReplacementModeTag(state: ReaderReplacementState): String =
 internal data class ReaderDownloadReplacementText(
     val title: String,
     val body: String,
+    val originalBody: String? = null,
+    val transformTextNode: ((String) -> String)? = null,
+)
+
+internal fun ReaderDownloadReplacementText.toNativeDownloadText() = com.novalpie.nativeapp.data.NativeDownloadChapterText(
+    title, body, originalBody, transformTextNode,
 )
 
 /**
@@ -173,6 +179,8 @@ internal data class ReaderDownloadReplacementSnapshot private constructor(
                 rules = bodyRules,
                 chapterOrder = chapterOrder,
             ).text,
+            originalBody = body,
+            transformTextNode = { text -> DerivedTextPipeline.transformVisibleText(text, bodyRules, chapterOrder) },
         )
     }
 
@@ -481,7 +489,10 @@ internal fun effectiveReaderChapterContent(
         title = titleResult.text,
         content = chapter.content.copy(
             title = titleResult.text,
-            content = contentResult.text,
+              content = contentResult.text,
+              textDerivation = if (contentRules.isEmpty()) null else com.novalpie.nativeapp.model.ReaderTextDerivation(
+                  chapter.content.textDerivation?.originalMarkup ?: chapter.content.content, contentRules.toList(), chapterOrder,
+              ),
         ),
     )
 }
