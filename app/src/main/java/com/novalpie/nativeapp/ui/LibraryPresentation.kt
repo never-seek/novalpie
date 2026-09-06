@@ -13,25 +13,27 @@ internal data class LibraryOverview(
 
 internal fun libraryOverview(
     hasAuthToken: Boolean,
-    favoriteCount: Int,
-    groupCount: Int,
-    recentCount: Int,
-    pageCount: Int = 0
+    favoriteCount: Int?,
+    groupCount: Int?,
+    recentCount: Int?,
+    pageCount: Int? = 0
 ): LibraryOverview = LibraryOverview(
     title = "我的收藏",
     subtitle = "继续阅读、收藏分组和最近进度",
-    syncLabel = if (hasAuthToken) "已同步" else "未同步",
+    syncLabel = if (!hasAuthToken) "未同步" else if(favoriteCount!=null) "已同步" else "待同步",
     stats = listOf(
-        "收藏 $favoriteCount",
-        "分组 $groupCount",
-        "最近 $recentCount",
-        "总页数 ${pageCount.coerceAtLeast(0)}",
+        "收藏 ${favoriteCount ?: "—"}",
+        "分组 ${groupCount ?: "—"}",
+        "最近 ${recentCount ?: "—"}",
+        "总页数 ${pageCount?.coerceAtLeast(0) ?: "—"}",
     )
 )
 
 /** A paged shelf must report the source total, never merely the currently rendered page size. */
 internal fun collectionFavoriteCount(sourceTotal: Int?, loadedCount: Int): Int =
     sourceTotal?.coerceAtLeast(0) ?: loadedCount.coerceAtLeast(0)
+
+internal fun collectionCountLabel(count:Int?):String=count?.let{"$it 条目"} ?: "待加载"
 
 internal fun libraryContinueTitle(hasProgress: Boolean): String =
     if (hasProgress) "继续阅读" else "阅读记录"

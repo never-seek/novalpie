@@ -13,6 +13,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LibraryPresentationTest {
+    @Test fun anUnloadedLibrarySectionMustNotPretendToContainZeroBooksOrBeSynced() {
+        val overview=libraryOverview(true,null,null,null,pageCount=null)
+        assertEquals("待同步",overview.syncLabel)
+        assertEquals(listOf("收藏 —","分组 —","最近 —","总页数 —"),overview.stats)
+        assertEquals("待加载",collectionCountLabel(null))
+        assertEquals("0 条目",collectionCountLabel(0))
+    }
     @Test
     fun libraryOverviewReadsLikeAReaderLibraryClient() {
         assertEquals(

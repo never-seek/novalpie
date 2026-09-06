@@ -3574,13 +3574,10 @@ private fun HomeScreen(
             LibraryOverviewBlock(
                 overview = libraryOverview(
                     hasAuthToken = hasAuthToken,
-                    favoriteCount = collectionFavoriteCount(
-                        sourceTotal = state.favoriteTotal,
-                        loadedCount = (state.favoriteEntries as? LoadResult.Success)?.value?.size ?: 0,
-                    ),
-                    groupCount = (state.groups as? LoadResult.Success)?.value?.size ?: 0,
-                    recentCount = (state.history as? LoadResult.Success)?.value?.size ?: 0,
-                    pageCount = state.favoritesPage,
+                    favoriteCount = state.favoriteTotal ?: (state.favoriteEntries as? LoadResult.Success)?.value?.size,
+                    groupCount = (state.groups as? LoadResult.Success)?.value?.size,
+                    recentCount = (state.history as? LoadResult.Success)?.value?.size,
+                    pageCount = if(state.favoriteEntries is LoadResult.Success)state.favoritesPage else null,
                 ),
                 onRefresh = onRefresh,
                 onOpenSearch = onOpenSearch,

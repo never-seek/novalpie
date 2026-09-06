@@ -325,7 +325,8 @@ internal fun validateReaderReplacementRule(rule: ReaderReplacementRule): ReaderR
         Pattern.compile(source, regexFlagsToPatternFlags(rule.regexFlags))
         ReaderReplacementValidation(true)
     } catch (_: PatternSyntaxException) {
-        ReaderReplacementValidation(false, "正则表达式格式无效")
+        val unsupported=listOf("(?=","(?!","(?<=","(?<!").any(source::contains)||Regex("\\\\[1-9]").containsMatchIn(source)
+        ReaderReplacementValidation(false,if(unsupported)"本机安全正则暂不支持前后瞻或模式内反向引用；此规则未应用。可复制后改写，替换结果中的 \$1 分组可用。"else"正则表达式格式无效")
     }
 }
 

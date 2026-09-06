@@ -46,3 +46,13 @@
 - `DELETE /api/v2/users/{userId}/block`：解除屏蔽；无请求正文。
 
 个人页的本人专属 tab 在源码条件 `m.value` 下追加 `settings/personalization/blocked-users`。不能只按管理员账号一份 UI 推断普通用户入口。
+
+## 2026-09-06 当前补充
+
+- 社区反馈456帖已全文/嵌套回复逐条分类，见community-review.md；读完不等于App验收通过。
+- App帖最新4621附图已直接在原网页查看（341×50）：还是`&lt;例子1&gt;`实体露码，不是新的下载或分页诉求。
+- 屏蔽原生功能已迁独立Repository/ViewModel，真实空列表与网页一致；未真实屏蔽其他用户资产。查询/POST/DELETE仍按单独证据标记。
+- 下载外站资源以前携带站点认证、卡住socket取消要等completion，两回归已复现修复；fixture测试全绿，未打印或导出用户会话。
+- Native分页横滑曾漏接、图失败仅空白曾复现，当前开发包四项MuMu回归通过。启动ANR在重启MuMu、无构建并发后未复现，但最终稳定性门禁仍未关闭。
+- forum feed已独立状态，分区page/query/scroll恢复、切账号缓存隔离4项测试；实际帖子/书评流需继续不同分区分页和返回验收。
+- 派生文本尚需追加边界测试：替换输出新Markdown图片/格式符时不能变成新结构，尤其plain-text路径再走Markdown解析；目前HTML属性/原图片URL保护已有测试，不等同整个Markdown AST已安全隔离。

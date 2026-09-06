@@ -432,11 +432,8 @@ private fun FavoritesSourceTabs(
     state: HomeState,
     onSelectTab: (FavoritesContentTab) -> Unit
 ) {
-    val favoriteCount = collectionFavoriteCount(
-        sourceTotal = state.favoriteTotal,
-        loadedCount = (state.favoriteEntries as? LoadResult.Success)?.value?.size ?: 0,
-    )
-    val historyCount = (state.history as? LoadResult.Success)?.value?.size ?: 0
+    val favoriteCount = state.favoriteTotal ?: (state.favoriteEntries as? LoadResult.Success)?.value?.size
+    val historyCount = (state.history as? LoadResult.Success)?.value?.size
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(NovalPieRadius.md),
@@ -468,7 +465,7 @@ private fun FavoritesSourceTab(
     modifier: Modifier,
     selected: Boolean,
     label: String,
-    count: Int,
+    count: Int?,
     icon: ImageVector,
     onClick: () -> Unit
 ) {
@@ -489,7 +486,7 @@ private fun FavoritesSourceTab(
             Icon(icon, contentDescription = null, modifier = Modifier.size(NovalPieSize.iconSm))
             Column {
                 Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                Text("$count 条目", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                Text(collectionCountLabel(count), style = MaterialTheme.typography.labelSmall, maxLines = 1)
             }
         }
     }

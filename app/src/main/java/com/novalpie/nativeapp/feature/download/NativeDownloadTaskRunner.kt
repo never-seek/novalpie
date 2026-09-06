@@ -60,7 +60,8 @@ internal class NativeDownloadTaskRunner(
         val source=File(work,"source.txt")
         val sourceComplete=File(work,"source.complete")
         val sourceReceipt=sourceComplete.readTextOrNull()?.let{runCatching{JSONObject(it)}.getOrNull()}
-        if(!source.isFile||sourceReceipt?.optLong("bytes")!=source.length()||sourceReceipt.optString("sha256")!=fileDigest(source)) {
+        val sourceWasReused=source.isFile&&sourceReceipt?.optLong("bytes")==source.length()&&sourceReceipt.optString("sha256")==fileDigest(source)
+        if(!sourceWasReused) {
             val part=File(work,"source.part")
             part.outputStream().use {output->api.streamDownloadFile(ticket!!){input->copyNativeDownloadStream(input,output,control::awaitIfPaused)}}
             if(part.length()==0L)throw IOException("源站返回空下载文件")
@@ -71,6 +72,11 @@ internal class NativeDownloadTaskRunner(
         control.awaitIfPaused()
         val transformed=current.get().replacementSnapshot?.let(DownloadRulesSnapshot::decode)
         val finished=File(work,if(task.format==DownloadFormat.Epub)"result.epub"else"result.txt")
+        val packageCheckpoint=DownloadPackageCheckpoint(work)
+        val sourceDigest=JSONObject(sourceComplete.readText()).getString("sha256")
+        val reusePackage=packageCheckpoint.reusable(current.get(),finished,sourceDigest,control) ||
+            (sourceWasReused&&packageCheckpoint.adoptVerifiedLegacy(current.get(),finished,sourceDigest,control))
+        if(!reusePackage) {
         save(current.get().copy(phase=DownloadPhase.Packaging))
         var lastProgress=NativeEpubExportProgress()
         if(task.format==DownloadFormat.Txt) {
@@ -112,6 +118,8 @@ internal class NativeDownloadTaskRunner(
             if(lastProgress.failedImages>0)throw IOException("${lastProgress.failedImages}张插图失败，文件未发布；重试将复用已完成资源")
         }
         if(!finished.isFile||finished.length()==0L)throw IOException("下载生成结果为空")
+        packageCheckpoint.record(current.get(),finished,sourceDigest,control)
+        }
         save(current.get().copy(phase=DownloadPhase.Saving))
         val destination=publish(current.get(),finished,control::awaitIfPaused)
         val completed=current.get().copy(phase=DownloadPhase.Completed,destinationUri=destination,failure=null,updatedAt=System.currentTimeMillis())

@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
@@ -314,6 +316,7 @@ private fun ReaderReplacementRuleRow(
     onDelete: (() -> Unit)?,
     onClone: (() -> Unit)? = null,
 ) {
+    val validation=remember(rule){validateReaderReplacementRule(rule)}
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -332,6 +335,7 @@ private fun ReaderReplacementRuleRow(
                 color = metaColor,
                 style = MaterialTheme.typography.labelSmall,
             )
+            if(!validation.isValid)Text(validation.message ?: "此规则未应用",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.labelSmall)
         }
         onClone?.let { clone ->
             IconButton(onClick = clone) {
@@ -388,7 +392,7 @@ private fun ReaderReplacementRuleEditor(
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier=Modifier.verticalScroll(rememberScrollState()),verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (publishToWebsite) {
                     Text(
                         "将同步到网站并进入本书全部规则。公共发布仅支持全书正文规则，替换后不能为空。",
@@ -408,7 +412,8 @@ private fun ReaderReplacementRuleEditor(
                     onValueChange = { replacement = it },
                     label = { Text("替换后（留空可删除）") },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
+                    minLines = 2,
+                    maxLines = 5,
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(

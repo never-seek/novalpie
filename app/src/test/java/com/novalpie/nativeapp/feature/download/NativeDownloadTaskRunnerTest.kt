@@ -78,10 +78,14 @@ class NativeDownloadTaskRunnerTest {
             var fail=true
             val runner=NativeDownloadTaskRunner(app,NovalPieApi(baseUrl=server.url("/").toString().trimEnd('/'))){_,file,_->
                 assertEquals(source,file.readText())
-                if(fail)error("磁盘保存失败") else "content://downloads/test"
+                if(fail)error("磁盘保存失败")
+                assertEquals("重试保存不应该重建已完成包",1234000L,file.lastModified())
+                "content://downloads/test"
             }
             assertTrue(runCatching{runner.run(last,NativeDownloadControl()){last=it}}.isFailure)
             assertEquals("test.txt",last.authorizationFile)
+            val packaged=java.io.File(app.noBackupFilesDir,"download-work/${last.id}/result.txt")
+            assertTrue(packaged.setLastModified(1234000))
             fail=false
             val completed=runner.run(last.copy(phase=DownloadPhase.NeedsRetry),NativeDownloadControl()){last=it}
             assertEquals(DownloadPhase.Completed,completed.phase)

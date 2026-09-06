@@ -53,11 +53,12 @@ internal suspend fun copyNativeDownloadFilePausable(
 ): Long {
     if (!source.isFile) throw IOException("下载临时文件不存在")
     val expected = source.length()
-    val copied = source.inputStream().buffered(NATIVE_DOWNLOAD_COPY_BUFFER_BYTES).use { input ->
+    val copied = source.inputStream().buffered(64*1024).use { input ->
         copyNativeDownloadStream(
             input = input,
             output = output,
             awaitIfPaused = awaitIfPaused,
+            bufferBytes = 64*1024,
         )
     }
     if (copied != expected) {
@@ -99,10 +100,11 @@ internal suspend fun copyNativeDownloadStream(
     input: InputStream,
     output: OutputStream,
     awaitIfPaused: suspend () -> Unit = {},
+    bufferBytes:Int=NATIVE_DOWNLOAD_COPY_BUFFER_BYTES,
 ): Long {
     var copied = 0L
     input.use { source ->
-        val buffer = ByteArray(NATIVE_DOWNLOAD_COPY_BUFFER_BYTES)
+        val buffer = ByteArray(bufferBytes.coerceIn(4096,NATIVE_DOWNLOAD_COPY_BUFFER_BYTES))
         while (true) {
             awaitIfPaused()
             val read = source.read(buffer)

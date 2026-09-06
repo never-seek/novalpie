@@ -177,6 +177,7 @@ class NovalPieApi(
     @Volatile
     private var cachedReaderSession: ReaderSessionKey? = null
     private val readerSessionLock = Any()
+    private val readerServerClock=ReaderServerClock()
     @Volatile private var verifiedWebSessionRevision:Long?=null
 
     /** Current source contract: POST /api/sessions with a provider-agnostic CAPTCHA token. */
@@ -2825,6 +2826,12 @@ class NovalPieApi(
         val startedAt = SystemClock.elapsedRealtime()
         try {
             callClient.newCall(request).execute().use { response ->
+                // Only an authenticated HTTPS response from the configured origin can supply
+                // source time. External image hosts and redirects cannot influence signatures.
+                val origin=baseUrl.toHttpUrl()
+                if(response.request.url.isHttps&&response.request.url.host==origin.host&&response.request.url.port==origin.port) {
+                    readerServerClock.observe(response.header("Date"),SystemClock.elapsedRealtime())
+                }
                 val responseBody = response.body?.string().orEmpty()
                 requireCurrentEnvironment(requestRevision)
                 if (!response.isSuccessful) {
@@ -3704,7 +3711,7 @@ class NovalPieApi(
         }
 
     private fun readerSignatureHeaders(): Map<String, String> {
-        val timestamp = (System.currentTimeMillis() / 1000L).toString()
+        val timestamp = readerServerClock.epochSeconds(System.currentTimeMillis(),SystemClock.elapsedRealtime()).toString()
         val nonce = randomNonce()
         val rotatedTimestamp = rotateLeft3Hex(timestamp)
         val digest = md5Hex("$USER_AGENT$timestamp$nonce")

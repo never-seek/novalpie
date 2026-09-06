@@ -13,6 +13,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeDownloadTransferTest {
+    @Test fun publishingUsesSmallWritesCompatibleWithAndroidFuseProviders()=runBlocking {
+        val file=File.createTempFile("fuse-publication", ".txt")
+        val bytes=ByteArray(1024*1024+3){it.toByte()}
+        file.writeBytes(bytes)
+        val collected=ByteArrayOutputStream()
+        val sink=object:java.io.OutputStream(){
+            override fun write(value:Int){collected.write(value)}
+            override fun write(value:ByteArray,offset:Int,length:Int){
+                assertTrue("FUSE单次写入不能超过64KiB",length<=64*1024)
+                collected.write(value,offset,length)
+            }
+        }
+        try{copyNativeDownloadFilePausable(file,sink);assertArrayEquals(bytes,collected.toByteArray())}finally{file.delete()}
+    }
     @Test
     fun pausedDownloadWaitsUntilTheControlIsResumed() = runBlocking {
         val control = NativeDownloadControl()

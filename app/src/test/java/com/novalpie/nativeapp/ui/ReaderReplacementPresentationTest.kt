@@ -15,6 +15,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReaderReplacementPresentationTest {
+    @Test fun unsupportedWebsiteLookaroundHasAnExplicitCompatibilityExplanation() {
+        val invalid=ReaderReplacementRule("lookaround",1,"(?=Alice)","X",isRegex=true)
+        val validation=validateReaderReplacementRule(invalid)
+        assertFalse(validation.isValid)
+        assertTrue(validation.message.orEmpty().contains("前后瞻"))
+        assertTrue(validation.message.orEmpty().contains("未应用"))
+    }
     @Test
     fun readerAndExportBothPreserveHtmlAttributesAndEveryImageMarkerDuringReplacement() {
         val rules=listOf(rule(id="rename",source="Alice",replacement="艾丽丝"))
