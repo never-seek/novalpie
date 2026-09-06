@@ -191,3 +191,6 @@
 - 1d29e794节点版已install-r，冷启4.243s；NativePaginationDeviceTest新增替换输出保留文本等共5项MuMu通过（20260906-text-nodes-paging）。现同包真实353686第8→9章TTS回归进行，再做公共规则导出；不能运行中安装或重启。
 - 76012真书TTS复测目录GET SocketTimeout；97531只读重试源准备60s超时，均未开始TTS。电脑同代理目录15s超时，直连403/cloudflare；现有Edge连接不存在且未确认前台挑战页，cf-human-cursor按技能限制未盲点运行。没有发布新QA规则；已有成功830903公共规则报告不能冒充新节点包验证。25572离线Reader7全通过，系统TTS同包测试继续；网络问题单独记录，其他工程推进。
 - 51693同包中文系统TTS2项真实发声通过；44301 lint通过（5m4s），与993全量/5分页/7Reader构成节点保护分片证据。节点新包联网TTS/公共规则导出仍受代理源读取超时影响未闭环；本地保存切片不发布，MuMu当前shutdown、最后1d29e794包。下一性能片将连续阅读解析/替换移到后台，避免追加整章在Main上执行。
+- 节点保护本地提交98262f7（未push）。ReaderDocumentPreparerTest先缺类型68190编译红；新增Dispatchers.Default解析/规则派生、每书8条LRU缓存、复用追加前的章节，root从remember同步解析改LaunchedEffect后台发布。63570少ensureActive import编译红已修，13404定向3项+Debug/AndroidTest正在执行；当前未装此性能切片，完整长滚动内存窗口/性能3轮仍待。
+- 13404后台解析3测试/Debug/AndroidTest通过（4m32s），APK8A00D82EECCADA19C0B7A7F25822448B83B3B9244665FB96CBF95265E23ED7DA已install-r，冷启6.463s，3172 Reader7项通过。电脑目录GET恢复200，但64294真书TTS正文获取超时（未播）。现有登录WebView Playwright对照：/book/353686/6072567根html/body/nuxt高度0、reader-content文本0，无CF挑战；证据20260907-mumu-web/reader-live-network-compare.json，不冒充源正文已成功。MuMu现在shutdown让全量unit/lint，继续其他模块。
+- 74143全量131suites/996tests/0失败、lint0错误3警告通过（7m43s），后台解析切片本地保存，不push。下一个人页拆独立ViewModel，修正共享profile序号导致分区卡Loading/保存草稿覆盖/写后读失败误报等问题；当前MuMu仍shutdown，无活跃任务或公共临时规则。

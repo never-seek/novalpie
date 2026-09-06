@@ -270,6 +270,7 @@ import com.novalpie.nativeapp.model.UserProfile
 import com.novalpie.nativeapp.data.ReaderTtsSettings
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 private const val FORUM_LINK_ANNOTATION = "forum_link"
@@ -6281,30 +6282,31 @@ internal fun ReaderScreen(
             readableContent?.let { listOf(ReaderChapterContent(state.chapterId, it.title, it)) }.orEmpty()
         }
     }
-    val chapterContents = remember(sourceChapterContents, chapters, replacementState.revision) {
-        sourceChapterContents.map { chapter ->
-            val chapterOrder = readerChapterOrderForId(
-                chapterId = chapter.chapterId,
-                chapters = chapters,
-            )
-            effectiveReaderChapterContent(
-                chapter = chapter,
-                chapterOrder = chapterOrder,
-                replacementState = replacementState,
-            )
-        }
+    val documentPreparer = remember(state.bookId) { com.novalpie.nativeapp.feature.reader.text.ReaderDocumentPreparer() }
+    val emptyBodyLayout = remember { ReaderBodyLayout(emptyList(), emptyList()) }
+    var preparedBody by remember(state.bookId) { mutableStateOf(emptyBodyLayout) }
+    var preparingBody by remember(state.bookId) { mutableStateOf(false) }
+    var preparationError by remember(state.bookId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(sourceChapterContents, chapters, replacementState.personalRules, replacementState.sharedRules,
+        replacementState.hiddenSharedRuleIds, replacementState.sharedRulesEnabled,
+        options.removeDuplicateLines, options.showImages, options.showComments) {
+        preparingBody = true
+        preparationError = null
+        try {
+            val result = documentPreparer.prepare(state.bookId, sourceChapterContents, chapters, replacementState, options)
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            preparedBody = result
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { preparationError = "正文排版失败，请重试" }
+        finally { preparingBody = false }
     }
-    // The body parser is comparatively expensive for long HTML/Markdown chapters. Keep its
-    // rendered block order stable for this content/options revision so scroll observation can use
-    // a precomputed item index instead of reparsing every scroll position.
-    val readerBodyLayout = remember(
-        chapterContents,
-        options.removeDuplicateLines,
-        options.showImages,
-        options.showComments,
-    ) {
-        readerBodyLayoutForContents(chapterContents, options)
-    }
+    // Keep visible chapters while an appended chapter prepares, but never show an old chapter
+    // after an explicit directory jump. LaunchedEffect cancellation rejects outdated rule layouts.
+    val sourceChapterIds = remember(sourceChapterContents) { sourceChapterContents.map { it.chapterId }.toSet() }
+    val readerBodyLayout = preparedBody.takeIf { layout ->
+        layout.chapters.isNotEmpty() && layout.chapters.all { it.chapter.chapterId in sourceChapterIds }
+    } ?: emptyBodyLayout
+    val chapterContents = remember(readerBodyLayout) { readerBodyLayout.chapters.map { it.chapter } }
     // Keep the viewport observer alive while the infinite-scroll window grows.  Restarting it on
     // every append can lose the one layout transition where the first item changes from chapter N
     // to chapter N+1, leaving the footer stuck on the route's opening chapter.
@@ -6379,7 +6381,7 @@ internal fun ReaderScreen(
     // out at all; the only escape was the system back gesture, which is not an affordance. Chrome is
     // therefore not optional while there is nothing to read: it is forced on for Idle, Loading and
     // Error, and only becomes tap-to-toggle once a body has actually arrived.
-    val hasReadableBody = state.content is LoadResult.Success
+    val hasReadableBody = state.content is LoadResult.Success && readerBodyLayout.chapters.isNotEmpty()
     // A page-boundary route replacement briefly changes `state.content` to Loading. Keep the
     // reader immersive in that transient state: forcing the rail open causes the visible side-menu
     // flash reported when automatic next/previous chapter loading starts. A cold reader still gets
@@ -6637,7 +6639,9 @@ internal fun ReaderScreen(
         state.nextChapterWaitingForCatalog,
         state.nextChapterExhausted,
         chapterContents.size,
+        preparingBody,
     ) {
+        if (preparingBody) return@LaunchedEffect
         val catalogReady = state.chapters is LoadResult.Success
         if (
             readerContinuousScrollCanRequestNext(
@@ -7215,6 +7219,10 @@ internal fun ReaderScreen(
                         onRetry = onRetry,
                     ) }
                     is LoadResult.Success -> {
+                        if (readerBodyLayout.chapters.isEmpty()) item {
+                            if (preparationError != null) NpErrorState(message = preparationError!!, retryLabel = "重试排版", onRetry = onRetry)
+                            else LibraryLoadingBlock("正在排版正文")
+                        }
                         readerBodyItems(
                             layout = readerBodyLayout,
                             options = options,
@@ -7238,7 +7246,7 @@ internal fun ReaderScreen(
                         )
                     }
             }
-                if (hasReadableBody && continuousScrollEnabled) {
+                if (hasReadableBody && continuousScrollEnabled && !preparingBody) {
                     item(key = readerEndSentinelKey) {
                         ReaderInfiniteScrollEnd(
                             state = state,

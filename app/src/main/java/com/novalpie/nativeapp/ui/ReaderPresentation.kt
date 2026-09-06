@@ -733,6 +733,10 @@ internal fun readerBodyLayoutForContents(
             ),
         )
     }
+    return readerBodyLayoutFromPreparedChapters(chapters, options)
+}
+
+internal fun readerBodyLayoutFromPreparedChapters(chapters: List<ReaderBodyLayoutChapter>, options: ReaderUiOptions): ReaderBodyLayout {
     val textLocations = mutableListOf<ReaderBodyTextLocation>()
     val itemLocations = buildList {
         chapters.forEach { chapterLayout ->
