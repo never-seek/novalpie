@@ -38,3 +38,7 @@ APK `830903ddf5a3eb4f371cc7b77ce92053eebf4f83694085488597dfba6482291e`，MuMu An
 - 现增加仅内存`ReaderTextDerivation`，`readerBlocksForContent`先解析原章结构，再在已有文字/格式节点间派生，保持原图片块与span范围。原缓存序列化不保存派生字段。前台阅读与后台TTS使用同一入口；67261相关定向已通过。
 - `DownloadReplacementStructureTest`87890确认替换能触发额外图片请求。EPUB改为原文先切图、再对文字区段调用冻结规则，不再对替换后字符串重新找图；73820相关用例通过。
 - TXT标签字符被HTML转义的边界58838先失败，当前改为输出原图标记+替换后的原样可见文本，与EPUB的XML编码分开。74945全量/打包正在运行，未安装此节点改动。
+
+## 2026-09-07 新节点管线真实公共规则/导出复验
+
+c04ee1e3...8436cee4当前开发APK已无损安装，`20260907-workspace-public-replacement.{json,log}`通过，核心10376ms。使用相同受控小书353686/6072567，真实创建唯一标记规则、共享GET可见、按书关闭/单条隐藏均去除标记、TTS派生含标记、原章未改；TXT/EPUB×原文/替换四组合全部符合选择，EPUB两包均11个XHTML覆盖9章。结束四个测试URI与新建规则全部删，回读确认`ruleRemoved=true`。报告`20260907-workspace-public-replacement-report.json`，不替代最终R8或全部规则编辑器触控验收。

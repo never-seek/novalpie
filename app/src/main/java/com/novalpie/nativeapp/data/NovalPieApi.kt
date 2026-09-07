@@ -1428,6 +1428,47 @@ class NovalPieApi(
         normalizeWorkspaceApiConfigs(requireSuccessfulEnvelope(get("/api/workspace/apis"), "工作区配置读取被拒绝"))
     }
 
+    internal suspend fun translationChapterCandidates(bookId: Long): List<com.novalpie.nativeapp.feature.workspace.TranslationChapter> = withContext(Dispatchers.IO) {
+        require(bookId > 0)
+        val raw = requireSuccessfulEnvelope(get("/api/translations/chapters/raw", mapOf("novel_id" to bookId.toString(), "untranslated_only" to "1")), "无法读取待翻译章节")
+        extractArray(raw, "data", "chapters", "items").mapIndexed { index, value ->
+            val row = value as? JSONObject ?: error("待翻译章节格式异常")
+            com.novalpie.nativeapp.feature.workspace.TranslationChapter(
+                row.firstLongOrNull("id", "chapter_id")?.takeIf { it > 0 } ?: error("待翻译章节缺少ID"),
+                row.firstStringOrNull("title", "chapter_title") ?: error("待翻译章节缺少标题"),
+                row.intOrNull("chapter_number") ?: index + 1,
+                row.firstStringOrNull("translate_status", "status") ?: error("待翻译章节缺少状态"))
+        }
+    }
+
+    internal suspend fun prepareWorkspaceTranslation(bookId: Long, chapterId: Long): com.novalpie.nativeapp.feature.workspace.TranslationPreparation = withContext(Dispatchers.IO) {
+        val raw = requireSuccessfulEnvelope(get("/api/translations/prepare", mapOf("novel_id" to bookId.toString(), "chapter_id" to chapterId.toString())), "准备翻译被拒绝")
+        val root = unwrapObject(raw, "data", "result")
+        require(root.firstLongOrNull("novel_id", "book_id") == bookId && root.firstLongOrNull("chapter_id") == chapterId) { "准备翻译返回了错误的书籍或章节" }
+        val array = root.optJSONArray("chunks") ?: error("翻译准备缺少分块")
+        val chunks = (0 until array.length()).map { index ->
+            val row = array.getJSONObject(index)
+            val glossary = row.optJSONObject("glossary")
+            val pairs = glossary?.keys()?.asSequence()?.mapNotNull { key ->
+                val value = glossary.optJSONObject(key)?.firstStringOrNull("target", "target_name") ?: (glossary.opt(key) as? String)
+                value?.let { key to it }
+            }?.toMap().orEmpty()
+            com.novalpie.nativeapp.feature.workspace.TranslationChunk(row.getInt("index"), row.getString("content"), pairs)
+        }
+        require(chunks.isNotEmpty() && root.optInt("total_chunks", chunks.size) == chunks.size) { "翻译准备分块不完整" }
+        com.novalpie.nativeapp.feature.workspace.TranslationPreparation(bookId, chapterId, root.getString("chapter_title"), chunks)
+    }
+
+    internal suspend fun submitWorkspaceTranslation(bookId: Long, chapterId: Long, content: String, title: String,
+        result: com.novalpie.nativeapp.feature.workspace.TranslationResult, model: String, elapsedMs: Long): Boolean = withContext(Dispatchers.IO) {
+        require(bookId > 0 && chapterId > 0 && content.isNotBlank())
+        val response = post("/api/translations", JSONObject().put("novel_id", bookId).put("chapter_id", chapterId)
+            .put("translated_content", content).put("translated_title", title)
+            .put("terminology_updates", JSONObject().put("table_add", JSONArray(result.additions)).put("table_remove", JSONArray(result.removals)))
+            .put("translation_stats", JSONObject().put("translator_type", "gpt").put("model", model).put("tokens_used", result.tokens).put("translation_time", elapsedMs).put("success", true)))
+        (response as? JSONObject)?.firstBooleanOrNull("success", "ok") ?: error("翻译提交缺少明确确认")
+    }
+
     suspend fun workspaceCookieStatus(): WorkspaceCookieStatus = withContext(Dispatchers.IO) {
         val source = unwrapObject(requireSuccessfulEnvelope(get("/api/workspace/cookie-status"), "工作区状态读取被拒绝"), "data", "result")
         WorkspaceCookieStatus(

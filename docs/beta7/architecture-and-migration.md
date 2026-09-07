@@ -26,6 +26,7 @@
 ## 应用级任务
 
 - TTS：application-scoped playback coordinator + foreground playback service，页面仅订阅状态/发命令；处理 audio focus、耳机断开、锁屏/后台、旧 utterance 回调、跨章首句、暂停恢复与关闭入口。
+- 工作区翻译：单独application-scoped queue与dataSync服务，模型请求和站点协议隔离；TaskStore持久化已完成块/标题/提交状态，命令与阶段更新串行，提交结果未知不重放。旧jobs作为恢复提示而非假运行状态；只用本人显式配置，不拿共享列表中的别人的Key执行。
 - 替换：一条派生文本管线用于正文/TTS/导出，只改 text node，不改 HTML attributes/URL/图片标记；公共规则本书策略和单条屏蔽保留。个人本机停用不得无提示变成远端 DELETE。
 - 下载：download coordinator + foreground data-transfer service；新增持久化 `DownloadTask`/检查点，授权 ticket 与任务身份绑定，任务执行与 Activity/路由分离。进程恢复可继续或明确说明需重试。
 - `DownloadTask` 至少记录任务 ID、书籍 ID、格式、源/替换模式、冻结规则修订、阶段、已完成章节/图资源、失败项、私有工作目录及最终 URI。敏感票据使用既有安全保存边界，不写进公开日志。

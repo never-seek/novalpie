@@ -103,16 +103,19 @@ internal enum class BookDetailMenuAction {
     EditInfo,
     ManageChapters,
     AppendChapters,
+    TranslateInWorkspace,
 }
 
 internal fun bookDetailMenuActions(
     requestNewChapterVisible: Boolean,
     nativeDownloadsVisible: Boolean,
     canManageBook: Boolean,
+    translationVisible: Boolean = false,
 ): List<BookDetailMenuAction> = buildList {
     add(BookDetailMenuAction.Terminology)
     add(BookDetailMenuAction.Share)
     if (requestNewChapterVisible) add(BookDetailMenuAction.RequestNewChapter)
+    if (translationVisible) add(BookDetailMenuAction.TranslateInWorkspace)
     if (nativeDownloadsVisible) {
         add(BookDetailMenuAction.DownloadEpub)
         add(BookDetailMenuAction.DownloadTxt)

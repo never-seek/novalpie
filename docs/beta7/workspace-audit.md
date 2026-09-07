@@ -11,7 +11,7 @@
 
 ## 必须实现的真实翻译流程
 
-旧原生`updateWorkspaceJobStatus`只改local jobs，源码没有实际翻译执行器。此功能仍未完成，不能以UI存在宣称已支持。
+旧原生`updateWorkspaceJobStatus`只改local jobs，原源码没有实际翻译执行器。2026-09-07已新增独立协议、逐块检查点、实际模型调用与完整章节提交、队列和前台服务，正在回归验证；尚未通过实机完整执行，不能以UI存在宣称已验收。
 
 网页真实流程：
 
@@ -40,3 +40,28 @@
 当前data.apiStatus是翻译状态数组，旧原生当汇总object导致全0；36304先红，修为translationCounts与从translators归纳API数。22708全量1019tests/Debug/AndroidTest通过。
 
 MuMu当前开发APK `eac6038ced0d84192f86627991b49e80a8123de318f8abf9d0c35b17b04cd598` 实际显示API383/健康18和7类翻译状态计数；截图`20260907-workspace-status.png`已查看。`WorkspaceDraftDeviceTest`在9862376c与本包两次通过，只用合成数据；实际配置未改，secret未导出。账号无损迁移/未知身份确认恢复已代码测试，完整执行队列仍待实现。
+
+## 2026-09-07 真队列回归（未验收）
+
+- 新`TranslationRunner/Coordinator/Service/TaskStore/CompatibleTranslationModel`；每章全部分块成功才提交，源序合并，保留原行及插图标记，配置只引用ID，任务记录不写入Key/Cookie。
+- 模型请求使用单独client，不继承站点会话；禁自动重试与重定向，8MB响应上限，每次读取当前代理；并发最大8个在途分块。
+- 46263新9项出现3个实际红灯：章节退出待翻列表被误认提交成功、停止掩盖待确认状态、确认后配置删除导致异常。86037修后9项通过。
+- 60263追加账号切换/暂停/多任务并发后16项中2失败；59858保留断言记录实际task.json确认为旧Queued。根因是Android15 AtomicFile的覆盖rename在Windows JVM不具备相同行为，finishWrite仅日志不抛错。生产store增加提交字节读回核验，禁止写入未确认仍继续POST；JVM原子恢复用API28备份算法，安卓15相同行为另设MuMu实文件用例，不以改期望值放行。13558定向19项全部通过。
+- 67679全量1039项只新增畸形术语用例失败；已校验table_add的source_name/target_name/info及table_remove字符串结构，未知删除项不得提交。91994完整unit/Debug/AndroidTest进行中。
+- 工作区任务列表改为单一LazyColumn，长队列不会一次性组合全部卡片；书籍详情按原有来源/登录条件增加本人API自助翻译入口，预填书籍ID并仍要求二次确认。不删除旧功能、不换主题。
+- 尚未执行任何真实模型调用或网站译文写入；不读取/使用别人的共享Key。MuMu仍关闭以供构建使用内存，最新真队列开发APK尚未安装。
+
+### MuMu 当前包验证（2026-09-07 15:49）
+
+`C04EE1E3E8D2200A3F8F5360A3523B1C00FA6D33FC936929DAB2FCB78436CEE4`已无损install-r，77506完整unit1040/Debug/AndroidTest通过。`BackgroundTaskPermissionDeviceTest`实际系统通知弹窗授权后动作只执行一次通过，`TranslationQueueDeviceTest`实际安卓15前台服务：HOME后台→通知暂停→在途块完成落盘但不派下一块→继续→完整提交确认落盘；第二任务提交中停止服务→SubmissionUncertain持久化→普通Resume不再POST，全部通过。源与模型为合成，不声称真实外部模型质量或站点译文写入通过。
+
+证据：`agent-bridge/artifacts/beta7-device/20260907-background-permission-dialog.{json,log}`、`20260907-translation-queue-final.{json,log}`。测试只清理自己cache目录，用户配置、登录和下载保留。临时通知授权在完成后台回归后恢复原设置。
+
+| 接口 | 当前证据级别 | 原生行为 |
+|---|---|---|
+| GET /api/translations/chapters/raw | 当前Nuxt源码发现 + MockWebServer协议验证，未真实读回 | 只选pending/failed/user_translate，不以列表缺项推断先前提交成功 |
+| GET /api/translations/prepare | 源码发现 + 协议验证，未真实读回 | 校验书章身份、完整块数、块序与词表 |
+| POST /api/translations | 源码发现 + 协议验证，未真实写入 | 提交前落盘、完整章提交、明确ack才完成；断线保持SubmissionUncertain |
+| 用户配置的 /chat/completions | 合成HTTP协议测试 | 只发送本人模型Key，不发送站点Cookie；不重定向、不自动重试，可取消、动态代理、响应大小上限 |
+
+2026-09-07 16:26补充：当前c04ee1e3包以原App会话实际GET测试书353686返回0候选，`20260907-workspace-translation-read-report.json`记录candidates=0、prepared=false、writeRequests=0、modelCalls=0。只升级raw接口为空响应实际读取证据，prepare和submit仍未真实写入验收。

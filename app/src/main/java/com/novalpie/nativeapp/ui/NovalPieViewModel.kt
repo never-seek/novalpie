@@ -427,6 +427,7 @@ data class WorkspaceState(
     val failedApiDraft: WorkspaceApiDraft? = null,
     val failedCookieDraft: WorkspaceCookieDraft? = null,
     val hasUnassignedLegacyData: Boolean = false,
+    val translationBookId: Long? = null,
 )
 
 data class UploadDocument(
@@ -4256,6 +4257,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.Workspace))
         loadWorkspace()
     }
+
+    fun openWorkspaceTranslation(bookId: Long) {
+        workspaceState = workspaceState.copy(selectedTab = WorkspaceTab.Queue, translationBookId = bookId)
+        openWorkspace()
+    }
+    fun consumeWorkspaceTranslationBook() { workspaceState = workspaceState.copy(translationBookId = null) }
 
     fun selectWorkspaceTab(tab: WorkspaceTab) {
         workspaceState = workspaceState.copy(selectedTab = tab, actionMessage = null)

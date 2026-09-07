@@ -51,11 +51,26 @@ internal class AppContainer(context: Context) {
         if(revision!=environment.revision) {
             if(playbackDelegate.isInitialized()){pendingSpeech=null;playback.stop()}
             if(downloadsDelegate.isInitialized()){pendingDownload=null;downloads.cancel()}
+            if(translationsDelegate.isInitialized()){pendingTranslation=null;translations.environmentChanged()}
         }
     }
     // An in-process start payload avoids binder limits and never writes chapter prose to Intents.
     var pendingSpeech: PendingSpeech? = null
     var pendingDownload: DownloadTask? = null
+    var pendingTranslation: com.novalpie.nativeapp.feature.workspace.TranslationTask? = null
+    val translationStore by lazy { com.novalpie.nativeapp.feature.workspace.TranslationTaskStore(File(application.noBackupFilesDir, "translation-tasks")) }
+    private val translationsDelegate = lazy {
+        val modelClient = okhttp3.OkHttpClient.Builder().connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS).callTimeout(240, java.util.concurrent.TimeUnit.SECONDS)
+            .retryOnConnectionFailure(false).followRedirects(false).build()
+        com.novalpie.nativeapp.feature.workspace.TranslationCoordinator(applicationScope, translationStore,
+            com.novalpie.nativeapp.feature.workspace.TranslationRunner(com.novalpie.nativeapp.feature.workspace.WebsiteTranslationSource(api),
+                com.novalpie.nativeapp.feature.workspace.CompatibleTranslationModel(modelClient,
+                    { environment.proxy.toProxySelector(isEmulatorRuntime()) }), translationStore),
+            { environment.token?.let { com.novalpie.nativeapp.data.decodeAuthTokenProfile(it)?.id } },
+            { id -> com.novalpie.nativeapp.data.WorkspaceLocalStore(application).loadApis().firstOrNull { it.id == id } })
+    }
+    val translations by translationsDelegate
     val downloadStore by lazy {DownloadTaskStore(File(application.noBackupFilesDir,"download-tasks"))}
     private val downloadsDelegate=lazy {DownloadCoordinator(applicationScope,{task->withContext(Dispatchers.IO){downloadStore.save(task)}},NativeDownloadTaskRunner(application,api))}
     val downloads by downloadsDelegate

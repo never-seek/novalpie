@@ -214,3 +214,9 @@
 - 22708全量138suites/1019tests/0失败、Debug/AndroidTest通过（11m31s，本机资源慢），现在MuMu launch安装统计数组兼容包；配置模块真实页待复验，真实任务执行器尚未实现。
 - EAC6038CED0D84192F86627991B49E80A8123DE318F8ABF9D0C35B17B04CD598统计包已install-r/cold3.727s，真实工作区API383/健康18及7类翻译数量正常（待翻8397、失败54、自助7330、上传暂不可57977等本次值）；截图20260907-workspace-status.png已查看，无secret。35075同包草稿UI再次通过；MuMu现在shutdown让lint，配置本批未commit，真执行器仍下一项。
 - 21522 lint通过（8m19s），工作区配置切片保存本地节点，未push。最后已装eac6038c，1019全量unit/草稿UI/当前源统计实机通过；真实翻译执行器仍下一阶段，MuMu关机无任务运行。
+- 0dbe284后真翻译队列切片：新增Runner/Coordinator/Service/TaskStore/模型协议/UI。46263三红（列表缺项误判成功、停止掩盖不确定、配置删除启动异常）→86037九绿；60263/59858磁盘旧Queued红灯定位Windows AtomicFile覆盖rename差异，生产读回检查点后才继续，JVM旧版备份算法+MuMu15实测分开。13558定向19绿，67679畸形术语新增红灯修后91994全量143suites/1040tests/0failures，Debug/AndroidTest成功。
+- 真队列开发APK0E63206D5A61238C5D0D11862B4BBE78B5F3D0176FEE4167E6D957F0A4AC442E已无损安装，cold6225ms。53410设备测试首先因POST_NOTIFICATIONS原本拒绝而无通知超时；临时授权后83239已走完真实后台暂停/继续/完整checkpoint读回，第二任务因ActivityScenario无法从HOME仅moveToState拉回前台失败，测试改真实启动新Activity。失败原始日志保留，不能当全测试通过。
+- 真实工作区新队列空态截图20260907-native-translation-queue.png已看，用户无本人API，未执行外部模型/源站译文写入；旧配置/登录保留。通知权限已恢复原拒绝状态，MuMu shutdown。新增首次后台任务通知请求（下载/TTS/翻译）+可拒绝降级说明、selected任务tab自动滚入视野、通知弹窗真实测试；77506全量/Debug/AndroidTest正在构建，尚未安装该改动。
+- 77506全量1040tests/Debug/AndroidTest成功（10m9s），C04EE1E3...8436CEE4已无损安装。1007通知真实授权弹窗通过、51375真FGS队列完整测试通过：后台暂停/继续/读回完成，提交中停止保留不确定，普通resume不重发。MuMu在线，临时通知已授权供回归后恢复；无真实模型/站点译文写入，源码未commit/push；继续源GET与Reader回归。
+- 用户继续后16:22 MuMu已关闭、ADB连接消失；正常launch重连，未清数据。当前c04ee1e3包真实工作区raw GET353686返回0候选（prepared=false，不冒充prepare完成）；11933分页5项、29468Reader7项通过。31290真书TTS353686第8尾47→第9首0/440段、后台熄屏/暂停恢复/本地章9通过13.401s，report已导出。
+- 55839同c04ee1e3包公共规则真实创建/共享GET/按书停用/逐条屏蔽/派生TTS/原文未变/原文替换×TXT/EPUB4导出全通过10.376s；临时规则与4URI已删，report.ruleRemoved=true。截图20260907-native-translation-queue-final已看，选中tab完整显示。通知授权已恢复原拒绝状态，MuMu shutdown，85404 lint执行中；无活跃下载/翻译或临时公共规则，无GitHub写入。

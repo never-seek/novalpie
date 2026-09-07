@@ -12,6 +12,14 @@ import org.junit.Test
 
 class BookDetailPresentationTest {
     @Test
+    fun selfTranslationIsAnExplicitOptionalEntryAndDoesNotRemoveExistingActions() {
+        val baseline = bookDetailMenuActions(true, true, false)
+        val withTranslation = bookDetailMenuActions(true, true, false, translationVisible = true)
+        assertEquals(baseline, withTranslation.filterNot { it == BookDetailMenuAction.TranslateInWorkspace })
+        assertTrue(withTranslation.contains(BookDetailMenuAction.TranslateInWorkspace))
+        assertFalse(baseline.contains(BookDetailMenuAction.TranslateInWorkspace))
+    }
+    @Test
     fun bookManagementActionsArePlacedBehindTheDetailMenu() {
         assertEquals(
             BookDetailManagementPlacement.BottomMenu,

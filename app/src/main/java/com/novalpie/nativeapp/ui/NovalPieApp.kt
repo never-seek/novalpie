@@ -779,6 +779,7 @@ fun NovalPieApp(
                     onDeleteCookie = viewModel::deleteWorkspaceCookie,
                     onUpdateJobStatus = viewModel::updateWorkspaceJobStatus,
                     onDeleteJob = viewModel::deleteWorkspaceJob,
+                    onTranslationBookConsumed = viewModel::consumeWorkspaceTranslationBook,
                     onDismissFailedDrafts = viewModel::dismissWorkspaceFailedDrafts,
                     onRestoreLegacyData = viewModel::restoreWorkspaceLegacy,
                     onOpenUpload = viewModel::openUploadBook
@@ -963,6 +964,7 @@ fun NovalPieApp(
                     onOpenReader = viewModel::openReader,
                     onToggleFavorite = viewModel::toggleBookDetailFavorite,
                     onOpenTerminology = { viewModel.openTerminology(route.bookId) },
+                    onTranslateBook = { viewModel.openWorkspaceTranslation(route.bookId) },
                     onEditInfo = { viewModel.openBookEditInfo(route.bookId) },
                     onManageChapters = { viewModel.openBookChapters(route.bookId) },
                     onAppendChapters = { viewModel.openBookAppend(route.bookId) },
@@ -5974,6 +5976,7 @@ private fun BookDetailScreen(
     onOpenReader: (Long, Long) -> Unit,
     onToggleFavorite: () -> Unit,
     onOpenTerminology: () -> Unit,
+    onTranslateBook: () -> Unit,
     onEditInfo: () -> Unit,
     onManageChapters: () -> Unit,
     onAppendChapters: () -> Unit,
@@ -6211,6 +6214,7 @@ private fun BookDetailScreen(
                 ),
                 requestNewChapterLoading = state.requestNewChapterLoading,
                 onRequestNewChapter = onRequestNewChapter,
+                onTranslateBook = onTranslateBook,
                 onOpenWeb = onOpenWeb,
             )
         }
@@ -6987,6 +6991,7 @@ internal fun ReaderScreen(
             .copy(recordProgress=recordPlaybackProgress)
     }
 
+    val startBackgroundTask = com.novalpie.nativeapp.core.rememberBackgroundTaskAction()
     fun startTts() {
         if (!hasReadableBody) return
         val visibleId = visibleReaderChapterId ?: state.chapterId
@@ -6996,15 +7001,16 @@ internal fun ReaderScreen(
         val visibleIndex = if(pageTurnEnabled)nativePagedAnchor?.itemIndexWithinChapter ?: 0 else
             readerViewportAnchorForBodyItem(readerBodyLayout,listState.firstVisibleItemIndex,listState.firstVisibleItemScrollOffset)?.itemIndexWithinChapter ?: 0
         val first = document.positions.indexOfFirst {it.itemIndexWithinChapter>=visibleIndex}.takeIf{it>=0} ?: document.segments.lastIndex.coerceAtLeast(0)
-        runCatching { ReaderPlaybackService.start(context,document,ttsSettings,first) }
+        startBackgroundTask { runCatching { ReaderPlaybackService.start(context,document,ttsSettings,first) }
             .onFailure { Toast.makeText(context,"无法启动后台听书：${it.message}",Toast.LENGTH_LONG).show() }
+        }
     }
 
     fun toggleTts() {
         if (!speechBelongsToBook || speech.status in setOf(SpeechStatus.Stopped,SpeechStatus.Error)) startTts()
         else when (speech.status) {
             SpeechStatus.Speaking -> playback.pause()
-            SpeechStatus.Paused -> ReaderPlaybackService.resume(context)
+            SpeechStatus.Paused -> startBackgroundTask { ReaderPlaybackService.resume(context) }
             SpeechStatus.Loading -> playback.stop()
             else -> Unit
         }
@@ -10292,9 +10298,11 @@ private fun BookDetailBottomActionBar(
     requestNewChapterVisible: Boolean,
     requestNewChapterLoading: Boolean,
     onRequestNewChapter: () -> Unit,
+    onTranslateBook: () -> Unit,
     onOpenWeb: () -> Unit,
 ) {
     val context = LocalContext.current
+    val startBackgroundTask = com.novalpie.nativeapp.core.rememberBackgroundTaskAction()
     val isFavorited = (favoriteStatus as? LoadResult.Success)?.value?.isFavorited
     val downloadStateForBook = nativeEpubDownloadState.takeIf { it.bookId == bookId }
     var menuExpanded by remember(bookId) { mutableStateOf(false) }
@@ -10305,6 +10313,7 @@ private fun BookDetailBottomActionBar(
         requestNewChapterVisible = requestNewChapterVisible,
         nativeDownloadsVisible = nativeDownloadsVisible,
         canManageBook = canManageBook,
+        translationVisible = requestNewChapterVisible,
     )
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -10493,6 +10502,7 @@ private fun BookDetailBottomActionBar(
                                 nativeEpubDownloadState.format == NativeBookDownloadFormat.Txt,
                         )
                         BookDetailMenuAction.OpenWeb -> "打开网页详情"
+                        BookDetailMenuAction.TranslateInWorkspace -> "自助翻译（本人 API）"
                         BookDetailMenuAction.EditInfo -> "编辑信息"
                         BookDetailMenuAction.ManageChapters -> "章节管理"
                         BookDetailMenuAction.AppendChapters -> "追加章节"
@@ -10517,6 +10527,7 @@ private fun BookDetailBottomActionBar(
                                         )
                                     }
                                     BookDetailMenuAction.RequestNewChapter -> onRequestNewChapter()
+                                    BookDetailMenuAction.TranslateInWorkspace -> onTranslateBook()
                                     BookDetailMenuAction.DownloadEpub -> {
                                         downloadChoiceFormat = NativeBookDownloadFormat.Epub
                                     }
@@ -10586,8 +10597,10 @@ private fun BookDetailBottomActionBar(
                     onClick = {
                         val applyRules = downloadApplyReplacementRules
                         downloadChoiceFormat = null
-                        if (format == NativeBookDownloadFormat.Epub) onDownloadEpub(applyRules)
-                        else onDownloadTxt(applyRules)
+                        startBackgroundTask {
+                            if (format == NativeBookDownloadFormat.Epub) onDownloadEpub(applyRules)
+                            else onDownloadTxt(applyRules)
+                        }
                     },
                 ) { Text("开始下载") }
             },

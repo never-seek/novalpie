@@ -40,6 +40,7 @@
             android:name="com.novalpie.nativeapp.feature.download.NativeDownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <service android:name="com.novalpie.nativeapp.feature.workspace.TranslationService" android:exported="false" android:foregroundServiceType="dataSync" />
         <activity
             android:name="com.novalpie.nativeapp.MainActivity"
             android:exported="true"

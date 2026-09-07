@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -47,6 +48,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -90,6 +92,7 @@ internal fun WorkspaceScreen(
     onOpenUpload: () -> Unit,
     onDismissFailedDrafts: () -> Unit = {},
     onRestoreLegacyData: () -> Unit = {},
+    onTranslationBookConsumed: () -> Unit = {},
 ) {
     var retryApi by remember { mutableStateOf<WorkspaceApiDraft?>(null) }
     var retryCookie by remember { mutableStateOf<WorkspaceCookieDraft?>(null) }
@@ -100,6 +103,17 @@ internal fun WorkspaceScreen(
         dismissButton = { TextButton(onClick = { restoreLegacy = false }) { Text("取消") } })
     retryApi?.let { draft -> WorkspaceApiDialog(draft, { retryApi = null }) { retryApi = null; onSaveApi(it) } }
     retryCookie?.let { draft -> WorkspaceCookieDialog(draft, { retryCookie = null }) { retryCookie = null; onSaveCookie(it) } }
+    if (state.selectedTab == WorkspaceTab.Queue) {
+        com.novalpie.nativeapp.feature.workspace.TranslationQueuePanel(state.localApis, state.translationBookId, state.jobs,
+            onBookRequestConsumed = onTranslationBookConsumed,
+            header = {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    WorkspaceHero(state, onRefresh)
+                    WorkspaceTabs(state.selectedTab, onTabSelected)
+                }
+            })
+        return
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 40.dp),
@@ -107,15 +121,7 @@ internal fun WorkspaceScreen(
     ) {
         item { WorkspaceHero(state, onRefresh) }
         item {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(WorkspaceTab.values().toList()) { tab ->
-                    FilterChip(
-                        selected = state.selectedTab == tab,
-                        onClick = { onTabSelected(tab) },
-                        label = { Text(tab.label) }
-                    )
-                }
-            }
+            WorkspaceTabs(state.selectedTab, onTabSelected)
         }
         state.actionMessage?.let { item { WorkspaceNotice(it) } }
         if (state.hasUnassignedLegacyData) item { OutlinedButton(onClick = { restoreLegacy = true }) { Text("恢复未归属的旧工作区配置") } }
@@ -142,8 +148,20 @@ internal fun WorkspaceScreen(
                 onToggleServerApi = onToggleServerApi
             )
             WorkspaceTab.Cookies -> workspaceCookieItems(state, onSaveCookie, onToggleCookie, onDeleteCookie)
-            WorkspaceTab.Queue -> workspaceQueueItems(state.jobs, onUpdateJobStatus, onDeleteJob, onOpenUpload)
+            WorkspaceTab.Queue -> {
+                // The queue uses its own single lazy list above.
+            }
         }
+    }
+}
+
+@Composable
+private fun WorkspaceTabs(selected: WorkspaceTab, onSelected: (WorkspaceTab) -> Unit) {
+    val scroll = rememberLazyListState()
+    LaunchedEffect(selected) { scroll.animateScrollToItem(selected.ordinal) }
+    LazyRow(state = scroll, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(WorkspaceTab.values().toList()) { tab -> FilterChip(selected = selected == tab,
+            onClick = { onSelected(tab) }, label = { Text(tab.label) }) }
     }
 }
 

@@ -23,6 +23,7 @@ internal fun DownloadHistoryPanel(accountId:Long,onOpenBook:(Long)->Unit) {
     val container=remember(context){AppContainer.from(context)}
     val revision by container.environment.revisions.collectAsState()
     val currentDownload by container.downloads.state.collectAsState()
+    val startBackgroundTask = com.novalpie.nativeapp.core.rememberBackgroundTaskAction()
     val model=remember(accountId,revision){DownloadHistoryViewModel(accountId,container.downloadStore,container.downloads){NativeDownloadService.start(context,it)}}
     DisposableEffect(model){onDispose{model.dispose()}}
     val state=model.state
@@ -47,7 +48,7 @@ internal fun DownloadHistoryPanel(accountId:Long,onOpenBook:(Long)->Unit) {
                             TextButton(onClick={model.togglePause(task)}){Text(if(task.phase==DownloadPhase.Paused)"继续"else"暂停")}
                             TextButton(onClick={model.cancel(task)}){Text("取消")}
                         } else if(downloadCanResume(task,false)) {
-                            TextButton(enabled=!currentDownload.busy,onClick={model.continueTask(task)}){Text("继续下载")}
+                            TextButton(enabled=!currentDownload.busy,onClick={startBackgroundTask { model.continueTask(task) }}){Text("继续下载")}
                         }
                         if(downloadCanOpen(task)) {
                             TextButton(onClick={runCatching{openCompletedDownload(context,task,false)}.onFailure{model.feedback("文件已移走或没有可用阅读器，请到系统下载目录查看")}}){Text("打开")}
