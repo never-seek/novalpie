@@ -3,29 +3,36 @@ package com.novalpie.nativeapp.ui
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceError
+import android.webkit.WebResourceResponse
+import android.webkit.SslErrorHandler
+import android.net.http.SslError
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -46,9 +53,17 @@ fun AuthCaptchaScreen(
     onCancel: () -> Unit
 ) {
     val latestOnToken by rememberUpdatedState(onToken)
-    val webStateKey = proxySettings.summary()
+    var attempt by remember { mutableIntStateOf(0) }
+    val webStateKey = "${proxySettings.summary()}:captcha:$attempt"
     var sourceNotice by remember(webStateKey) { mutableStateOf<String?>(null) }
     var pageLoading by remember(webStateKey) { mutableStateOf(true) }
+    LaunchedEffect(webStateKey, pageLoading) {
+        if (pageLoading) {
+            kotlinx.coroutines.delay(20000)
+            pageLoading = false
+            sourceNotice = "验证页面加载超时。可在下方继续验证、切换网站提供的验证方式，或重试。"
+        }
+    }
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             "请只完成验证码验证。账号密码仍在上一页的原生表单中填写。",
@@ -64,7 +79,13 @@ fun AuthCaptchaScreen(
                 color = MaterialTheme.colorScheme.error
             )
         }
+        if (pageLoading) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            Text(captchaLoadingStatusLabel(true).orEmpty(), style = MaterialTheme.typography.bodySmall)
+        }
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+            key(webStateKey) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { context ->
@@ -74,8 +95,19 @@ fun AuthCaptchaScreen(
                         settings.domStorageEnabled = true
                         settings.loadsImagesAutomatically = true
                         settings.blockNetworkImage = false
+                        settings.allowFileAccess = false
+                        settings.allowContentAccess = false
                         installCaptchaAnonymousSourceGuard(this)
-                        addJavascriptInterface(CaptchaBridge { latestOnToken(it) }, "NovalPieCaptcha")
+                        if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                            var delivered = false
+                            WebViewCompat.addWebMessageListener(this, "NovalPieCaptcha", setOf(CAPTCHA_SOURCE_ORIGIN)) { _, message, origin, mainFrame, _ ->
+                                val token = message.data?.trim().orEmpty()
+                                if (!delivered && mainFrame && origin.scheme == "https" && origin.host == "novalpie.cc" && token.length in 20..16384) {
+                                    delivered = true
+                                    latestOnToken(token)
+                                }
+                            }
+                        } else sourceNotice = "系统 WebView 太旧，无法安全回填验证结果；请更新 Android System WebView 后重试。"
                         webViewClient = captchaWebViewClient(
                             onSourceNotice = { sourceNotice = it },
                             onPageLoadingChanged = { pageLoading = it }
@@ -88,6 +120,12 @@ fun AuthCaptchaScreen(
                             useEmulatorFallback = isEmulatorRuntime()
                         )
                     }
+                },
+                onRelease = { webView ->
+                    webView.tag = null
+                    webView.stopLoading()
+                    if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) WebViewCompat.removeWebMessageListener(webView, "NovalPieCaptcha")
+                    webView.destroy()
                 },
                 update = { webView ->
                     if (!webViewMatchesRequest(webView.tag, webStateKey, CAPTCHA_LOGIN_URL)) {
@@ -104,32 +142,11 @@ fun AuthCaptchaScreen(
                     }
                 }
             )
-            if (pageLoading) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.surface
-                ) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            CircularProgressIndicator()
-                            Text(
-                                captchaLoadingStatusLabel(isLoading = true).orEmpty(),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
             }
         }
-        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Text("取消验证")
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            TextButton(onClick = { attempt++ }, modifier = Modifier.weight(1f)) { Text("重新加载验证") }
+            OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("取消验证") }
         }
     }
 }
@@ -173,7 +190,7 @@ internal fun installCaptchaAnonymousSourceGuard(webView: WebView): Boolean {
  * remains a fallback for old WebViews that cannot install that guard. Native auth is never read or
  * changed by either path.
  */
-private fun captchaWebViewClient(
+internal fun captchaWebViewClient(
     onSourceNotice: (String?) -> Unit,
     onPageLoadingChanged: (Boolean) -> Unit
 ): WebViewClient {
@@ -185,14 +202,46 @@ private fun captchaWebViewClient(
             onPageLoadingChanged(true)
         }
 
+        override fun onPageCommitVisible(view: WebView, url: String?) {
+            onPageLoadingChanged(false)
+        }
+
+        @Suppress("DEPRECATION")
+        override fun onReceivedError(view: WebView, code: Int, description: String?, failingUrl: String?) {
+            onPageLoadingChanged(false)
+            onSourceNotice("验证页面连接失败（$code），请检查网络后重新加载。")
+        }
+
+        override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+            if (request.isForMainFrame) {
+                onPageLoadingChanged(false)
+                onSourceNotice("验证页面连接失败（${error.errorCode}），请检查网络后重新加载。")
+            }
+        }
+
+        override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
+            if (request.isForMainFrame) {
+                onPageLoadingChanged(false)
+                onSourceNotice("验证页面返回 HTTP ${errorResponse.statusCode}；下方若有网站验证请先完成，或重新加载。")
+            }
+        }
+
+        override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+            handler.cancel()
+            onPageLoadingChanged(false)
+            onSourceNotice("验证页面安全连接失败，请检查网络或设备时间后重试。")
+        }
+
         override fun onPageFinished(view: WebView, url: String?) {
             super.onPageFinished(view, url)
+            onPageLoadingChanged(false)
             val uri = url?.let { raw -> runCatching { Uri.parse(raw) }.getOrNull() } ?: return
             if (!uri.host.equals("novalpie.cc", ignoreCase = true)) return
             // Nuxt performs the guest-route redirect with history APIs after this callback. Probe
             // after a short settle window so old WebViews without document-start scripts still
             // recover instead of leaving a fully rendered but unrelated Collection page here.
             view.postDelayed({
+                if (view.tag == null) return@postDelayed
                 view.evaluateJavascript(CAPTCHA_PAGE_SETTLE_PROBE) { rawState ->
                     when (rawState?.trim()) {
                         "\"login\"" -> {
@@ -212,27 +261,15 @@ private fun captchaWebViewClient(
             onSourceNotice: (String?) -> Unit,
             onPageLoadingChanged: (Boolean) -> Unit
         ) {
-            onPageLoadingChanged(true)
+            onPageLoadingChanged(false)
             if (!retriedAnonymousLogin) {
                 retriedAnonymousLogin = true
                 onSourceNotice("正在准备源站安全验证…")
                 view.evaluateJavascript(CAPTCHA_ANONYMOUS_LOGIN_RECOVERY, null)
             } else {
-                onSourceNotice("源站网页登录会话仍在拦截安全验证，请返回后重试。")
+                onSourceNotice("源站没有展示登录验证。请重新加载；未清除你的网页登录状态。")
             }
         }
-    }
-}
-
-private class CaptchaBridge(private val onToken: (String) -> Unit) {
-    private var delivered = false
-
-    @JavascriptInterface
-    fun complete(rawToken: String?) {
-        val token = rawToken?.trim().takeIf { !it.isNullOrBlank() && it.length >= 20 } ?: return
-        if (delivered) return
-        delivered = true
-        Handler(Looper.getMainLooper()).post { onToken(token) }
     }
 }
 
@@ -246,11 +283,19 @@ private const val CAPTCHA_PAGE_SETTLE_DELAY_MS = 600L
  * stored source token: the ordinary web fallback intentionally retains it. The guard only masks
  * it for this guest-only page and blocks page code from reintroducing it during the same document.
  */
-private const val CAPTCHA_ANONYMOUS_SOURCE_GUARD = """
+internal const val CAPTCHA_ANONYMOUS_SOURCE_GUARD = """
 (function () {
   var key = 'auth_token';
   try {
-    document.cookie = key + '=; path=/; max-age=0; SameSite=Lax';
+    // Mask only this document's view, never delete the shared cookie jar.
+    var cookieOwner = Document.prototype;
+    var cookie = Object.getOwnPropertyDescriptor(cookieOwner, 'cookie');
+    if (!cookie && window.HTMLDocument) cookie = Object.getOwnPropertyDescriptor(HTMLDocument.prototype, 'cookie');
+    if (cookie && cookie.get && cookie.set) Object.defineProperty(document, 'cookie', {
+      configurable: true,
+      get: function () { return cookie.get.call(document).split(';').filter(function (item) { return item.trim().split('=')[0] !== key; }).join(';'); },
+      set: function (value) { if (String(value).trim().split('=')[0] !== key) cookie.set.call(document, value); }
+    });
   } catch (e) {}
   try {
     var storagePrototype = Object.getPrototypeOf(window.localStorage);
@@ -306,7 +351,7 @@ private const val CAPTCHA_TOKEN_POLL = """
     var token = valueOfCaptchaResponse();
     if (token && token !== delivered && window.NovalPieCaptcha) {
       delivered = token;
-      window.NovalPieCaptcha.complete(token);
+      window.NovalPieCaptcha.postMessage(token);
     }
   }
   setInterval(emit, 350);
@@ -316,12 +361,8 @@ private const val CAPTCHA_TOKEN_POLL = """
 })()
 """
 
-private const val CAPTCHA_ANONYMOUS_LOGIN_RECOVERY = """
+internal const val CAPTCHA_ANONYMOUS_LOGIN_RECOVERY = """
 (function () {
-  try {
-    localStorage.removeItem('auth_token');
-    sessionStorage.removeItem('auth_token');
-  } catch (e) {}
   location.replace('/login?native_captcha=1');
   return true;
 })()

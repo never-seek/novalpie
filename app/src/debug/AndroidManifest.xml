@@ -1,5 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <activity android:name="com.novalpie.nativeapp.audit.CaptchaAuditActivity" android:screenOrientation="portrait" android:exported="true" android:permission="android.permission.DUMP" />
         <service android:name="com.novalpie.nativeapp.audit.TranslationTestService" android:exported="false" android:foregroundServiceType="dataSync" />
         <activity android:name="com.novalpie.nativeapp.audit.ReaderTestActivity" android:exported="false" android:screenOrientation="portrait" />
         <!-- Debug-only source-site QA. Shell can launch; ordinary installed apps cannot. -->
