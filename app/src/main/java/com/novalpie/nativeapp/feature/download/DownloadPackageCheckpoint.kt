@@ -12,18 +12,22 @@ internal class DownloadPackageCheckpoint(private val directory:File) {
     private val receipt=File(directory,"package.complete")
     suspend fun record(task:DownloadTask,file:File,sourceDigest:String,control:NativeDownloadControl) {
         val data=JSONObject().put("task",task.id).put("format",task.format.name).put("source",sourceDigest)
+            .put("exportPipeline", 2)
             .put("rules",rulesDigest(task)).put("bytes",file.length()).put("sha256",digest(file,control))
         receipt.writeText(data.toString())
     }
     suspend fun reusable(task:DownloadTask,file:File,sourceDigest:String,control:NativeDownloadControl):Boolean {
         if(!file.isFile||file.length()==0L||!receipt.isFile)return false
         val data=runCatching{JSONObject(receipt.readText())}.getOrNull() ?: return false
-        return data.optString("task")==task.id&&data.optString("format")==task.format.name&&data.optString("source")==sourceDigest&&
+        return (task.format != DownloadFormat.Epub || data.optInt("exportPipeline") == 2) && data.optString("task")==task.id&&data.optString("format")==task.format.name&&data.optString("source")==sourceDigest&&
             data.optString("rules")==rulesDigest(task)&&data.optLong("bytes")==file.length()&&data.optString("sha256")==digest(file,control)
     }
 
     /** One-time adoption for a pre-checkpoint package that reached Saving before failing. */
     suspend fun adoptVerifiedLegacy(task:DownloadTask,file:File,sourceDigest:String,control:NativeDownloadControl):Boolean {
+        // Old image-bearing archives were checked only against export markers, not the reader.
+        // Rebuild them from retained source/assets; text-only CRC adoption remains safe.
+        if (task.totalAssets > 0 || task.completedAssets > 0) return false
         if(receipt.exists()||task.format!=DownloadFormat.Epub||task.completedChapters<=0||task.totalChapters!=task.completedChapters||
             task.failedAssets!=0||task.totalAssets!=task.completedAssets||!file.isFile)return false
         val valid=try {

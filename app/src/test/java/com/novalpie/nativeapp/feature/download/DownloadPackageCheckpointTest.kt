@@ -37,6 +37,7 @@ class DownloadPackageCheckpointTest {
         val checkpoint=DownloadPackageCheckpoint(dir);val control=NativeDownloadControl()
         assertTrue(checkpoint.adoptVerifiedLegacy(task,file,"source",control))
         assertTrue(checkpoint.reusable(task,file,"source",control))
+        assertFalse(DownloadPackageCheckpoint(temp.newFolder()).adoptVerifiedLegacy(task.copy(totalAssets = 2, completedAssets = 2), file, "source", control))
         val incomplete=java.io.File(temp.newFolder(),"result.epub").apply{writeText("truncated zip")}
         assertFalse(DownloadPackageCheckpoint(incomplete.parentFile!!).adoptVerifiedLegacy(task,incomplete,"source",control))
     }

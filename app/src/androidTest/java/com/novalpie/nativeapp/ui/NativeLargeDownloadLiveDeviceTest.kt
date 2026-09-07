@@ -44,6 +44,13 @@ class NativeLargeDownloadLiveDeviceTest {
             val work=File(app.noBackupFilesDir,"download-work/${task.id}")
             val marker=Regex("[\\[［]\\s*图片\\s*[:：]\\s*(.+?)[\\]］]")
             File(work,"source.txt").bufferedReader().useLines{lines->lines.forEach{line->sourceImageOccurrences+=marker.findAll(line).count{it.groupValues[1].isNotBlank()}}}
+            // Raw export text can contain duplicated inventory copies absent from chapter prose.
+            // The writer records each quota against real reader data before removing only excess.
+            File(work,"image-reconciliation").listFiles()?.filter { it.extension == "json" }?.forEach { file ->
+                val correction = JSONObject(file.readText())
+                assertEquals(correction.getInt("retainedOccurrences"), correction.getJSONArray("images").length())
+                sourceImageOccurrences -= correction.getInt("removed")
+            }
             File(work,"assets").listFiles()?.filter{it.extension=="json"}?.forEach{file->
                 val data=JSONObject(file.readText());expectedDigests+=data.getString("sha256")
             }

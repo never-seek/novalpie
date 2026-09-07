@@ -420,6 +420,7 @@ object NativeEpubArchiveWriter {
         stagedAssetCacheMaxBytes: Long = DEFAULT_STAGED_ASSET_CACHE_MAX_BYTES,
         awaitIfPaused: suspend () -> Unit = {},
         onProgress: (NativeEpubExportProgress) -> Unit = {},
+        reconcileSourceImages: suspend (chapterOrder: Int, body: String) -> String = { _, body -> body },
     ) {
         require(metadata.title.isNotBlank()) { "书名不能为空" }
         require(metadata.author.isNotBlank()) { "作者不能为空" }
@@ -486,10 +487,12 @@ object NativeEpubArchiveWriter {
                     awaitIfPaused()
                     val chapterIndex = chapters.size + 1
                     val sourceTitle = title.ifBlank { "第${chapterIndex}章" }
+                    val chapterOrder = chapterNumber(sourceTitle) ?: chapterIndex
+                    val reconciledBody = reconcileSourceImages(chapterOrder, body)
                     val transformed = transformChapter(
-                        chapterNumber(sourceTitle) ?: chapterIndex,
+                        chapterOrder,
                         sourceTitle,
-                        body,
+                        reconciledBody,
                     )
                     val chapterTitle = transformed.title.ifBlank { sourceTitle }
                     val renderedBody = renderBody(

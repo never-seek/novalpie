@@ -1,0 +1,45 @@
+package com.novalpie.nativeapp.feature.download
+
+/** Source download TXT can append an extra inventory copy after authored inline illustrations. */
+internal data class ExportImageReconciliation(val body: String, val removed: Int)
+
+internal fun normalizedExportImageUrl(raw: String): String? {
+    val value = raw.trim().replace(Regex("\\s+"), "").trimStart(':', '：').removePrefix("图片://")
+    if (value.isBlank()) return null
+    return when {
+        value.startsWith("//") -> "https:$value"
+        value.startsWith("http://", true) || value.startsWith("https://", true) || value.startsWith("./") -> value
+        else -> "https://${value.trimStart('/')}"
+    }
+}
+
+internal fun reconcileExportImageOccurrences(body: String, authoritativeImages: List<String>): ExportImageReconciliation {
+    val pattern = Regex("\\[图片(?:[:：]|\\s)*?(.*?)\\]")
+    val matches = pattern.findAll(body).filter { normalizedExportImageUrl(it.groupValues[1]) != null }.toList()
+    val urls = matches.map { normalizedExportImageUrl(it.groupValues[1])!! }
+    if (urls.size == urls.distinct().size) return ExportImageReconciliation(body, 0)
+    val expected = authoritativeImages.mapNotNull(::normalizedExportImageUrl)
+    require(expected.isNotEmpty() && expected.toSet() == urls.toSet()) {
+        "导出图片与正文图片无法对应，未删除任何插图；请刷新章节后重试"
+    }
+    val quotas = expected.groupingBy { it }.eachCount()
+    val counts = urls.groupingBy { it }.eachCount()
+    require(quotas.all { (url, count) -> (counts[url] ?: 0) >= count }) { "导出文件缺少正文插图，未生成成功包" }
+    val used = mutableMapOf<String, Int>()
+    val retained = mutableListOf<String>()
+    var cursor = 0
+    var removed = 0
+    val output = StringBuilder()
+    matches.forEachIndexed { index, match ->
+        output.append(body, cursor, match.range.first)
+        val url = urls[index]
+        val seen = used[url] ?: 0
+        if (seen < quotas.getValue(url)) {
+            output.append(match.value); retained += url; used[url] = seen + 1
+        } else removed++
+        cursor = match.range.last + 1
+    }
+    output.append(body, cursor, body.length)
+    require(retained == expected) { "导出插图顺序与正文不一致，未生成成功包" }
+    return ExportImageReconciliation(output.toString(), removed)
+}

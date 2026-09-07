@@ -5,7 +5,8 @@ param(
     [string]$EvidenceName = 'tts-device',
     [long]$BookId = 0,
     [long]$ChapterId = 0,
-    [switch]$AllowPublicRuleWrite
+    [switch]$AllowPublicRuleWrite,
+    [switch]$VerifyImageArchive
 )
 $ErrorActionPreference = 'Stop'
 if ($TestClass -notmatch '^com\.novalpie\.nativeapp\.[A-Za-z0-9_.]+$') { throw 'Only NovalPie test classes are accepted' }
@@ -40,6 +41,7 @@ $instrumentArgs = @('-s', $Serial, 'shell', 'am', 'instrument', '-w', '-r', '-e'
 if ($BookId -gt 0) { $instrumentArgs += @('-e', 'bookId', $BookId.ToString()); $metadata.bookId = $BookId }
 if ($ChapterId -gt 0) { $instrumentArgs += @('-e', 'chapterId', $ChapterId.ToString()); $metadata.chapterId = $ChapterId }
 if ($AllowPublicRuleWrite) { $instrumentArgs += @('-e', 'allowPublicRuleWrite', 'true'); $metadata.publicRuleWrite = $true }
+if ($VerifyImageArchive) { $instrumentArgs += @('-e', 'verifyImageArchive', 'true'); $metadata.verifyImageArchive = $true }
 $instrumentArgs += 'com.novalpie.app.debug.test/androidx.test.runner.AndroidJUnitRunner'
 $log = & $Adb @instrumentArgs 2>&1
 $logText = $log -join "`n"
