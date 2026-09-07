@@ -628,30 +628,31 @@ class NovalPieApi(
             // user-filtered feeds below instead of being treated as the only source.
             val canonical = async {
                 captureUserActivityFeed {
-                    normalizeCanonicalUserActivityFeed(
-                        getProfileCollectionWithV2Fallback(
+                    val raw = getProfileCollectionWithV2Fallback(
                             legacyPath = "/api/users/$userId/activities",
                             v2Path = "/api/v2/users/$userId/activities",
                             params = mapOf(
                                 "page" to safePage.toString(),
                                 "limit" to safeLimit.toString(),
                             ),
-                        ),
-                        expectedAuthorId = userId,
-                    )
+                        )
+                    normalizeCanonicalUserActivityFeed(requireSuccessfulEnvelope(raw, "动态读取被拒绝"), expectedAuthorId = userId)
+                        .copy(hasMore = userActivityHasMore(raw, safePage, safeLimit, "activities", "items", "list", "data"))
                 }
             }
             val posts = async {
                 captureUserActivityFeed {
-                    normalizeUserPostActivityFeed(get("/api/posts", userFeedParams))
+                    val raw = requireSuccessfulEnvelope(get("/api/posts", userFeedParams), "帖子动态读取被拒绝")
+                    normalizeUserPostActivityFeed(raw, userId).copy(hasMore = userActivityHasMore(raw, safePage, safeLimit, "posts", "items", "list", "data"))
                 }
             }
             val comments = async {
                 captureUserActivityFeed {
+                    val raw = requireSuccessfulEnvelope(get("/api/posts/comments", userFeedParams), "评论动态读取被拒绝")
                     normalizeUserPostCommentActivityFeed(
-                        raw = get("/api/posts/comments", userFeedParams),
+                        raw = raw,
                         expectedAuthorId = userId,
-                    )
+                    ).copy(hasMore = userActivityHasMore(raw, safePage, safeLimit, "comments", "items", "list", "data"))
                 }
             }
             val reviews = async {
@@ -659,9 +660,8 @@ class NovalPieApi(
                     val reviewParams = userFeedParams.toMutableMap().apply {
                         if (hideSpoilers) put("hide_spoilers", "1")
                     }
-                    normalizeUserBookReviewActivityFeed(
-                        get("/api/comments/book-reviews", reviewParams)
-                    )
+                    val raw = requireSuccessfulEnvelope(get("/api/comments/book-reviews", reviewParams), "书评动态读取被拒绝")
+                    normalizeUserBookReviewActivityFeed(raw, userId).copy(hasMore = userActivityHasMore(raw, safePage, safeLimit, "posts", "reviews", "comments", "items", "list", "data"))
                 }
             }
 
@@ -671,17 +671,23 @@ class NovalPieApi(
             val reviewResult = reviews.await()
             val results = listOf(canonicalResult, postResult, commentResult, reviewResult)
             val availableActivities = results.flatMap { it.getOrNull()?.activities.orEmpty() }
-            if (availableActivities.isEmpty()) {
+            if (results.all { it.isFailure }) {
                 results.mapNotNull(Result<UserContentActivityFeed>::exceptionOrNull).firstOrNull()?.let { throw it }
             }
             UserContentActivityFeed(
-                activities = mergeUserContentActivities(availableActivities, safeLimit),
+                // Each source already paginates. Truncating their union loses entries forever
+                // when the next request advances all source page numbers at once.
+                activities = mergeUserContentActivities(availableActivities, Int.MAX_VALUE),
                 postCount = canonicalResult.getOrNull()?.postCount
                     ?: postResult.getOrNull()?.postCount,
                 forumCommentCount = canonicalResult.getOrNull()?.forumCommentCount
                     ?: commentResult.getOrNull()?.forumCommentCount,
                 bookReviewCount = canonicalResult.getOrNull()?.bookReviewCount
-                    ?: reviewResult.getOrNull()?.bookReviewCount
+                    ?: reviewResult.getOrNull()?.bookReviewCount,
+                hasMore = results.any { it.getOrNull()?.hasMore == true },
+                partialFailure = results.mapNotNull { it.exceptionOrNull() }.any { failure ->
+                    failure !is NovalPieApiException || failure.statusCode !in setOf(404, 501)
+                },
             )
         }
     }
@@ -5291,11 +5297,12 @@ class NovalPieApi(
         Result.failure(failure)
     }
 
-    private fun normalizeUserPostActivityFeed(raw: Any): UserContentActivityFeed =
+    private fun normalizeUserPostActivityFeed(raw: Any, expectedAuthorId: Long? = null): UserContentActivityFeed =
         UserContentActivityFeed(
             activities = extractArray(raw, "posts", "items", "records", "list", "data")
             .mapNotNull { value ->
                 val post = value as? JSONObject ?: return@mapNotNull null
+                if (!userActivityBelongsToProfile(post, expectedAuthorId, allowUnknownAuthor = true)) return@mapNotNull null
                 val normalized = normalizeForumPost(post)
                 normalized.id.takeIf { it > 0 }?.let { id ->
                     UserActivity(
@@ -5402,11 +5409,12 @@ class NovalPieApi(
         return authorId?.let { it == expectedAuthorId } ?: allowUnknownAuthor
     }
 
-    private fun normalizeUserBookReviewActivityFeed(raw: Any): UserContentActivityFeed =
+    private fun normalizeUserBookReviewActivityFeed(raw: Any, expectedAuthorId: Long? = null): UserContentActivityFeed =
         UserContentActivityFeed(
             activities = extractArray(raw, "posts", "reviews", "comments", "items", "records", "list", "data")
             .mapNotNull { value ->
                 val review = value as? JSONObject ?: return@mapNotNull null
+                if (!userActivityBelongsToProfile(review, expectedAuthorId, allowUnknownAuthor = true)) return@mapNotNull null
                 val normalized = normalizeForumPost(review, forceBookReview = true)
                 val id = normalized.id.takeIf { it > 0 } ?: return@mapNotNull null
                 UserActivity(
@@ -5434,6 +5442,19 @@ class NovalPieApi(
             ?: pagination?.longOrNull("count")
             ?: source.longOrNull("total")
             ?: nestedData?.longOrNull("total")
+    }
+
+    private fun userActivityHasMore(raw: Any, page: Int, limit: Int, vararg keys: String): Boolean {
+        val root = raw as? JSONObject
+        val data = root?.optJSONObject("data")
+        val pagination = root?.optJSONObject("pagination") ?: root?.optJSONObject("meta") ?: data?.optJSONObject("pagination")
+        val count = extractArray(raw, *keys).size
+        val pages = pagination?.firstStringOrNull("total_pages", "totalPages", "last_page", "pages")?.toIntOrNull()
+        if (pages != null) return page < pages
+        pagination?.firstBooleanOrNull("has_more", "hasMore")?.let { return it }
+        val actualSize = pagination?.firstStringOrNull("per_page", "page_size", "pageSize", "limit")?.toIntOrNull()?.takeIf { it > 0 } ?: limit
+        val total = userFeedTotal(raw)
+        return if (total != null) page.toLong() * actualSize < total else count >= actualSize
     }
 
     private fun mergeUserContentActivities(

@@ -26,6 +26,7 @@ internal class ProfileViewModel(
     private var draftDirty = false
     private var heroRevision = 0L
     private var inventoryRevision = 0L
+    private var activityRevision = 0L
     private var request: Job? = null
     private var tokenProfile: UserProfile? = null
     private var hideSpoilers = true
@@ -38,10 +39,13 @@ internal class ProfileViewModel(
         val serial = ++generation
         val hero = ++heroRevision
         val inventory = ++inventoryRevision
+        val activity = ++activityRevision
+        val activityPages = state.activityPage.coerceAtLeast(1)
         request?.cancel()
         state = state.copy(profile = state.profile.takeIf { it is LoadResult.Success } ?: LoadResult.Loading,
             checkinStats = LoadResult.Loading, checkinRecords = LoadResult.Loading, activities = LoadResult.Loading,
-            books = LoadResult.Loading, inventory = LoadResult.Loading, shopItems = LoadResult.Loading, quizReward = LoadResult.Loading)
+            books = LoadResult.Loading, inventory = LoadResult.Loading, shopItems = LoadResult.Loading, quizReward = LoadResult.Loading,
+            loadingMoreActivities = false, activityPageMessage = null)
         request = work.launch { supervisorScope {
             val profile = async { attempt { repository.profile() } }
             val year = Calendar.getInstance().get(Calendar.YEAR)
@@ -50,14 +54,41 @@ internal class ProfileViewModel(
             launch { val result = attempt { repository.checkinStats() }; if (serial == generation) state = currentUserProfileWithLoadedCheckinStats(state, result, today) }
             launch { val result = attempt { repository.checkinRecords(year) }; if (serial == generation) state = currentUserProfileWithLoadedCheckinRecords(state, result, today) }
             launch {
-                val result = attempt { repository.activities(identity?.id ?: profile.await().getOrThrow().id ?: error("缺少用户ID"), hideSpoilers) }
-                if (serial == generation) { state = currentUserProfileWithLoadedActivities(state, result); publish() }
+                val result = attempt {
+                    val id = identity?.id ?: profile.await().getOrThrow().id ?: error("缺少用户ID")
+                    reloadActivityPages(activityPages) { page -> repository.activityPage(id, page, hideSpoilers) }
+                }
+                if (serial == generation && activity == activityRevision) {
+                    state = currentUserProfileWithLoadedActivities(state, result.map { it.first }).copy(
+                        activityPage = result.getOrNull()?.second ?: state.activityPage,
+                        activityPageMessage = if (result.getOrNull()?.first?.partialFailure == true) "部分动态读取失败，点击重试本页" else null)
+                    publish()
+                }
             }
             launch { val result = attempt { repository.books() }; if (serial == generation) { state = currentUserProfileWithLoadedBooks(state, result); publish() } }
             launch { val result = attempt { repository.inventory() }; if (serial == generation && inventory == inventoryRevision) { state = currentUserProfileWithLoadedInventory(state, result); publish() } }
             launch { val result = attempt { repository.shop() }; if (serial == generation) state = state.copy(shopItems = result.asLoad("商店")) }
             launch { val result = attempt { repository.reward() }; if (serial == generation) state = state.copy(quizReward = result.asLoad("奖励")) }
         } }
+    }
+    fun loadMoreActivities() {
+        val feed = state.activityFeed ?: return
+        val id = (state.profile as? LoadResult.Success)?.value?.id ?: return
+        if (state.loadingMoreActivities || state.activities !is LoadResult.Success || (!feed.hasMore && !feed.partialFailure)) return
+        val serial = ++activityRevision
+        val account = environment
+        val page = state.activityPage + 1
+        state = state.copy(loadingMoreActivities = true, activityPageMessage = null)
+        work.launch {
+            val result = attempt { repository.activityPage(id, page, hideSpoilers) }
+            if (serial != activityRevision || account != environment) return@launch
+            result.onSuccess { next ->
+                state = currentUserProfileWithLoadedActivities(state, Result.success(mergeActivityPages(state.activityFeed, next))).copy(
+                    loadingMoreActivities = false, activityPage = if (next.partialFailure) page - 1 else page,
+                    activityPageMessage = if (next.partialFailure) "部分动态读取失败，点击重试本页" else null)
+                publish()
+            }.onFailure { state = state.copy(loadingMoreActivities = false, activityPageMessage = apiFailureMessage("更早动态", it)) }
+        }
     }
     fun edit(transform: (ProfileState) -> ProfileState) { editRevision++; draftDirty = true; state = transform(state) }
     private fun applyHero(result: Result<UserProfile>) {

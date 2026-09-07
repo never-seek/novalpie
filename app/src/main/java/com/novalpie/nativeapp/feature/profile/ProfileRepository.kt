@@ -8,6 +8,7 @@ internal interface ProfileRepository {
     suspend fun checkinStats(): UserCheckinStats
     suspend fun checkinRecords(year: Int): List<UserCheckinRecord>
     suspend fun activities(userId: Long, hideSpoilers: Boolean): UserContentActivityFeed
+    suspend fun activityPage(userId: Long, page: Int, hideSpoilers: Boolean): UserContentActivityFeed = activities(userId, hideSpoilers)
     suspend fun books(): List<NovelCard>
     suspend fun inventory(): UserInventory
     suspend fun shop(): List<ShopItem>
@@ -24,6 +25,7 @@ internal class WebsiteProfileRepository(private val api: NovalPieApi) : ProfileR
     override suspend fun checkinStats() = api.currentUserCheckinStats()
     override suspend fun checkinRecords(year: Int) = api.userCheckinRecords(startDate = "$year-01-01", endDate = "$year-12-31")
     override suspend fun activities(userId: Long, hideSpoilers: Boolean) = api.userContentActivityFeed(userId, limit = 200, hideSpoilers = hideSpoilers)
+    override suspend fun activityPage(userId: Long, page: Int, hideSpoilers: Boolean) = api.userContentActivityFeed(userId, page, 200, hideSpoilers)
     override suspend fun books() = api.currentUserUploadedBooks()
     override suspend fun inventory() = api.currentUserInventory()
     override suspend fun shop() = api.shopItems()

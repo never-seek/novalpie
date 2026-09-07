@@ -97,6 +97,9 @@ internal class AppContainer(context: Context) {
     val profileRepository: com.novalpie.nativeapp.feature.profile.ProfileRepository by lazy {
         com.novalpie.nativeapp.feature.profile.WebsiteProfileRepository(api)
     }
+    val publicProfileRepository: com.novalpie.nativeapp.feature.profile.PublicProfileRepository by lazy {
+        com.novalpie.nativeapp.feature.profile.WebsitePublicProfileRepository(api)
+    }
     val searchPreferences: SearchPreferences by lazy {
         StoredSearchPreferences(SearchSettingsStore(application), SearchHistoryStore(application))
     }

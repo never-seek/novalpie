@@ -916,6 +916,7 @@ fun NovalPieApp(
                     onOpenSettings = viewModel::openSettings,
                     onOpenActivity = viewModel::openUserActivity,
                     onActivityFilterSelected = viewModel::selectProfileActivityFilter,
+                    onLoadMoreActivities = viewModel::loadMoreProfileActivities,
                     onOpenBook = viewModel::openBook,
                     onOpenUser = viewModel::openUserProfile,
                     onPersonalizationTabSelected = viewModel::selectPersonalizationTab,
@@ -1121,8 +1122,9 @@ private fun UserProfileDetailRoute(
     route: AppRoute.UserProfileDetail,
     viewModel: NovalPieViewModel,
 ) {
+    val displayedState = viewModel.userProfileDetailState
     UserProfileDetailScreen(
-        state = viewModel.userProfileDetailState,
+        state = displayedState,
         hasAuthToken = !viewModel.authToken.isNullOrBlank(),
         onRetry = { viewModel.loadUserProfile(route.userId) },
         onRetryActivities = viewModel::retryUserProfileActivities,
@@ -1132,6 +1134,9 @@ private fun UserProfileDetailRoute(
         onRetryCheckinSettings = viewModel::retryUserProfileCheckinSettings,
         onTabSelected = viewModel::selectUserProfileTab,
         onActivityFilterSelected = viewModel::selectUserProfileActivityFilter,
+        onLoadMoreActivities = viewModel::loadMorePublicProfileActivities,
+        savedScroll = viewModel.publicProfileScrollPosition(),
+        onSaveScroll = { index, offset -> viewModel.savePublicProfileScroll(displayedState.userId, displayedState.selectedTab, displayedState.activityFilter, index, offset) },
         onOpenActivity = viewModel::openUserActivity,
         onOpenBook = viewModel::openBook,
         onMessageUser = viewModel::openMessageConversation,

@@ -364,7 +364,9 @@ data class UserContentActivityFeed(
     val activities: List<UserActivity> = emptyList(),
     val postCount: Long? = null,
     val forumCommentCount: Long? = null,
-    val bookReviewCount: Long? = null
+    val bookReviewCount: Long? = null,
+    val hasMore: Boolean = false,
+    val partialFailure: Boolean = false,
 ) {
     val commentCount: Long?
         get() = when {

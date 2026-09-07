@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ElevatedCard
@@ -22,8 +23,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.getValue
+import kotlinx.coroutines.flow.collect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,11 +58,27 @@ internal fun UserProfileDetailScreen(
     onMessageUser: (Long, String?) -> Unit,
     onOpenLogin: () -> Unit,
     currentUserId:Long?=null,
+    onLoadMoreActivities: () -> Unit = {},
+    savedScroll: GridScrollPosition = GridScrollPosition(),
+    onSaveScroll: (Int, Int) -> Unit = { _, _ -> },
 ) {
     val spoilerPreference = LocalForumSpoilerPreference.current
     val stats = (state.checkinStats as? LoadResult.Success)?.value
+    val listState = remember(state.userId, state.selectedTab, state.activityFilter) {
+        LazyListState(savedScroll.firstVisibleItemIndex, savedScroll.firstVisibleItemScrollOffset)
+    }
+    val saveScroll by rememberUpdatedState(onSaveScroll)
+    LaunchedEffect(listState) {
+        snapshotFlow { Triple(listState.isScrollInProgress, listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) }
+            .collect { (scrolling, index, offset) -> if (!scrolling && listState.layoutInfo.totalItemsCount > 0) saveScroll(index, offset) }
+    }
+    DisposableEffect(listState) {
+        val saveThisEntry = onSaveScroll
+        onDispose { saveThisEntry(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) }
+    }
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        state = listState,
+        modifier = Modifier.fillMaxSize().testTag("public-profile-list"),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -207,6 +232,12 @@ internal fun UserProfileDetailScreen(
                         items(visibleActivities, key = { "${it.type}-${it.id}" }) { activity ->
                             UserActivityCard(activity, onOpenActivity)
                         }
+                        state.activityPageMessage?.let { message -> item { PublicProfileStatusCard(message) } }
+                        if (state.activityFeed?.let { it.hasMore || it.partialFailure } == true) item {
+                            OutlinedButton(onClick = onLoadMoreActivities, enabled = !state.loadingMoreActivities, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (state.loadingMoreActivities) "加载中…" else if (state.activityFeed.partialFailure) "重试本页动态" else "加载更早动态")
+                            }
+                        }
                     }
                 }
 
@@ -222,23 +253,29 @@ internal fun UserProfileDetailScreen(
                     is LoadResult.Success -> {
                         if (value.value.isEmpty()) item { PublicProfileStatusCard("暂无上传作品") }
                         items(value.value.chunked(2)) { rowBooks ->
+                            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+                            val textSlots = compactLibraryRowTextSlots(rowBooks, (maxWidth - 12.dp) / 2)
+                            val coverHeight = ((maxWidth - 12.dp) / 2) * 1.5f
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 verticalAlignment = Alignment.Top
                             ) {
                                 rowBooks.forEach { book ->
-                                    androidx.compose.foundation.layout.Box(Modifier.weight(1f)) {
-                                        NovelCardItem(
+                                        CompactLibraryBookCardItem(
                                             book = book,
+                                            presentation = compactUploadedBookCardPresentation(book),
+                                            modifier = Modifier.weight(1f),
+                                            gridCoverHeight = coverHeight,
+                                            gridTextSlots = textSlots,
                                             previewPolicy = CoverPreviewPolicy.Disabled,
                                             onClick = { onOpenBook(book.id) },
                                         )
-                                    }
                                 }
                                 repeat(2 - rowBooks.size) {
                                     androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
                                 }
+                            }
                             }
                         }
                     }

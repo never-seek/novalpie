@@ -280,6 +280,9 @@ data class ProfileState(
     val books: LoadResult<List<NovelCard>> = LoadResult.Idle,
     /** Raw section payloads let late arrivals enrich the hero without resetting other panels. */
     val activityFeed: UserContentActivityFeed? = null,
+    val activityPage: Int = 0,
+    val loadingMoreActivities: Boolean = false,
+    val activityPageMessage: String? = null,
     val uploadedBooks: List<NovelCard>? = null,
     val bookQuery: String = "",
     val booksGridColumns: Int = 2,
@@ -343,6 +346,9 @@ data class UserProfileDetailState(
     val books: LoadResult<List<NovelCard>> = LoadResult.Idle,
     /** Raw secondary payloads are retained so out-of-order profile requests can be merged. */
     val activityFeed: UserContentActivityFeed? = null,
+    val activityPage: Int = 0,
+    val loadingMoreActivities: Boolean = false,
+    val activityPageMessage: String? = null,
     val publicBooks: List<NovelCard>? = null,
     val checkinStats: LoadResult<UserCheckinStats> = LoadResult.Idle,
     val checkinRecords: LoadResult<List<UserCheckinRecord>> = LoadResult.Idle,
@@ -1010,13 +1016,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private var terminologyRequestSerial = 0L
     private var bookEditRequestSerial = 0L
     private var bookChapterRequestSerial = 0L
-    private var userProfileRequestSerial = 0L
-    private var userProfileHeroRequestSerial = 0L
-    private var userProfileActivitiesRequestSerial = 0L
-    private var userProfileBooksRequestSerial = 0L
-    private var userProfileCheckinStatsRequestSerial = 0L
-    private var userProfileCheckinRecordsRequestSerial = 0L
-    private var userProfileCheckinSettingsRequestSerial = 0L
+    private val publicProfileFeature = com.novalpie.nativeapp.feature.profile.PublicProfileViewModel(dependencies.publicProfileRepository)
     private var adminRequestSerial = 0L
     private var toolsRequestSerial = 0L
     private val messageInboxFeature = com.novalpie.nativeapp.feature.messages.MessageInboxViewModel(dependencies.messagesRepository)
@@ -1079,8 +1079,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     var profileState: ProfileState
         get() = profileFeature.state
         private set(value) { profileFeature.present { value } }
-    var userProfileDetailState by mutableStateOf(UserProfileDetailState())
-        private set
+    var userProfileDetailState: UserProfileDetailState
+        get() = publicProfileFeature.state
+        private set(value) { publicProfileFeature.present { value } }
     var adminState by mutableStateOf(AdminState())
         private set
     var toolsState by mutableStateOf(ToolsState())
@@ -1207,6 +1208,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 if(next!=previous){previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged();libraryFeature.environmentChanged();bookFeature.environmentChanged()
                     messageInboxFeature.environmentChanged();messageDetailFeature.environmentChanged();conversationFeature.environmentChanged();messageSettingsFeature.environmentChanged()
                     profileFeature.environmentChanged()
+                    publicProfileFeature.environmentChanged()
                     replacementLoadRevision++;pendingReaderReplacementCreates.clear();deletedPendingReaderReplacementCreates.clear()
                     readerReplacementState = ReaderReplacementState()
                     when(val route=currentRoute){
@@ -1217,6 +1219,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                         is AppRoute.MessageConversation->loadMessageConversation(route.targetUserId,route.targetName)
                         AppRoute.MessageSettings->loadMessageSettings()
                         AppRoute.Profile->loadProfile()
+                        is AppRoute.UserProfileDetail->loadUserProfile(route.userId)
                         is AppRoute.Reader->loadReaderReplacementRules(route.bookId)
                         else->Unit
                     }}
@@ -2372,6 +2375,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             profileState = profileState.copy(activityFilter = filter, actionMessage = null)
         }
     }
+    fun loadMoreProfileActivities() = profileFeature.loadMoreActivities()
+    fun loadMorePublicProfileActivities() = publicProfileFeature.loadMoreActivities()
+    internal fun publicProfileScrollPosition() = publicProfileFeature.scrollPosition()
+    fun savePublicProfileScroll(userId: Long, tab: UserProfileTab, filter: ProfileActivityFilter, index: Int, offset: Int) =
+        publicProfileFeature.saveScroll(userId, tab, filter, index, offset)
 
     fun selectPersonalizationTab(tab: PersonalizationTab) {
         if (profileState.personalizationTab != tab) {
@@ -2475,223 +2483,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         loadUserProfile(userId)
     }
 
-    fun loadUserProfile(userId: Long) {
-        if (userId <= 0) return
-        val routeRequestSerial = ++userProfileRequestSerial
-        val heroRequestSerial = ++userProfileHeroRequestSerial
-        val activitiesRequestSerial = ++userProfileActivitiesRequestSerial
-        val booksRequestSerial = ++userProfileBooksRequestSerial
-        val checkinStatsRequestSerial = ++userProfileCheckinStatsRequestSerial
-        val checkinRecordsRequestSerial = ++userProfileCheckinRecordsRequestSerial
-        val checkinSettingsRequestSerial = ++userProfileCheckinSettingsRequestSerial
-        val previous = userProfileDetailState
-        userProfileDetailState = UserProfileDetailState(
-            userId = userId,
-            profile = LoadResult.Loading,
-            activities = LoadResult.Loading,
-            books = LoadResult.Loading,
-            checkinStats = LoadResult.Loading,
-            checkinRecords = LoadResult.Loading,
-            checkinSettings = LoadResult.Loading,
-            selectedTab = previous.selectedTab,
-            activityFilter = previous.activityFilter,
-        )
-        requestPublicUserProfile(userId, routeRequestSerial, heroRequestSerial)
-        requestPublicUserActivities(userId, routeRequestSerial, activitiesRequestSerial)
-        requestPublicUserBooks(userId, routeRequestSerial, booksRequestSerial)
-        requestPublicUserCheckinStats(userId, routeRequestSerial, checkinStatsRequestSerial)
-        requestPublicUserCheckinRecords(userId, routeRequestSerial, checkinRecordsRequestSerial)
-        requestPublicUserCheckinSettings(userId, routeRequestSerial, checkinSettingsRequestSerial)
-    }
-
-    /** Each public-profile section has its own retry lane so a slow endpoint cannot lock the page. */
-    fun retryUserProfileActivities() {
-        val userId = activePublicUserProfileId() ?: return
-        val sectionSerial = ++userProfileActivitiesRequestSerial
-        userProfileDetailState = userProfileDetailForPanelRetry(
-            userProfileDetailState,
-            PublicUserProfilePanel.Activities,
-        )
-        requestPublicUserActivities(userId, userProfileRequestSerial, sectionSerial)
-    }
-
-    fun retryUserProfileBooks() {
-        val userId = activePublicUserProfileId() ?: return
-        val sectionSerial = ++userProfileBooksRequestSerial
-        userProfileDetailState = userProfileDetailForPanelRetry(
-            userProfileDetailState,
-            PublicUserProfilePanel.Books,
-        )
-        requestPublicUserBooks(userId, userProfileRequestSerial, sectionSerial)
-    }
-
-    fun retryUserProfileCheckinStats() {
-        val userId = activePublicUserProfileId() ?: return
-        val sectionSerial = ++userProfileCheckinStatsRequestSerial
-        userProfileDetailState = userProfileDetailForPanelRetry(
-            userProfileDetailState,
-            PublicUserProfilePanel.CheckinStats,
-        )
-        requestPublicUserCheckinStats(userId, userProfileRequestSerial, sectionSerial)
-    }
-
-    fun retryUserProfileCheckinRecords() {
-        val userId = activePublicUserProfileId() ?: return
-        val sectionSerial = ++userProfileCheckinRecordsRequestSerial
-        userProfileDetailState = userProfileDetailForPanelRetry(
-            userProfileDetailState,
-            PublicUserProfilePanel.CheckinRecords,
-        )
-        requestPublicUserCheckinRecords(userId, userProfileRequestSerial, sectionSerial)
-    }
-
-    fun retryUserProfileCheckinSettings() {
-        val userId = activePublicUserProfileId() ?: return
-        val sectionSerial = ++userProfileCheckinSettingsRequestSerial
-        userProfileDetailState = userProfileDetailForPanelRetry(
-            userProfileDetailState,
-            PublicUserProfilePanel.CheckinSettings,
-        )
-        requestPublicUserCheckinSettings(userId, userProfileRequestSerial, sectionSerial)
-    }
-
-    private fun activePublicUserProfileId(): Long? {
-        val userId = userProfileDetailState.userId.takeIf { it > 0 } ?: return null
-        return userId.takeIf { currentRoute == AppRoute.UserProfileDetail(it) }
-    }
-
-    private fun requestPublicUserProfile(
-        userId: Long,
-        routeRequestSerial: Long,
-        heroRequestSerial: Long,
-    ) {
-        viewModelScope.launch {
-            val result = runCatching { api.userProfile(userId) }
-            if (!isFreshPublicUserProfileSection(
-                    userId,
-                    routeRequestSerial,
-                    heroRequestSerial,
-                    userProfileHeroRequestSerial,
-                )
-            ) return@launch
-            userProfileDetailState = userProfileDetailWithLoadedProfile(userProfileDetailState, result)
-        }
-    }
-
-    private fun requestPublicUserActivities(
-        userId: Long,
-        routeRequestSerial: Long,
-        activitiesRequestSerial: Long,
-    ) {
-        viewModelScope.launch {
-            val result = runCatching {
-                api.userContentActivityFeed(
-                    userId = userId,
-                    limit = 200,
-                    hideSpoilers = forumState.hideSpoilers,
-                )
-            }
-            if (!isFreshPublicUserProfileSection(
-                    userId,
-                    routeRequestSerial,
-                    activitiesRequestSerial,
-                    userProfileActivitiesRequestSerial,
-                )
-            ) return@launch
-            userProfileDetailState = userProfileDetailWithLoadedActivities(userProfileDetailState, result)
-        }
-    }
-
-    private fun requestPublicUserBooks(
-        userId: Long,
-        routeRequestSerial: Long,
-        booksRequestSerial: Long,
-    ) {
-        viewModelScope.launch {
-            val result = runCatching { api.userNovels(userId = userId) }
-            if (!isFreshPublicUserProfileSection(
-                    userId,
-                    routeRequestSerial,
-                    booksRequestSerial,
-                    userProfileBooksRequestSerial,
-                )
-            ) return@launch
-            userProfileDetailState = userProfileDetailWithLoadedBooks(userProfileDetailState, result)
-        }
-    }
-
-    private fun requestPublicUserCheckinStats(
-        userId: Long,
-        routeRequestSerial: Long,
-        statsRequestSerial: Long,
-    ) {
-        viewModelScope.launch {
-            val result = runCatching { api.userCheckinStats(userId) }
-            if (!isFreshPublicUserProfileSection(
-                    userId,
-                    routeRequestSerial,
-                    statsRequestSerial,
-                    userProfileCheckinStatsRequestSerial,
-                )
-            ) return@launch
-            userProfileDetailState = userProfileDetailState.copy(
-                checkinStats = result.toLoadResult("签到统计"),
-            )
-        }
-    }
-
-    private fun requestPublicUserCheckinRecords(
-        userId: Long,
-        routeRequestSerial: Long,
-        recordsRequestSerial: Long,
-    ) {
-        val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-        viewModelScope.launch {
-            val result = runCatching {
-                api.userCheckinRecords(userId, "$currentYear-01-01", "$currentYear-12-31")
-            }
-            if (!isFreshPublicUserProfileSection(
-                    userId,
-                    routeRequestSerial,
-                    recordsRequestSerial,
-                    userProfileCheckinRecordsRequestSerial,
-                )
-            ) return@launch
-            userProfileDetailState = userProfileDetailState.copy(
-                checkinRecords = result.toLoadResult("签到记录"),
-            )
-        }
-    }
-
-    private fun requestPublicUserCheckinSettings(
-        userId: Long,
-        routeRequestSerial: Long,
-        settingsRequestSerial: Long,
-    ) {
-        viewModelScope.launch {
-            val result = runCatching { api.userCheckinSettings(userId) }
-            if (!isFreshPublicUserProfileSection(
-                    userId,
-                    routeRequestSerial,
-                    settingsRequestSerial,
-                    userProfileCheckinSettingsRequestSerial,
-                )
-            ) return@launch
-            userProfileDetailState = userProfileDetailState.copy(
-                checkinSettings = result.toLoadResult("签到设置"),
-            )
-        }
-    }
-
-    private fun isFreshPublicUserProfileSection(
-        userId: Long,
-        routeRequestSerial: Long,
-        sectionRequestSerial: Long,
-        activeSectionRequestSerial: Long,
-    ): Boolean = routeRequestSerial == userProfileRequestSerial &&
-        sectionRequestSerial == activeSectionRequestSerial &&
-        currentRoute == AppRoute.UserProfileDetail(userId) &&
-        userProfileDetailState.userId == userId
+    fun loadUserProfile(userId: Long) = publicProfileFeature.enter(userId, forumState.hideSpoilers, refresh = true)
+    fun retryUserProfileActivities() = publicProfileFeature.retry(PublicUserProfilePanel.Activities)
+    fun retryUserProfileBooks() = publicProfileFeature.retry(PublicUserProfilePanel.Books)
+    fun retryUserProfileCheckinStats() = publicProfileFeature.retry(PublicUserProfilePanel.CheckinStats)
+    fun retryUserProfileCheckinRecords() = publicProfileFeature.retry(PublicUserProfilePanel.CheckinRecords)
+    fun retryUserProfileCheckinSettings() = publicProfileFeature.retry(PublicUserProfilePanel.CheckinSettings)
 
     fun selectUserProfileTab(tab: UserProfileTab) {
         userProfileDetailState = userProfileDetailState.copy(selectedTab = tab)
@@ -6728,6 +6525,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         when (val restored = currentRoute) {
             is AppRoute.MessageDetail -> if (messageDetailState.messageId != restored.messageId) loadMessageDetail(restored.messageId)
             is AppRoute.MessageConversation -> if (messageConversationState.targetUserId != restored.targetUserId) loadMessageConversation(restored.targetUserId, restored.targetName)
+            is AppRoute.UserProfileDetail -> publicProfileFeature.enter(restored.userId, forumState.hideSpoilers)
             else -> Unit
         }
         if (leavingReader != null) {
@@ -7698,6 +7496,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         conversationFeature.close()
         messageSettingsFeature.close()
         profileFeature.close()
+        publicProfileFeature.close()
         super.onCleared()
     }
 

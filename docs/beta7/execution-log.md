@@ -199,3 +199,11 @@
 - 22233全量133suites/1003tests/0失败、Debug/AndroidTest通过（2m11s）。Profile切片APK495845B314A5ACBE2064D9A5E758548E09241E8028F68FEA8A178E2DC75B6D42准备安装；MuMu正在launch。现无活跃下载/线上QA规则，GitHub仍未push/未发Beta7。
 - 495845b包已install-r/cold2.762s，实机头像框/badge、本人动态、上传书、仓库、签到日期记录均正常；截图20260907-profile-{feature,activities,books,inventory}.png已查看。未保存的用户名追加_B7_QA→刷新仍在→精确删除6字还原seeking，截图profile-draft-retained；没有资料写入/购买/签到。MuMu现shutdown让18487 lint，Profile切片未commit/未push，详情见profile-audit.md。
 - 18487 lint通过（7m25s），本人个人页切片保存本地提交，未push。最后已装495845b包，1003全量unit/实际分区与草稿通过；MuMu仍shutdown、无活跃Gradle或下载。后续公开主页/创作管理/完整矩阵继续，不是Beta7成品。
+- 本人页节点8be86e8已保存。PublicProfileVM三项先缺类型26511编译红，新增每user独立6-entry缓存与分区任务、返回同人tabs/旧回包不污染当前人、会话清缓存，6816三项通过。已接root/AppContainer移除旧约220行请求逻辑、返回可取原cache；43635全量/Debug/AndroidTest正在跑，未安装。动态分页仍第一窗口，下一步补合并不截漏与更多入口；MuMu仍shutdown。
+- 43635全量1006tests/Debug/AndroidTest通过；88541复现多个来源分页并集合并后仅take(limit)导致漏动态。增加真实hasMore/partialFailure、本人及公开主页更多/同页重试/多页刷新保持；91582定向10项通过。43090再复现posts/bookReviews明确其他author仍混本人动态，补同作者检查；当前新全量build运行。此批仍未实机安装，后续网络恢复才验本人/他人页与多页；MuMu关机，没有线上测试写入。
+- 43921全量135suites/1010tests/0失败、Debug/AndroidTest通过。公开主页按用户+tab/filter scroll缓存，5454新6项/Debug成功；修正旧tab dispose必须写旧身份key，新增第7用例，35053全量再次执行。最后已装仍495845b本人页包，公共主页/动态分页/scroll新批尚未安装，MuMushutdown。新增功能源码不能代替当前设备证据。
+- 35053全量1012tests/Debug/AndroidTest通过，DA559464...AD7D83F7已install-r/cold4.782s，实机榛名全色100002作品46/签到215/动态正常，书→详情→返回以及动态→帖→返回坐标保持。截图public-profile/books/checkins/activity-back已查看。公开卡缺指标仍空白长标题截断，已改紧凑完整名称卡；91819全量/build含只读PublicProfilePagingLiveDeviceTest新更多按钮验证，未安装当前改动，MuMu已shutdown。
+- 91819全量1012tests/Debug/AndroidTest通过（4m10s），公开紧凑卡包12D11E9598693A2867B74C24D4632FDC04CBA3AA4AF5A02B28731ED3BB338A70，MuMu正在launch待install-r与公开动态真实page2按钮验证。本切片尚未commit/发布。
+- 12d11e95包已安装/cold3.392s，21187公开分页live首轮在performScrollTo找屏外lazy节点失败（数据hasMore已证），不是已完成分页验收。增加public-profile-list testTag改用performScrollToNode真实滚动，60199重build通过，84DB5453...EAD9AAE1准备重装复测。MuMu正在launch。
+- 84db5453包已install-r，54168公开分页实机**OK1/3.97s**：page2，6→17条、旧条目全保留，报告20260907-public-activity-paging-report.json。原生公开作品紧凑卡长名作者全显示，截图20260907-public-books-compact已查看。MuMu现shutdown让lint，无额外写入，准备本地保存切片；尚无Beta7发布。
+- 9829 lint通过（6m13s），公开主页/动态分页本批保存本地节点，未push。当前最后已装84db5453，1012全量unit+公开分页真实按钮/完整作品/返回通过，MuMu仍shutdown；下一工作区真实队列+配置业务迁移，不把旧“只改状态”计为已实现。

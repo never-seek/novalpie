@@ -61,3 +61,5 @@
 - 消息协议回归已修`success:false`被data包装吞掉、错误消息ID与HTTP拒绝说明；相同`normalizeForumActionResult`仍有外层success被包装隐藏的风险，需要独立回归并覆盖论坛/章评/进度，而不能认为消息修复已覆盖所有action结果。
 - 替换同步待迁移风险：成功创建回包仅在当前bookId相等时绑定server ID，离开本书可能丢绑定；修改source先删旧再create，后一步失败造成远端旧贡献消失；多个Update可乱序；公共列表加载只有bookId检查没有代次。下一切片按规则身份/账号/操作串行及持久检查点处理。
 - TTS慢网本地进度阻塞已先失败修复；实际353686第8→9章后台/首句/熄屏/暂停恢复通过。远端进度独立GET回验、用户主动重试入口、同段重复文本的准确跟随仍待补齐。
+- 2026-09-07工作区审计：`WorkspaceScreens.workspaceQueueItems`暂停/继续绑定root `updateWorkspaceJobStatus`，只写WorkspaceLocalStore状态；全源码除store解析没有新建WorkspaceTranslationJob或实际job执行器。故旧“本机翻译任务与进度”不能按按钮存在记为业务通过，需按网站自助翻译协议/源权限实现真正执行或清晰迁移，不能伪报暂停。
+- 公开/本人动态旧合并四个源分页后再take(limit)会漏掉本页已取回但未显示条目；已先红后修不截并集/hasMore/partialFailure同页重试。帖子及书评流另有明确author过滤缺口，同样已先红修复；当前这一批尚未设备验收。

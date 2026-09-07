@@ -115,6 +115,7 @@ internal fun ProfileScreen(
     onPersonalizationTabSelected: (PersonalizationTab) -> Unit,
     onPurchaseShopItem: (ShopItem) -> Unit,
     onEquipInventoryItem: (UserInventoryItem) -> Unit,
+    onLoadMoreActivities: () -> Unit = {},
 ) {
     val spoilerPreference = LocalForumSpoilerPreference.current
     val checkinStats = (state.checkinStats as? LoadResult.Success)?.value
@@ -307,6 +308,12 @@ internal fun ProfileScreen(
                                         ProfileActivityCard(activity = activity, onOpenActivity = onOpenActivity)
                                     }
                                 }
+                            }
+                        }
+                        state.activityPageMessage?.let { message -> item { ProfileInlineStatusCard(message) } }
+                        if (state.activityFeed?.let { it.hasMore || it.partialFailure } == true) item {
+                            OutlinedButton(onClick = onLoadMoreActivities, enabled = !state.loadingMoreActivities, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (state.loadingMoreActivities) "加载中…" else if (state.activityFeed.partialFailure) "重试本页动态" else "加载更早动态")
                             }
                         }
                     }
