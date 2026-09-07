@@ -12,6 +12,7 @@ import com.novalpie.nativeapp.model.ReaderChapterCacheState
 import com.novalpie.nativeapp.model.ReaderChapterContent
 import com.novalpie.nativeapp.model.ReaderContent
 import com.novalpie.nativeapp.model.ReaderTapArea
+import com.novalpie.nativeapp.model.ReaderViewportAnchor
 import kotlin.math.abs
 
 /** Keep a chapter-comment composer retryable when the source rejects or loses a submission. */
@@ -705,7 +706,12 @@ internal data class ReaderBodyLayout(
     val chapters: List<ReaderBodyLayoutChapter>,
     val itemLocations: List<ReaderBodyItemLocation>,
     val textLocations: List<ReaderBodyTextLocation> = emptyList(),
+    val locationsByKey: Map<String, ReaderBodyItemLocation> = emptyMap(),
+    val previousChapterControl: Boolean = false,
 )
+
+// Exposed only in the Compose semantics tree for integration checks, not spoken by accessibility.
+internal val ReaderWindowChapterIds = androidx.compose.ui.semantics.SemanticsPropertyKey<List<Long>>("ReaderWindowChapterIds")
 
 internal data class ReaderBodyTextLocation(val chapterId:Long,val itemIndex:Int,val text:String)
 
@@ -738,33 +744,41 @@ internal fun readerBodyLayoutForContents(
 
 internal fun readerBodyLayoutFromPreparedChapters(chapters: List<ReaderBodyLayoutChapter>, options: ReaderUiOptions): ReaderBodyLayout {
     val textLocations = mutableListOf<ReaderBodyTextLocation>()
+    val locationsByKey = mutableMapOf<String, ReaderBodyItemLocation>()
     val itemLocations = buildList {
         chapters.forEach { chapterLayout ->
             val chapter = chapterLayout.chapter
             var itemIndexWithinChapter = 0
-            fun addBodyItem() {
-                add(
-                    ReaderBodyItemLocation(
-                        chapterId = chapter.chapterId,
-                        itemIndexWithinChapter = itemIndexWithinChapter,
-                    ),
-                )
+            fun addBodyItem(key: String) {
+                val location = ReaderBodyItemLocation(chapter.chapterId, itemIndexWithinChapter)
+                add(location)
+                locationsByKey[key] = location
                 itemIndexWithinChapter += 1
             }
 
-            if (!chapter.title.isNullOrBlank()) addBodyItem()
-            chapterLayout.visibleBlocks.forEach { block ->
+            if (!chapter.title.isNullOrBlank()) addBodyItem("reader-title-${chapter.chapterId}")
+            chapterLayout.visibleBlocks.forEachIndexed { index, block ->
                 if (block is ReaderContentBlock.Text || (block is ReaderContentBlock.Image && options.showImages)) {
                     if (block is ReaderContentBlock.Text) textLocations += ReaderBodyTextLocation(chapter.chapterId,size,block.value)
-                    addBodyItem()
+                    addBodyItem(if (block is ReaderContentBlock.Text) "reader-text-${chapter.chapterId}-$index"
+                        else "reader-image-${chapter.chapterId}-${(block as ReaderContentBlock.Image).url}-$index")
                 }
             }
-            addBodyItem() // chapter finish marker
-            if (options.showComments) addBodyItem()
+            addBodyItem("reader-chapter-finish-${chapter.chapterId}")
+            if (options.showComments) addBodyItem("reader-chapter-comments-${chapter.chapterId}")
         }
     }
-    return ReaderBodyLayout(chapters = chapters, itemLocations = itemLocations,textLocations=textLocations.toList())
+    return ReaderBodyLayout(chapters = chapters, itemLocations = itemLocations,textLocations=textLocations.toList(), locationsByKey = locationsByKey)
 }
+
+internal fun ReaderBodyLayout.withPreviousChapterControl(): ReaderBodyLayout = if (previousChapterControl || chapters.isEmpty()) this else copy(
+    itemLocations = listOf(ReaderBodyItemLocation(0, -1)) + itemLocations,
+    textLocations = textLocations.map { it.copy(itemIndex = it.itemIndex + 1) }, previousChapterControl = true,
+)
+
+/** Stable LazyColumn keys survive prepend/eviction before the new global indices are measured. */
+internal fun readerViewportAnchorForBodyKey(layout: ReaderBodyLayout, key: Any?, offset: Int): ReaderViewportAnchor? =
+    layout.locationsByKey[key]?.let { ReaderViewportAnchor(it.chapterId, it.itemIndexWithinChapter, offset.coerceAtLeast(0)) }
 
 /** Uses the parsed document index; TTS following must not reparse HTML on the main thread. */
 internal fun readerBodyItemIndexForText(layout:ReaderBodyLayout,target:String,chapterId:Long):Int? {
@@ -779,7 +793,7 @@ internal fun readerViewportAnchorForBodyItem(
     globalItemIndex: Int,
     itemScrollOffsetPx: Int,
 ): com.novalpie.nativeapp.model.ReaderViewportAnchor? =
-    layout.itemLocations.getOrNull(globalItemIndex)?.let { location ->
+    layout.itemLocations.getOrNull(globalItemIndex)?.takeIf { it.chapterId > 0 }?.let { location ->
         com.novalpie.nativeapp.model.ReaderViewportAnchor(
             chapterId = location.chapterId,
             itemIndexWithinChapter = location.itemIndexWithinChapter,
@@ -799,7 +813,7 @@ internal fun readerBodyItemIndexForViewportAnchor(
 internal fun readerChapterIdForBodyItem(
     layout: ReaderBodyLayout,
     globalItemIndex: Int,
-): Long? = layout.itemLocations.getOrNull(globalItemIndex)?.chapterId
+): Long? = layout.itemLocations.getOrNull(globalItemIndex)?.chapterId?.takeIf { it > 0 }
 
 /** Returns the LazyColumn item containing a TTS segment, using the same item ordering as the body. */
 internal fun readerBodyItemIndexForText(

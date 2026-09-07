@@ -43,4 +43,13 @@ class ReaderDocumentPreparerTest {
         for (id in 1L..12L) preparer.prepare(1, listOf(chapter(id)), emptyList(), ReaderReplacementState(novelId = 1), ReaderUiOptions())
         assertTrue(preparer.cachedEntries <= 2)
     }
+    @Test fun prependingOneChapterDoesNotEvictAndReparseEveryUnchangedChapter() = runBlocking {
+        var parses = 0
+        val preparer = ReaderDocumentPreparer(maxEntries = 8, parse = { parses++; listOf(ReaderContentBlock.Text(it.content)) })
+        val rules = ReaderReplacementState(novelId = 1)
+        preparer.prepare(1, (2L..9L).map(::chapter), emptyList(), rules, ReaderUiOptions())
+        preparer.prepare(1, (1L..8L).map(::chapter), emptyList(), rules, ReaderUiOptions())
+        assertEquals("往回一章只需要新解析一章", 9, parses)
+        assertEquals(8, preparer.cachedEntries)
+    }
 }

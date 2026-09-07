@@ -787,6 +787,9 @@ data class ReaderState(
     val favoriteStatus: LoadResult<FavoriteStatus> = LoadResult.Idle,
     val favoriteLoading: Boolean = false,
     val loadingNextChapter: Boolean = false,
+    val loadingPreviousChapter: Boolean = false,
+    val previousChapterError: String? = null,
+    val visibleChapterId: Long? = null,
     val nextChapterError: String? = null,
     /** True when a successful catalog did not contain enough data to identify the next chapter. */
     val nextChapterWaitingForCatalog: Boolean = false,
@@ -2023,13 +2026,15 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Appends the next source chapter to the current reader window for website-style scrolling. */
-    fun loadNextReaderChapter() {
+    fun loadNextReaderChapter() = loadContinuousReaderChapter(1)
+    fun loadPreviousReaderChapter() = loadContinuousReaderChapter(-1)
+
+    private fun loadContinuousReaderChapter(direction: Int) {
         val route = currentRoute as? AppRoute.Reader ?: return
         val state = readerState
         if (
-            state.loadingNextChapter ||
-            state.nextChapterExhausted ||
-            state.nextChapterWaitingForCatalog
+            state.loadingNextChapter || state.loadingPreviousChapter ||
+            (direction > 0 && (state.nextChapterExhausted || state.nextChapterWaitingForCatalog))
         ) return
         val chapters = (state.chapters as? LoadResult.Success)?.value
         // The initial catalog request owns the Loading state. A failed/idle catalog can be retried
@@ -2039,16 +2044,21 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             return
         }
         val loadedIds = state.chapterContents.map { it.chapterId }.toSet().ifEmpty { setOf(state.chapterId) }
+        val edgeId = (if (direction < 0) state.chapterContents.firstOrNull() else state.chapterContents.lastOrNull())?.chapterId ?: state.chapterId
+        if (direction > 0 && state.chapterContents.size >= com.novalpie.nativeapp.feature.reader.text.READER_CONTINUOUS_WINDOW_SIZE &&
+            state.chapterContents.firstOrNull()?.chapterId == (state.visibleChapterId ?: state.chapterId)) return
         // An empty/incomplete catalog is not evidence that this is the last chapter. Refresh only
         // once for this sentinel state; the refreshed result decides whether to retry or to show a
         // visible manual retry affordance.
-        if (readerCatalogIsIncomplete(state.chapterId, chapters)) {
+        if (readerCatalogIsIncomplete(edgeId, chapters)) {
             readerState = state.copy(nextChapterWaitingForCatalog = true)
             refreshReaderCatalog()
             return
         }
-        val next = nextReaderChapterForInfiniteScroll(state.chapterId, chapters, loadedIds)
+        val next = if (direction < 0) adjacentReaderChapters(edgeId, chapters).previous
+            else nextReaderChapterForInfiniteScroll(edgeId, chapters, loadedIds)
         if (next == null) {
+            if (direction < 0) { readerState = state.copy(previousChapterError = "目录中没有更早的章节"); return }
             // A source deployment can temporarily return a truncated directory. Do not convert
             // that into an unrecoverable "已读完" state until one fresh read confirms it.
             if (!state.nextChapterEndConfirmationRequested) {
@@ -2068,7 +2078,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             return
         }
         readerState = state.copy(
-            loadingNextChapter = true,
+            loadingNextChapter = direction > 0,
+            loadingPreviousChapter = direction < 0,
+            previousChapterError = null,
             nextChapterError = null,
             nextChapterWaitingForCatalog = false,
             nextChapterEndConfirmationRequested = false,
@@ -2133,20 +2145,27 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                         chapters = chapters,
                     )
                 }
+                if (requestSerial != readerRequestSerial || currentRoute != route || readerState.bookId != route.bookId) return@launch
                 val existing = readerState.chapterContents
+                val addition = ReaderChapterContent(next.id, next.title, content)
+                val window = com.novalpie.nativeapp.feature.reader.text.boundedReaderChapterWindow(
+                    if (direction < 0) listOf(addition) + existing else existing + addition,
+                    readerState.visibleChapterId ?: state.chapterId, direction)
+                val retainedIds = window.map { it.chapterId }.toSet()
+                val commentStates = com.novalpie.nativeapp.feature.reader.text.retainedReaderCommentWindow(readerState.chapterCommentStates, retainedIds)
+                val targetComment = commentStates[next.id] ?: ReaderChapterCommentState()
                 readerState = readerState.copy(
-                    chapterContents = (existing + ReaderChapterContent(next.id, next.title, content))
-                        .distinctBy { it.chapterId },
+                    chapterContents = window,
                     loadingNextChapter = false,
+                    loadingPreviousChapter = false,
                     nextChapterError = null,
                     nextChapterWaitingForCatalog = false,
                     nextChapterEndConfirmationRequested = false,
                     nextChapterExhausted = false,
                     chapterCacheStates = cacheStates,
                     contentFromCache = readerState.contentFromCache || servedFromCache,
-                    chapterCommentStates = readerState.chapterCommentStates + (
-                        next.id to ReaderChapterCommentState(comments = LoadResult.Loading)
-                    ),
+                    chapterCommentStates = if (next.id in retainedIds) commentStates +
+                        (next.id to targetComment.copy(comments = LoadResult.Loading)) else commentStates,
                 )
                 launch {
                     val commentsResult = chapterComments.await()
@@ -2154,7 +2173,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                         requestSerial != readerRequestSerial ||
                         currentRoute != route ||
                         readerState.bookId != route.bookId ||
-                        readerState.chapterId != route.chapterId
+                        readerState.chapterId != route.chapterId ||
+                        readerState.chapterContents.none { it.chapterId == next.id }
                     ) return@launch
                     val existingCommentState = readerChapterCommentState(readerState, next.id)
                     readerState = readerState.copy(
@@ -2181,7 +2201,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             } else {
                 readerState = readerState.copy(
                     loadingNextChapter = false,
-                    nextChapterError = apiFailureMessage("下一章", result.exceptionOrNull() ?: IllegalStateException("缓存不可用")),
+                    loadingPreviousChapter = false,
+                    previousChapterError = if (direction < 0) apiFailureMessage("上一章", result.exceptionOrNull() ?: IllegalStateException("缓存不可用")) else readerState.previousChapterError,
+                    nextChapterError = if (direction > 0) apiFailureMessage("下一章", result.exceptionOrNull() ?: IllegalStateException("缓存不可用")) else readerState.nextChapterError,
                     nextChapterWaitingForCatalog = false,
                     nextChapterEndConfirmationRequested = false,
                     nextChapterExhausted = false,
@@ -6704,7 +6726,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         fun chapterWindow(content: ReaderContent, title: String?): List<ReaderChapterContent> {
             val loaded = ReaderChapterContent(chapterId, title ?: content.title, content)
             return if (keepWindow) {
-                previousState.chapterContents.filterNot { it.chapterId == chapterId } + loaded
+                previousState.chapterContents.map { if (it.chapterId == chapterId) loaded else it }.ifEmpty { listOf(loaded) }
             } else {
                 listOf(loaded)
             }
@@ -6729,6 +6751,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             bookId = bookId,
             bookTitle = initialBookTitle,
             chapterId = chapterId,
+            visibleChapterId = if (keepWindow) previousState.visibleChapterId else chapterId,
             entryPosition = entryPosition,
             restoreViewportAnchor = savedViewportAnchor,
             content = LoadResult.Loading,
@@ -7156,6 +7179,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val route = currentRoute as? AppRoute.Reader ?: return
         val visible = readerState.chapterContents.firstOrNull { it.chapterId == chapterId } ?: return
         if (route.bookId != readerState.bookId || visible.chapterId != chapterId) return
+        if (readerState.visibleChapterId != chapterId) readerState = readerState.copy(visibleChapterId = chapterId)
         val visibleCatalog = (readerState.chapters as? LoadResult.Success)?.value
         val chapterNumber = visibleCatalog?.let { chapters ->
             val chapterIndex = chapters.indexOfFirst { it.id == chapterId }

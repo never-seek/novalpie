@@ -195,6 +195,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -1195,6 +1196,7 @@ private fun ReaderRoute(
             viewModel.openReader(bookId, chapterId, entryPosition)
         },
         onLoadNextChapter = viewModel::loadNextReaderChapter,
+        onLoadPreviousChapter = viewModel::loadPreviousReaderChapter,
         onVisibleChapterChanged = viewModel::recordVisibleReaderChapter,
         onViewportAnchorChanged = viewModel::recordReaderViewportAnchor,
         onToggleFavorite = viewModel::toggleReaderFavorite,
@@ -6253,6 +6255,7 @@ internal fun ReaderScreen(
     onOpenReader: (Long, Long) -> Unit,
     onOpenReaderAtPosition: (Long, Long, ReaderChapterEntryPosition) -> Unit,
     onLoadNextChapter: () -> Unit,
+    onLoadPreviousChapter: () -> Unit = {},
     onVisibleChapterChanged: (Long, String?) -> Unit,
     onViewportAnchorChanged: (ReaderViewportAnchor) -> Unit,
     onToggleFavorite: () -> Unit,
@@ -6296,6 +6299,7 @@ internal fun ReaderScreen(
     val documentPreparer = remember(state.bookId) { com.novalpie.nativeapp.feature.reader.text.ReaderDocumentPreparer() }
     val emptyBodyLayout = remember { ReaderBodyLayout(emptyList(), emptyList()) }
     var preparedBody by remember(state.bookId) { mutableStateOf(emptyBodyLayout) }
+    var preparedEntryChapterId by remember(state.bookId) { mutableLongStateOf(0) }
     var preparingBody by remember(state.bookId) { mutableStateOf(false) }
     var preparationError by remember(state.bookId) { mutableStateOf<String?>(null) }
     LaunchedEffect(sourceChapterContents, chapters, replacementState.personalRules, replacementState.sharedRules,
@@ -6307,6 +6311,7 @@ internal fun ReaderScreen(
             val result = documentPreparer.prepare(state.bookId, sourceChapterContents, chapters, replacementState, options)
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             preparedBody = result
+            preparedEntryChapterId = state.chapterId
         } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (_: Exception) { preparationError = "正文排版失败，请重试" }
         finally { preparingBody = false }
@@ -6314,9 +6319,16 @@ internal fun ReaderScreen(
     // Keep visible chapters while an appended chapter prepares, but never show an old chapter
     // after an explicit directory jump. LaunchedEffect cancellation rejects outdated rule layouts.
     val sourceChapterIds = remember(sourceChapterContents) { sourceChapterContents.map { it.chapterId }.toSet() }
-    val readerBodyLayout = preparedBody.takeIf { layout ->
-        layout.chapters.isNotEmpty() && layout.chapters.all { it.chapter.chapterId in sourceChapterIds }
+    val preparedCurrentBody = preparedBody.takeIf { layout ->
+        // Retain visible keyed items until a bounded replacement finishes preparing.
+        preparedEntryChapterId == state.chapterId && layout.chapters.any { it.chapter.chapterId in sourceChapterIds }
     } ?: emptyBodyLayout
+    val windowFirstId = preparedCurrentBody.chapters.firstOrNull()?.chapter?.chapterId
+    val canLoadPreviousWindow = options.useInfiniteScroll && !options.pageTurnMode && windowFirstId != null &&
+        chapters.indexOfFirst { it.id == windowFirstId } > 0
+    val readerBodyLayout = remember(preparedCurrentBody, canLoadPreviousWindow) {
+        if (canLoadPreviousWindow) preparedCurrentBody.withPreviousChapterControl() else preparedCurrentBody
+    }
     val chapterContents = remember(readerBodyLayout) { readerBodyLayout.chapters.map { it.chapter } }
     // Keep the viewport observer alive while the infinite-scroll window grows.  Restarting it on
     // every append can lose the one layout transition where the first item changes from chapter N
@@ -6553,13 +6565,10 @@ internal fun ReaderScreen(
     LaunchedEffect(listState,pageTurnEnabled) {
         if (pageTurnEnabled) return@LaunchedEffect
         snapshotFlow {
-            listState.firstVisibleItemIndex
-        }.collect { visibleItemIndex ->
+            listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key
+        }.collect { visibleKey ->
             val bodyLayout = latestReaderBodyLayout
-            val visibleChapterId = readerChapterIdForBodyItem(
-                layout = bodyLayout,
-                globalItemIndex = visibleItemIndex,
-            )
+            val visibleChapterId = readerViewportAnchorForBodyKey(bodyLayout, visibleKey, 0)?.chapterId
             if (visibleChapterId != null && visibleReaderChapterId != visibleChapterId) {
                 visibleReaderChapterId = visibleChapterId
                 latestVisibleChapterChanged(
@@ -6578,19 +6587,12 @@ internal fun ReaderScreen(
     LaunchedEffect(listState,pageTurnEnabled) {
         if(pageTurnEnabled)return@LaunchedEffect
         snapshotFlow {
-            readerViewportPersistencePosition(
-                isScrollInProgress = listState.isScrollInProgress,
-                globalItemIndex = listState.firstVisibleItemIndex,
-                itemScrollOffsetPx = listState.firstVisibleItemScrollOffset,
-            )
+            if (listState.isScrollInProgress) null else
+                listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key?.let { it to listState.firstVisibleItemScrollOffset }
         }.collect { position ->
             position ?: return@collect
             val bodyLayout = latestReaderBodyLayout
-            readerViewportAnchorForBodyItem(
-                layout = bodyLayout,
-                globalItemIndex = position.globalItemIndex,
-                itemScrollOffsetPx = position.itemScrollOffsetPx,
-            )?.let(latestViewportAnchorChanged)
+            readerViewportAnchorForBodyKey(bodyLayout, position.first, position.second)?.let(latestViewportAnchorChanged)
         }
     }
 
@@ -6651,6 +6653,7 @@ internal fun ReaderScreen(
         state.nextChapterExhausted,
         chapterContents.size,
         preparingBody,
+        state.visibleChapterId,
     ) {
         if (preparingBody) return@LaunchedEffect
         val catalogReady = state.chapters is LoadResult.Success
@@ -7117,6 +7120,10 @@ internal fun ReaderScreen(
                 state = listState,
                 userScrollEnabled = !pageTurnEnabled,
                 modifier = Modifier
+                    .then(Modifier.semantics {
+                        testTag = "reader-continuous-list"
+                        this[ReaderWindowChapterIds] = chapterContents.map { it.chapterId }
+                    })
                     .fillMaxSize()
                     .then(readerSystemBarModifier)
                 .graphicsLayer {
@@ -7235,6 +7242,14 @@ internal fun ReaderScreen(
                         if (readerBodyLayout.chapters.isEmpty()) item {
                             if (preparationError != null) NpErrorState(message = preparationError!!, retryLabel = "重试排版", onRetry = onRetry)
                             else LibraryLoadingBlock("正在排版正文")
+                        }
+                        if (readerBodyLayout.previousChapterControl) item(key = "reader-window-previous") {
+                            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                                TextButton(onClick = onLoadPreviousChapter, enabled = !state.loadingPreviousChapter && !state.loadingNextChapter) {
+                                    Text(if (state.loadingPreviousChapter) "正在加载上一章…" else "加载上一章")
+                                }
+                                state.previousChapterError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                            }
                         }
                         readerBodyItems(
                             layout = readerBodyLayout,

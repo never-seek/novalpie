@@ -35,11 +35,13 @@ internal class ReaderDocumentPreparer(
                     val layout = ReaderBodyLayoutChapter(derived, readerBlocksForDisplay(parse(derived.content), options.removeDuplicateLines))
                     currentCoroutineContext().ensureActive()
                     cache[key] = layout
-                    while (cache.size > maxEntries.coerceAtLeast(1)) cache.remove(cache.keys.first())
-                    cachedEntries = cache.size
                     layout
                 }
             }
+            // Evict after all current-window hits update LRU order. Prepending a chapter must not
+            // evict the very next unchanged chapter and cascade into reparsing the entire window.
+            while (cache.size > maxEntries.coerceAtLeast(1)) cache.remove(cache.keys.first())
+            cachedEntries = cache.size
             currentCoroutineContext().ensureActive()
             readerBodyLayoutFromPreparedChapters(prepared, options)
         }
