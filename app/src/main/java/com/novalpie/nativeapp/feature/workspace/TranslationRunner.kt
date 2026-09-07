@@ -3,12 +3,11 @@ package com.novalpie.nativeapp.feature.workspace
 import com.novalpie.nativeapp.model.WorkspaceLocalApiConfig
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicInteger
 
 internal interface TranslationSource {
     suspend fun chapters(bookId: Long): List<TranslationChapter>
@@ -44,9 +43,14 @@ internal class TranslationRunner(private val source: TranslationSource, private 
             emit(current.copy(phase = TranslationPhase.Translating, totalChunks = ordered.size, message = "正在翻译章节"))
             val started = System.nanoTime()
             val updateMutex = Mutex()
-            val semaphore = Semaphore(config.concurrency.coerceIn(1, 8))
-            val results = coroutineScope { ordered.map { chunk -> async(Dispatchers.IO) { semaphore.withPermit {
+            val nextChunk = AtomicInteger()
+            val completedResults = arrayOfNulls<TranslationResult>(ordered.size)
+            // Bound coroutine count as well as sockets. A single worker consumes source order.
+            coroutineScope { List(minOf(ordered.size, config.concurrency.coerceIn(1, 8))) { launch(Dispatchers.IO) {
+                while (true) {
                 awaitReady()
+                val slot = nextChunk.getAndIncrement()
+                val chunk = ordered.getOrNull(slot) ?: break
                 val digest = digest(chunk.content + "\n" + JSONObject(chunk.glossary).toString() + "\n" + config.model + "\n" + config.endpoint)
                 val saved = store.checkpoint(task, chapter.id, "chunk-${chunk.index}")
                 val result = if (saved?.optString("digest") == digest) TranslationResult(saved.getString("text"), saved.optLong("tokens"), saved.optString("additions", "[]"), saved.optString("removals", "[]"))
@@ -54,8 +58,10 @@ internal class TranslationRunner(private val source: TranslationSource, private 
                         store.checkpoint(task, chapter.id, "chunk-${chunk.index}", JSONObject().put("digest", digest).put("text", translated.text).put("tokens", translated.tokens).put("additions", translated.additions).put("removals", translated.removals))
                     }
                 updateMutex.withLock { emit(current.copy(finishedChunks = current.finishedChunks + 1)) }
-                result
-            } } }.awaitAll() }
+                completedResults[slot] = result
+                }
+            } }.joinAll() }
+            val results = completedResults.map { requireNotNull(it) { "翻译分块结果缺失，未提交" } }
             awaitReady()
             val titleDigest = digest(prepared.title + config.model + config.endpoint)
             val savedTitle = withContext(Dispatchers.IO) { store.checkpoint(task, chapter.id, "title") }
