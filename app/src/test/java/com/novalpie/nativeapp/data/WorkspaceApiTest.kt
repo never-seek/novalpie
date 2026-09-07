@@ -116,11 +116,11 @@ class WorkspaceApiTest {
         assertEquals(321L, health.translators.single().responseTimeMs)
         assertEquals(98.5, health.translators.single().successRate, 0.001)
 
-        assertEquals("/workspace/apis", server.takeRequest().requestUrl?.encodedPath)
-        assertEquals("/workspace/cookie-status", server.takeRequest().requestUrl?.encodedPath)
-        assertEquals("/workspace/cookie-config", server.takeRequest().requestUrl?.encodedPath)
-        assertEquals("/workspace/stats", server.takeRequest().requestUrl?.encodedPath)
-        assertEquals("/workspace/translator-health", server.takeRequest().requestUrl?.encodedPath)
+        assertEquals("/api/workspace/apis", server.takeRequest().requestUrl?.encodedPath)
+        assertEquals("/api/workspace/cookie-status", server.takeRequest().requestUrl?.encodedPath)
+        assertEquals("/api/workspace/cookie-config", server.takeRequest().requestUrl?.encodedPath)
+        assertEquals("/api/workspace/stats", server.takeRequest().requestUrl?.encodedPath)
+        assertEquals("/api/workspace/translator-health", server.takeRequest().requestUrl?.encodedPath)
     }
 
     @Test
@@ -134,7 +134,7 @@ class WorkspaceApiTest {
 
         val create = server.takeRequest()
         assertEquals("POST", create.method)
-        assertEquals("/workspace/apis", create.requestUrl?.encodedPath)
+        assertEquals("/api/workspace/apis", create.requestUrl?.encodedPath)
         JSONObject(create.body.readUtf8()).also { body ->
             assertEquals("DeepSeek", body.getString("name"))
             assertEquals("deepseek-chat", body.getString("model"))
@@ -145,17 +145,17 @@ class WorkspaceApiTest {
 
         val update = server.takeRequest()
         assertEquals("PUT", update.method)
-        assertEquals("/workspace/apis/9", update.requestUrl?.encodedPath)
+        assertEquals("/api/workspace/apis/9", update.requestUrl?.encodedPath)
         assertEquals("DeepSeek V2", JSONObject(update.body.readUtf8()).getString("name"))
 
         val delete = server.takeRequest()
         assertEquals("DELETE", delete.method)
-        assertEquals("/workspace/apis/9", delete.requestUrl?.encodedPath)
+        assertEquals("/api/workspace/apis/9", delete.requestUrl?.encodedPath)
         assertEquals(0L, delete.bodySize)
 
         val toggle = server.takeRequest()
         assertEquals("POST", toggle.method)
-        assertEquals("/workspace/apis/9/toggle", toggle.requestUrl?.encodedPath)
+        assertEquals("/api/workspace/apis/9/toggle", toggle.requestUrl?.encodedPath)
         assertEquals(0L, toggle.bodySize)
         Unit
     }
@@ -171,7 +171,7 @@ class WorkspaceApiTest {
 
         val create = server.takeRequest()
         assertEquals("POST", create.method)
-        assertEquals("/workspace/cookie-config", create.requestUrl?.encodedPath)
+        assertEquals("/api/workspace/cookie-config", create.requestUrl?.encodedPath)
         JSONObject(create.body.readUtf8()).also { body ->
             assertEquals("primary", body.getString("config_key"))
             assertEquals("cookie=value", body.getString("cookie_raw"))

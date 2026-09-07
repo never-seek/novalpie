@@ -423,7 +423,10 @@ data class WorkspaceState(
     val localApis: List<WorkspaceLocalApiConfig> = emptyList(),
     val jobs: List<WorkspaceTranslationJob> = emptyList(),
     val actionLoading: Boolean = false,
-    val actionMessage: String? = null
+    val actionMessage: String? = null,
+    val failedApiDraft: WorkspaceApiDraft? = null,
+    val failedCookieDraft: WorkspaceCookieDraft? = null,
+    val hasUnassignedLegacyData: Boolean = false,
 )
 
 data class UploadDocument(
@@ -1027,7 +1030,6 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         onDeleted = { id -> if ((currentRoute as? AppRoute.MessageDetail)?.messageId == id) goBack() },
         onChanged = { if (messageCenterState.messages !is LoadResult.Idle) messageInboxFeature.refresh() },
     )
-    private var workspaceRequestSerial = 0L
     private var uploadRequestSerial = 0L
     private var editorRequestSerial = 0L
     private var editorProcessorRequestSerial = 0L
@@ -1090,13 +1092,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     val messageDetailState: MessageDetailState get() = messageDetailFeature.state
     val messageConversationState: MessageConversationState get() = conversationFeature.state
     val messageSettingsState: MessageSettingsState get() = messageSettingsFeature.state
-    var workspaceState by mutableStateOf(
-        WorkspaceState(
-            localApis = workspaceLocalStore.loadApis(),
-            jobs = workspaceLocalStore.loadJobs()
-        )
+    private val workspaceFeature = com.novalpie.nativeapp.feature.workspace.WorkspaceViewModel(
+        dependencies.workspaceRepository, com.novalpie.nativeapp.feature.workspace.StoredWorkspaceLocalRepository(workspaceLocalStore),
     )
-        private set
+    var workspaceState: WorkspaceState
+        get() = workspaceFeature.state
+        private set(value) { workspaceFeature.present { value } }
     var uploadBookState by mutableStateOf(UploadBookState())
         private set
     var uploadEditorState by mutableStateOf(UploadEditorState(archives = editorArchiveStore.list()))
@@ -1209,6 +1210,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     messageInboxFeature.environmentChanged();messageDetailFeature.environmentChanged();conversationFeature.environmentChanged();messageSettingsFeature.environmentChanged()
                     profileFeature.environmentChanged()
                     publicProfileFeature.environmentChanged()
+                    workspaceFeature.environmentChanged()
                     replacementLoadRevision++;pendingReaderReplacementCreates.clear();deletedPendingReaderReplacementCreates.clear()
                     readerReplacementState = ReaderReplacementState()
                     when(val route=currentRoute){
@@ -1219,6 +1221,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                         is AppRoute.MessageConversation->loadMessageConversation(route.targetUserId,route.targetName)
                         AppRoute.MessageSettings->loadMessageSettings()
                         AppRoute.Profile->loadProfile()
+                        AppRoute.Workspace->loadWorkspace()
                         is AppRoute.UserProfileDetail->loadUserProfile(route.userId)
                         is AppRoute.Reader->loadReaderReplacementRules(route.bookId)
                         else->Unit
@@ -4258,171 +4261,16 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         workspaceState = workspaceState.copy(selectedTab = tab, actionMessage = null)
     }
 
-    fun loadWorkspace() {
-        val requestSerial = ++workspaceRequestSerial
-        workspaceState = workspaceState.copy(
-            apiConfigs = LoadResult.Loading,
-            cookieStatus = LoadResult.Loading,
-            cookieConfigs = LoadResult.Loading,
-            health = LoadResult.Loading,
-            localApis = workspaceLocalStore.loadApis(),
-            jobs = workspaceLocalStore.loadJobs(),
-            actionMessage = null
-        )
-        viewModelScope.launch {
-            val apis = async { runCatching { api.workspaceApiConfigs() } }
-            val cookieStatus = async { runCatching { api.workspaceCookieStatus() } }
-            val cookies = async { runCatching { api.workspaceCookieConfigs() } }
-            val health = async { runCatching { api.workspaceHealth() } }
-            val apiResult = apis.await()
-            val cookieStatusResult = cookieStatus.await()
-            val cookieResult = cookies.await()
-            val healthResult = health.await()
-            if (!isFreshRequestSerial(requestSerial, workspaceRequestSerial)) return@launch
-            workspaceState = workspaceState.copy(
-                apiConfigs = apiResult.toLoadResult("工作区 API 配置"),
-                cookieStatus = cookieStatusResult.toLoadResult("Cookie 状态"),
-                cookieConfigs = cookieResult.toLoadResult("Cookie 配置"),
-                health = healthResult.toLoadResult("工作区健康状态")
-            )
-        }
-    }
-
-    fun saveWorkspaceApi(draft: WorkspaceApiDraft) {
-        validateWorkspaceApiDraft(draft)?.let { error ->
-            workspaceState = workspaceState.copy(actionMessage = error)
-            return
-        }
-        if (workspaceState.actionLoading) return
-        workspaceState = workspaceState.copy(actionLoading = true, actionMessage = null)
-        viewModelScope.launch {
-            val result = runCatching {
-                val serverResult = when {
-                    draft.shareToServer && draft.serverId != null -> api.updateWorkspaceApi(
-                        id = draft.serverId,
-                        name = draft.name,
-                        model = draft.model,
-                        endpoint = draft.endpoint,
-                        apiKey = draft.apiKey,
-                        concurrency = draft.concurrency.toInt()
-                    )
-                    draft.shareToServer -> api.createWorkspaceApi(
-                        name = draft.name,
-                        model = draft.model,
-                        endpoint = draft.endpoint,
-                        apiKey = draft.apiKey,
-                        concurrency = draft.concurrency.toInt()
-                    )
-                    draft.serverId != null -> api.deleteWorkspaceApi(draft.serverId)
-                    else -> com.novalpie.nativeapp.model.WorkspaceActionResult(success = true)
-                }
-                if (!serverResult.success) error(serverResult.message ?: "Workspace API operation failed")
-                val localId = draft.id ?: System.currentTimeMillis()
-                workspaceLocalStore.upsertApi(
-                    WorkspaceLocalApiConfig(
-                        id = localId,
-                        name = draft.name.trim(),
-                        model = draft.model.trim(),
-                        endpoint = draft.endpoint.trim(),
-                        apiKey = draft.apiKey.trim(),
-                        concurrency = draft.concurrency.toInt(),
-                        sharedToServer = draft.shareToServer,
-                        serverId = if (draft.shareToServer) serverResult.id ?: draft.serverId else null
-                    )
-                )
-                serverResult
-            }
-            workspaceState = result.fold(
-                onSuccess = {
-                    workspaceState.copy(
-                        localApis = workspaceLocalStore.loadApis(),
-                        actionLoading = false,
-                        actionMessage = it.message ?: "API 配置已保存"
-                    )
-                },
-                onFailure = { failure ->
-                    workspaceState.copy(
-                        actionLoading = false,
-                        actionMessage = apiFailureMessage("保存 API 配置", failure)
-                    )
-                }
-            )
-            if (result.isSuccess) loadWorkspace()
-        }
-    }
-
-    fun deleteWorkspaceLocalApi(config: WorkspaceLocalApiConfig) {
-        if (workspaceState.actionLoading) return
-        workspaceState = workspaceState.copy(actionLoading = true, actionMessage = null)
-        viewModelScope.launch {
-            val result = runCatching {
-                config.serverId?.let { api.deleteWorkspaceApi(it) }
-                workspaceLocalStore.deleteApi(config.id)
-            }
-            workspaceState = result.fold(
-                onSuccess = {
-                    workspaceState.copy(
-                        localApis = workspaceLocalStore.loadApis(),
-                        actionLoading = false,
-                        actionMessage = "API 配置已删除"
-                    )
-                },
-                onFailure = { failure ->
-                    workspaceState.copy(
-                        actionLoading = false,
-                        actionMessage = apiFailureMessage("删除 API 配置", failure)
-                    )
-                }
-            )
-            if (result.isSuccess) loadWorkspace()
-        }
-    }
-
-    fun deleteWorkspaceServerApi(config: WorkspaceApiConfig) {
-        runWorkspaceAction("API 配置已删除") { api.deleteWorkspaceApi(config.id) }
-    }
-
-    fun toggleWorkspaceApi(config: WorkspaceApiConfig) {
-        runWorkspaceAction("API 状态已更新") { api.toggleWorkspaceApi(config.id) }
-    }
-
-    fun saveWorkspaceCookie(draft: WorkspaceCookieDraft) {
-        validateWorkspaceCookieDraft(draft)?.let { error ->
-            workspaceState = workspaceState.copy(actionMessage = error)
-            return
-        }
-        runWorkspaceAction("Cookie 配置已保存") {
-            if (draft.id == null) {
-                api.createWorkspaceCookie(
-                    configKey = draft.configKey,
-                    description = draft.description,
-                    cookieRaw = draft.cookieRaw,
-                    proxyIp = draft.proxyIp,
-                    isActive = draft.isActive
-                )
-            } else {
-                api.updateWorkspaceCookie(
-                    id = draft.id,
-                    description = draft.description,
-                    cookieRaw = draft.cookieRaw.takeIf { it.isNotBlank() },
-                    proxyIp = draft.proxyIp,
-                    isActive = draft.isActive
-                )
-            }
-        }
-    }
-
-    fun toggleWorkspaceCookie(config: com.novalpie.nativeapp.model.WorkspaceCookieConfig) {
-        runWorkspaceAction("Cookie 状态已更新") {
-            api.setWorkspaceCookieActive(config.id, !config.isActive)
-        }
-    }
-
-    fun deleteWorkspaceCookie(config: com.novalpie.nativeapp.model.WorkspaceCookieConfig) {
-        runWorkspaceAction("Cookie 配置已删除") {
-            api.deleteWorkspaceCookie(config.id)
-        }
-    }
+    fun loadWorkspace() = workspaceFeature.load()
+    fun saveWorkspaceApi(draft: WorkspaceApiDraft) = workspaceFeature.saveApi(draft)
+    fun deleteWorkspaceLocalApi(config: WorkspaceLocalApiConfig) = workspaceFeature.deleteLocal(config)
+    fun deleteWorkspaceServerApi(config: WorkspaceApiConfig) = workspaceFeature.deleteServer(config.id)
+    fun toggleWorkspaceApi(config: WorkspaceApiConfig) = workspaceFeature.toggleApi(config.id)
+    fun saveWorkspaceCookie(draft: WorkspaceCookieDraft) = workspaceFeature.saveCookie(draft)
+    fun toggleWorkspaceCookie(config: com.novalpie.nativeapp.model.WorkspaceCookieConfig) = workspaceFeature.toggleCookie(config.id, !config.isActive)
+    fun deleteWorkspaceCookie(config: com.novalpie.nativeapp.model.WorkspaceCookieConfig) = workspaceFeature.deleteCookie(config.id)
+    fun dismissWorkspaceFailedDrafts() = workspaceFeature.dismissFailedDrafts()
+    fun restoreWorkspaceLegacy() = workspaceFeature.restoreLegacy()
 
     fun updateWorkspaceJobStatus(job: WorkspaceTranslationJob, status: String) {
         workspaceLocalStore.upsertJob(job.copy(status = status, updatedAt = System.currentTimeMillis().toString()))
@@ -4440,35 +4288,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         )
     }
 
-    private fun runWorkspaceAction(
-        successMessage: String,
-        action: suspend () -> com.novalpie.nativeapp.model.WorkspaceActionResult
-    ) {
-        if (workspaceState.actionLoading) return
-        workspaceState = workspaceState.copy(actionLoading = true, actionMessage = null)
-        viewModelScope.launch {
-            val result = runCatching {
-                action().also { response ->
-                    if (!response.success) error(response.message ?: "工作区操作失败")
-                }
-            }
-            workspaceState = result.fold(
-                onSuccess = {
-                    workspaceState.copy(
-                        actionLoading = false,
-                        actionMessage = it.message ?: successMessage
-                    )
-                },
-                onFailure = { failure ->
-                    workspaceState.copy(
-                        actionLoading = false,
-                        actionMessage = apiFailureMessage(successMessage, failure)
-                    )
-                }
-            )
-            if (result.isSuccess) loadWorkspace()
-        }
-    }
+
 
     fun updateForumSearchQuery(value: String) = forumFeature.updateQuery(value)
 
@@ -7497,6 +7317,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         messageSettingsFeature.close()
         profileFeature.close()
         publicProfileFeature.close()
+        workspaceFeature.close()
         super.onCleared()
     }
 

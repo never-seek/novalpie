@@ -60,6 +60,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.novalpie.nativeapp.model.LoadResult
@@ -85,8 +87,19 @@ internal fun WorkspaceScreen(
     onDeleteCookie: (WorkspaceCookieConfig) -> Unit,
     onUpdateJobStatus: (WorkspaceTranslationJob, String) -> Unit,
     onDeleteJob: (WorkspaceTranslationJob) -> Unit,
-    onOpenUpload: () -> Unit
+    onOpenUpload: () -> Unit,
+    onDismissFailedDrafts: () -> Unit = {},
+    onRestoreLegacyData: () -> Unit = {},
 ) {
+    var retryApi by remember { mutableStateOf<WorkspaceApiDraft?>(null) }
+    var retryCookie by remember { mutableStateOf<WorkspaceCookieDraft?>(null) }
+    var restoreLegacy by remember { mutableStateOf(false) }
+    if (restoreLegacy) AlertDialog(onDismissRequest = { restoreLegacy = false }, title = { Text("恢复旧工作区配置") },
+        text = { Text("升级时没有可识别的原账号。确认将旧本机配置恢复到当前账号？不会重新共享到服务器，旧任务保持暂停，原始备份保留。") },
+        confirmButton = { TextButton(onClick = { restoreLegacy = false; onRestoreLegacyData() }) { Text("恢复到当前账号") } },
+        dismissButton = { TextButton(onClick = { restoreLegacy = false }) { Text("取消") } })
+    retryApi?.let { draft -> WorkspaceApiDialog(draft, { retryApi = null }) { retryApi = null; onSaveApi(it) } }
+    retryCookie?.let { draft -> WorkspaceCookieDialog(draft, { retryCookie = null }) { retryCookie = null; onSaveCookie(it) } }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 40.dp),
@@ -105,6 +118,19 @@ internal fun WorkspaceScreen(
             }
         }
         state.actionMessage?.let { item { WorkspaceNotice(it) } }
+        if (state.hasUnassignedLegacyData) item { OutlinedButton(onClick = { restoreLegacy = true }) { Text("恢复未归属的旧工作区配置") } }
+        state.failedApiDraft?.let { draft -> item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { retryApi = draft }, enabled = !state.actionLoading) { Text("继续编辑未保存的 API") }
+                TextButton(onClick = onDismissFailedDrafts) { Text("放弃草稿") }
+            }
+        } }
+        state.failedCookieDraft?.let { draft -> item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { retryCookie = draft }, enabled = !state.actionLoading) { Text("继续编辑未保存的 Cookie") }
+                TextButton(onClick = onDismissFailedDrafts) { Text("放弃草稿") }
+            }
+        } }
 
         when (state.selectedTab) {
             WorkspaceTab.Overview -> workspaceOverviewItems(state, onRefresh, onOpenUpload)
@@ -140,9 +166,9 @@ private fun WorkspaceHero(state: WorkspaceState, onRefresh: () -> Unit) {
                 IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, contentDescription = "刷新", tint = Color.White) }
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item { WorkspaceHeroStat("API", health?.apiStatus?.total ?: 0) }
-                item { WorkspaceHeroStat("健康", health?.apiStatus?.healthy ?: 0) }
-                item { WorkspaceHeroStat("Cookie", ((state.cookieConfigs as? LoadResult.Success)?.value?.myConfigs?.size ?: 0)) }
+                item { WorkspaceHeroStat("API", health?.apiStatus?.total) }
+                item { WorkspaceHeroStat("健康", health?.apiStatus?.healthy) }
+                item { WorkspaceHeroStat("Cookie", (state.cookieConfigs as? LoadResult.Success)?.value?.myConfigs?.size) }
                 item { WorkspaceHeroStat("任务", state.jobs.size) }
             }
         }
@@ -150,10 +176,10 @@ private fun WorkspaceHero(state: WorkspaceState, onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun WorkspaceHeroStat(label: String, value: Int) {
+private fun WorkspaceHeroStat(label: String, value: Int?) {
     Surface(color = Color.White.copy(alpha = 0.14f), shape = RoundedCornerShape(14.dp)) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Text(value.toString(), color = Color.White, fontWeight = FontWeight.Bold)
+            Text(value?.toString() ?: "—", color = Color.White, fontWeight = FontWeight.Bold)
             Text(label, color = Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.labelSmall)
         }
     }
@@ -177,6 +203,19 @@ private fun androidx.compose.foundation.lazy.LazyListScope.workspaceOverviewItem
         LoadResult.Idle, LoadResult.Loading -> item { WorkspaceLoading("正在检查服务状态") }
         is LoadResult.Error -> item { WorkspaceError(health.message, onRefresh) }
         is LoadResult.Success -> {
+            if (health.value.translationCounts.isNotEmpty()) item {
+                ElevatedCard(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("站点翻译状态", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        health.value.translationCounts.forEach { count ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(count.label, Modifier.weight(1f))
+                                Text(count.count.toString(), fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+            }
             item {
                 val status = health.value.apiStatus
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -480,7 +519,7 @@ private fun WorkspaceApiDialog(initial: WorkspaceApiDraft, onDismiss: () -> Unit
         onDismissRequest = onDismiss,
         title = { Text(if (initial.id == null && initial.serverId == null) "添加 API" else "编辑 API") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(draft.name, { draft = draft.copy(name = it) }, label = { Text("API 名称") }, singleLine = true)
                 OutlinedTextField(draft.model, { draft = draft.copy(model = it) }, label = { Text("模型") }, singleLine = true)
                 OutlinedTextField(draft.endpoint, { draft = draft.copy(endpoint = it) }, label = { Text("API 端点") }, singleLine = true)
@@ -503,7 +542,7 @@ private fun WorkspaceCookieDialog(initial: WorkspaceCookieDraft, onDismiss: () -
         onDismissRequest = onDismiss,
         title = { Text(if (initial.id == null) "添加 Cookie" else "编辑 Cookie") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(draft.configKey, { draft = draft.copy(configKey = it) }, label = { Text("配置键名") }, enabled = initial.id == null, singleLine = true)
                 OutlinedTextField(draft.description, { draft = draft.copy(description = it) }, label = { Text("配置说明") })
                 OutlinedTextField(draft.cookieRaw, { draft = draft.copy(cookieRaw = it) }, label = { Text(if (initial.id == null) "Cookie 内容" else "Cookie 内容（留空表示不修改）") }, minLines = 3)

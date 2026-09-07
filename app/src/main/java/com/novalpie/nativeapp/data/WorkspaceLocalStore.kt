@@ -6,8 +6,13 @@ import com.novalpie.nativeapp.model.WorkspaceTranslationJob
 import org.json.JSONArray
 import org.json.JSONObject
 
-class WorkspaceLocalStore(context: Context) {
+class WorkspaceLocalStore(context: Context, private val accountIdProvider: () -> Long? = {
+    AuthSessionStore(context.applicationContext).loadToken()?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0)?.id }
+}) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    init { synchronized(MIGRATION_LOCK) {
+        if (!prefs.contains(LEGACY_OWNER)) prefs.edit().putLong(LEGACY_OWNER, accountIdProvider()?.takeIf { it > 0 } ?: -1L).apply()
+    } }
 
     fun loadApis(): List<WorkspaceLocalApiConfig> = parseArray(KEY_APIS).mapNotNull { item ->
         val id = item.longOrNull("id") ?: return@mapNotNull null
@@ -61,11 +66,11 @@ class WorkspaceLocalStore(context: Context) {
     }
 
     fun clearAll() {
-        prefs.edit().remove(KEY_APIS).remove(KEY_JOBS).apply()
+        prefs.edit().remove(accountKey(KEY_APIS)).remove(accountKey(KEY_JOBS)).apply()
     }
 
     private fun parseArray(key: String): List<JSONObject> {
-        val raw = prefs.getString(key, null)?.takeIf { it.isNotBlank() } ?: return emptyList()
+        val raw = prefs.getString(accountKey(key), null)?.takeIf { it.isNotBlank() } ?: return emptyList()
         val array = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
         return (0 until array.length()).mapNotNull { index -> array.optJSONObject(index) }
     }
@@ -73,7 +78,44 @@ class WorkspaceLocalStore(context: Context) {
     private fun saveArray(key: String, values: List<JSONObject>) {
         val array = JSONArray()
         values.forEach(array::put)
-        prefs.edit().putString(key, array.toString()).apply()
+        prefs.edit().putString(accountKey(key), array.toString()).apply()
+    }
+
+    private fun accountKey(legacy: String): String = synchronized(MIGRATION_LOCK) {
+        val account = accountIdProvider()?.takeIf { it > 0 }
+        val key = "account_${account ?: "guest"}_$legacy"
+        val marker = "migrated_$key"
+        if (!prefs.getBoolean(marker, false)) {
+            val editor = prefs.edit()
+            if (account != null && prefs.getLong(LEGACY_OWNER, -1) == account && !prefs.contains(key)) {
+                prefs.getString(legacy, null)?.let { editor.putString(key, it) }
+            }
+            editor.putBoolean(marker, true).apply()
+        }
+        key
+    }
+
+    fun hasUnassignedLegacyData(): Boolean = prefs.getLong(LEGACY_OWNER, -1) == -1L &&
+        accountIdProvider()?.let { it > 0 } == true && !prefs.getBoolean("legacy_restored", false) &&
+        listOf(KEY_APIS, KEY_JOBS).any { key -> prefs.getString(key, null)?.let { runCatching { JSONArray(it).length() > 0 }.getOrDefault(false) } == true }
+
+    fun restoreLegacyData(): Boolean = synchronized(MIGRATION_LOCK) {
+        if (!hasUnassignedLegacyData()) return@synchronized false
+        val editor = prefs.edit()
+        for (key in listOf(KEY_APIS, KEY_JOBS)) {
+            val raw = prefs.getString(key, null) ?: continue
+            val old = runCatching { JSONArray(raw) }.getOrNull() ?: continue
+            val combined = JSONArray().apply { parseArray(key).forEach(::put) }
+            for (index in 0 until old.length()) old.optJSONObject(index)?.let { item ->
+                val copy = JSONObject(item.toString())
+                if (key == KEY_APIS) { copy.remove("server_id"); copy.put("shared_to_server", false) }
+                else copy.put("status", "paused")
+                if ((0 until combined.length()).none { combined.optJSONObject(it)?.optLong("id") == copy.optLong("id") }) combined.put(copy)
+            }
+            editor.putString(accountKey(key), combined.toString())
+        }
+        editor.putBoolean("legacy_restored", true).apply()
+        true
     }
 
     private fun apiToJson(config: WorkspaceLocalApiConfig): JSONObject = JSONObject()
@@ -122,5 +164,7 @@ class WorkspaceLocalStore(context: Context) {
         private const val PREFS_NAME = "novalpie_native_workspace"
         private const val KEY_APIS = "api_configs"
         private const val KEY_JOBS = "translation_jobs"
+        private const val LEGACY_OWNER = "beta7_legacy_owner_id"
+        private val MIGRATION_LOCK = Any()
     }
 }

@@ -682,13 +682,17 @@ data class WorkspaceTranslatorHealth(
     val approvalStatus: String? = null,
     val responseTimeMs: Long = 0,
     val successRate: Double = 0.0,
-    val lastHealthError: String? = null
+    val lastHealthError: String? = null,
+    val totalRequests: Long = 0,
 )
 
 data class WorkspaceHealth(
     val apiStatus: WorkspaceApiStatus = WorkspaceApiStatus(),
-    val translators: List<WorkspaceTranslatorHealth> = emptyList()
+    val translators: List<WorkspaceTranslatorHealth> = emptyList(),
+    val translationCounts: List<WorkspaceTranslationCount> = emptyList(),
 )
+
+data class WorkspaceTranslationCount(val status: String, val label: String, val count: Long)
 
 data class WorkspaceActionResult(
     val success: Boolean,

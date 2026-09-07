@@ -779,6 +779,8 @@ fun NovalPieApp(
                     onDeleteCookie = viewModel::deleteWorkspaceCookie,
                     onUpdateJobStatus = viewModel::updateWorkspaceJobStatus,
                     onDeleteJob = viewModel::deleteWorkspaceJob,
+                    onDismissFailedDrafts = viewModel::dismissWorkspaceFailedDrafts,
+                    onRestoreLegacyData = viewModel::restoreWorkspaceLegacy,
                     onOpenUpload = viewModel::openUploadBook
                 )
 

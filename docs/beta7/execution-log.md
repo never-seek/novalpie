@@ -207,3 +207,10 @@
 - 12d11e95包已安装/cold3.392s，21187公开分页live首轮在performScrollTo找屏外lazy节点失败（数据hasMore已证），不是已完成分页验收。增加public-profile-list testTag改用performScrollToNode真实滚动，60199重build通过，84DB5453...EAD9AAE1准备重装复测。MuMu正在launch。
 - 84db5453包已install-r，54168公开分页实机**OK1/3.97s**：page2，6→17条、旧条目全保留，报告20260907-public-activity-paging-report.json。原生公开作品紧凑卡长名作者全显示，截图20260907-public-books-compact已查看。MuMu现shutdown让lint，无额外写入，准备本地保存切片；尚无Beta7发布。
 - 9829 lint通过（6m13s），公开主页/动态分页本批保存本地节点，未push。当前最后已装84db5453，1012全量unit+公开分页真实按钮/完整作品/返回通过，MuMu仍shutdown；下一工作区真实队列+配置业务迁移，不把旧“只改状态”计为已实现。
+- 6960db6已保存公开主页节点。工作区初始Repository/ViewModel尚未接root，三项旧算法回归准备；43355/94958 adapter错误函数/缺参编译失败已校正为既有setWorkspaceCookieActive，当前定向build进行中。没有读用户实际key/cookie或执行远端配置写入。网站dSlFh-Ca源码已核对真实prepare/raw/submit和模型调用，旧队列只有状态变更必须实现真实执行器。
+- 49677工作区旧逻辑3红、48186修后3绿，接root后50051全量1015tests/Debug/AndroidTest通过（未装）。95223账号切换串配置/外层拒绝两红，82679工作区相关测试修后绿色：按账号隔离key/jobs保留legacy、未归属确认恢复、不自动共享/运行；API/Cookie明确拒绝不伪空、不伪成功，手动重试create先read避免同值重复，UI失败草稿可继续编辑。新全量build执行中，尚未实机；真实翻译队列仍未实现。详细协议见workspace-audit.md。
+- 8728全量1017/Debug/AndroidTest通过后发现工作区13请求漏/api前缀（源HTML apiBase及dSlFh-Ca拼接确证），81739新协议用例先红；修正确路径并纠正旧WorkspaceApiTest保留参数断言，35691全量138suites/1018tests/0失败、Debug/AndroidTest通过。当前MuMu launch准备安装工作区配置切片，未读用户secret/未远端配置写入。
+- 配置APK9862376C...17089275已install-r/cold3.076s，95971合成WorkspaceDraftDeviceTest通过（保存失败草稿重新编辑字段保留，不调用实际API）。实际workspace读取出现错误全0，公开源stats显示data.apiStatus是7个翻译数量数组，不是旧API汇总object；36304新样本先红，修translationCounts及从translators计算API数。58004缺totalRequests模型字段编译失败，已补当前下一全量build，MuMu已shutdown。真实配置值未记录，源统计仅记录状态/数量。
+- 22708全量138suites/1019tests/0失败、Debug/AndroidTest通过（11m31s，本机资源慢），现在MuMu launch安装统计数组兼容包；配置模块真实页待复验，真实任务执行器尚未实现。
+- EAC6038CED0D84192F86627991B49E80A8123DE318F8ABF9D0C35B17B04CD598统计包已install-r/cold3.727s，真实工作区API383/健康18及7类翻译数量正常（待翻8397、失败54、自助7330、上传暂不可57977等本次值）；截图20260907-workspace-status.png已查看，无secret。35075同包草稿UI再次通过；MuMu现在shutdown让lint，配置本批未commit，真执行器仍下一项。
+- 21522 lint通过（8m19s），工作区配置切片保存本地节点，未push。最后已装eac6038c，1019全量unit/草稿UI/当前源统计实机通过；真实翻译执行器仍下一阶段，MuMu关机无任务运行。

@@ -1425,24 +1425,35 @@ class NovalPieApi(
     }
 
     suspend fun workspaceApiConfigs(): List<WorkspaceApiConfig> = withContext(Dispatchers.IO) {
-        normalizeWorkspaceApiConfigs(get("/workspace/apis"))
+        normalizeWorkspaceApiConfigs(requireSuccessfulEnvelope(get("/api/workspace/apis"), "工作区配置读取被拒绝"))
     }
 
     suspend fun workspaceCookieStatus(): WorkspaceCookieStatus = withContext(Dispatchers.IO) {
-        val source = unwrapObject(get("/workspace/cookie-status"), "data", "result")
+        val source = unwrapObject(requireSuccessfulEnvelope(get("/api/workspace/cookie-status"), "工作区状态读取被拒绝"), "data", "result")
         WorkspaceCookieStatus(
             hasCookie = source.firstBooleanOrNull("hasCookie", "has_cookie") ?: false
         )
     }
 
     suspend fun workspaceCookieConfigs(): WorkspaceCookieConfigs = withContext(Dispatchers.IO) {
-        normalizeWorkspaceCookieConfigs(get("/workspace/cookie-config"))
+        normalizeWorkspaceCookieConfigs(requireSuccessfulEnvelope(get("/api/workspace/cookie-config"), "工作区配置读取被拒绝"))
     }
 
     suspend fun workspaceHealth(): WorkspaceHealth = withContext(Dispatchers.IO) {
-        val stats = normalizeWorkspaceApiStatus(get("/workspace/stats"))
-        val translators = normalizeWorkspaceTranslators(get("/workspace/translator-health"))
-        WorkspaceHealth(apiStatus = stats, translators = translators)
+        val rawStats = requireSuccessfulEnvelope(get("/api/workspace/stats"), "工作区统计读取被拒绝")
+        val translators = normalizeWorkspaceTranslators(requireSuccessfulEnvelope(get("/api/workspace/translator-health"), "翻译器状态读取被拒绝"))
+        val root = unwrapObject(rawStats, "data", "result")
+        val counts = root.optJSONArray("apiStatus")?.let { array ->
+            (0 until array.length()).mapNotNull { index ->
+                val item = array.optJSONObject(index) ?: return@mapNotNull null
+                val status = item.firstStringOrNull("status") ?: return@mapNotNull null
+                com.novalpie.nativeapp.model.WorkspaceTranslationCount(status, item.firstStringOrNull("label") ?: status, item.longOrNull("count") ?: 0)
+            }
+        }
+        val stats = if (counts != null) WorkspaceApiStatus(total = translators.size, active = translators.count { it.isActive },
+            healthy = translators.count { it.isActive && it.isHealthy }, totalRequests = translators.sumOf { it.totalRequests })
+            else normalizeWorkspaceApiStatus(rawStats)
+        WorkspaceHealth(apiStatus = stats, translators = translators, translationCounts = counts.orEmpty())
     }
 
     suspend fun createWorkspaceApi(
@@ -1454,7 +1465,7 @@ class NovalPieApi(
     ): WorkspaceActionResult = withContext(Dispatchers.IO) {
         normalizeWorkspaceActionResult(
             post(
-                "/workspace/apis",
+                "/api/workspace/apis",
                 JSONObject()
                     .put("name", name.trim())
                     .put("model", model.trim())
@@ -1475,7 +1486,7 @@ class NovalPieApi(
     ): WorkspaceActionResult = withContext(Dispatchers.IO) {
         normalizeWorkspaceActionResult(
             put(
-                "/workspace/apis/$id",
+                "/api/workspace/apis/$id",
                 JSONObject()
                     .put("name", name.trim())
                     .put("model", model.trim())
@@ -1487,13 +1498,13 @@ class NovalPieApi(
     }
 
     suspend fun deleteWorkspaceApi(id: Long): WorkspaceActionResult = withContext(Dispatchers.IO) {
-        normalizeWorkspaceActionResult(delete("/workspace/apis/$id"))
+        normalizeWorkspaceActionResult(delete("/api/workspace/apis/$id"))
     }
 
     /** Matches the current workspace's server-side active/inactive toggle control. */
     suspend fun toggleWorkspaceApi(id: Long): WorkspaceActionResult = withContext(Dispatchers.IO) {
         require(id > 0) { "workspace api id must be positive" }
-        normalizeWorkspaceActionResult(post("/workspace/apis/$id/toggle"))
+        normalizeWorkspaceActionResult(post("/api/workspace/apis/$id/toggle"))
     }
 
     suspend fun createWorkspaceCookie(
@@ -1509,7 +1520,7 @@ class NovalPieApi(
             .put("is_active", isActive)
         description?.trim()?.takeIf { it.isNotEmpty() }?.let { body.put("description", it) }
         proxyIp?.trim()?.takeIf { it.isNotEmpty() }?.let { body.put("proxy_ip", it) }
-        normalizeWorkspaceActionResult(post("/workspace/cookie-config", body))
+        normalizeWorkspaceActionResult(post("/api/workspace/cookie-config", body))
     }
 
     suspend fun updateWorkspaceCookie(
@@ -1525,14 +1536,14 @@ class NovalPieApi(
         description?.let { body.put("description", it.trim()) }
         cookieRaw?.let { body.put("cookie_raw", it.trim()) }
         proxyIp?.let { body.put("proxy_ip", it.trim()) }
-        normalizeWorkspaceActionResult(put("/workspace/cookie-config", body))
+        normalizeWorkspaceActionResult(put("/api/workspace/cookie-config", body))
     }
 
     suspend fun setWorkspaceCookieActive(id: Long, isActive: Boolean): WorkspaceActionResult =
         withContext(Dispatchers.IO) {
             normalizeWorkspaceActionResult(
                 put(
-                    "/workspace/cookie-config",
+                    "/api/workspace/cookie-config",
                     JSONObject().put("id", id).put("is_active", isActive)
                 )
             )
@@ -1540,7 +1551,7 @@ class NovalPieApi(
 
     suspend fun deleteWorkspaceCookie(id: Long): WorkspaceActionResult = withContext(Dispatchers.IO) {
         normalizeWorkspaceActionResult(
-            delete("/workspace/cookie-config", JSONObject().put("id", id))
+            delete("/api/workspace/cookie-config", JSONObject().put("id", id))
         )
     }
 
@@ -4240,18 +4251,18 @@ class NovalPieApi(
                     ?: source.doubleOrNull("success_rate")
                     ?: source.doubleOrNull("uptime")
                     ?: 0.0,
-                lastHealthError = source.firstStringOrNull("lastHealthError", "last_health_error", "lastError", "last_error")
+                lastHealthError = source.firstStringOrNull("lastHealthError", "last_health_error", "lastError", "last_error"),
+                totalRequests = source.firstLongOrNull("totalRequests", "total_requests", "callCount") ?: 0,
             )
         }
     }
 
     private fun normalizeWorkspaceActionResult(raw: Any): WorkspaceActionResult {
         val source = unwrapObject(raw, "data", "result")
+        val acknowledgement = normalizeMessageActionResult(raw)
         return WorkspaceActionResult(
-            success = booleanFromAny(raw)
-                ?: source.firstBooleanOrNull("success", "ok", "status")
-                ?: true,
-            message = source.firstStringOrNull("message", "msg", "detail"),
+            success = acknowledgement.success,
+            message = acknowledgement.message,
             id = source.longOrNull("id")
         )
     }
