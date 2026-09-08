@@ -47,3 +47,11 @@ UI保留原样，仅补连载中/已完结选项、结果未知时明确核对/�
 16:50门禁52982已完成1093unit/Debug/AndroidTest/lint（11m40s），但安装前补查两个所有权边界：74292未知指针读取失败会删候选正文、65413 archive-1误删archive-1.body-another正文均红。修为未知状态保留全部候选、清理精确匹配本ID+36位generation而不是宽前缀。51225全量重建中，未将存在已知边界缺陷的bfa63da5包安装或发布。
 
 16:56修后51225全量1095unit/Debug/AndroidTest通过2m52s，`697D7F911FE3CD9A06723B5D2C5ACAB39537B343C24C17DBEE5FCB173FF08B14`已无损安装；EditorArchiveDeviceTest实际Android15中断保存保留原稿/新稿提交/原子备份恢复/正文损坏拒绝全部通过，生产存档未触碰。报告`20260908-editor-atomic-device-report.json` SHA256 `4f087cb3410c9855f741d4794bc933560a18a4e1636dee70d3998333f25f2bf0`。同包UploadFeatureDeviceTest再次通过。最后两处小改尚未重跑lint，不把前包lint直接算最新。
+
+17:06存档最后lint8554通过7m50s（源码2b2645f），同包Reader7亦通过。该存储分片闭环，不等于整个编辑器/全部业务已完成。
+
+EPUB解析下一片39633四红：spine文件缺失仍成功、head混入正文与实体双解码、导航锚点未拆章、缺失锚点被忽略。原站Dr5_eFLl使用qe读取目录、fr按fragment范围+spine合并内容；新版解析已按nav/NCX目标保留rawPath/spineIndex/层级，缺文件/错锚点明确失败，正文head排除、实体单次处理。2782定向正在构建，尚未证明改后通过。正文解压总工作集限制64MiB，较大文件仍按既有服务器分片解析；高度压缩的小文件超本机预算不会假报完整。未修改图片资源、下载或源协议。
+
+17:21解析39633四红→2782五绿，34125扩展9项中HTML注释/属性含>一红→修tag边界与注释，42340解析/写出10项绿色。18751完整1103unit/Debug/AndroidTest通过4m26s；APK18d5330d...96d47943，尚未安装。新EpubImportDeviceTest会在Android真实XML实现上验证往返正文/标题及共享文件片段，未进行真实上传。
+
+17:23已无损装`18D5330D30A50586142A480F6C3E47C7C29D21E0F15668BF7C8EEB5996D47943`，21622真实Android XML解析/EPUB两章往返及共享文件两锚点分章通过，原文特殊字符/末尾保留、head标题不重复；同包UploadFeatureDeviceTest通过。报告`20260908-epub-import-device-report.json` SHA256 `339293fb28922c6e385aae7bd00d45736626bc89adfbde24435ad3450edcef80`。0真实上传/0用户文件改动。本机解析对应切片已运行，不等于所有EPUB变体或全上传模块通过。

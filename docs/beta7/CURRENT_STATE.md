@@ -1,6 +1,6 @@
 # Beta 7 当前工作点
 
-更新：2026-09-08 16:51。完整经过见 execution-log.md，本文只保留最新事实，避免把旧包证据误认成终验。
+更新：2026-09-08 17:24。完整经过见 execution-log.md，本文只保留最新事实，避免把旧包证据误认成终验。
 
 ## 发布状态
 
@@ -8,8 +8,8 @@
 
 ## 工程与设备
 
-- 分支`codex/native-app2-current-20260821`，最新本地提交`386e0c7`（未push），上传切片已保存。之后EditorArchiveStore故障修订/新回归尚未commit。
-- 最后已安装开发APK：`6EEB11E434CF0B275CE26E2542B567E2988D8E82A61A8C51AE4E0AEFFA61713E`，1088全量unit/Debug/AndroidTest/lint通过；上传合成UI/Reader7/生产论坛切帖回归全过。前985ee739翻译服务/分页5也已过。版本仍Beta6开发字段，不是Beta7成品。
+- 分支`codex/native-app2-current-20260821`，最新本地提交`2b2645f`（未push），上传/原子存档切片已保存。之后EpubParser及测试/文档尚未commit。
+- 最后已安装开发APK：`18D5330D30A50586142A480F6C3E47C7C29D21E0F15668BF7C8EEB5996D47943`，1103全量unit/Debug/AndroidTest；MuMu EpubImportDeviceTest与上传合成UI过。前697d7f91存档原子IO/Reader7及8554lint全过。最新parser切片lint尚待。版本仍Beta6开发字段，不是Beta7成品。
 - **exec62934整书350192下载/成品验证通过并结束，测试自有12GB成品已删除，工作目录均4KB。** 报告20260908-corrected-full-350192-report已取。MuMu随后正常shutdown为构建让资源，用户数据保留；没有运行下载任务。
 - 上一27437180包文件打开/连续窗口/分页5/Reader7/源验证码cancel账号一致皆过；本人1871嵌套测试回复2439/root4549/target2391已回读一次，标记729d0bbc保留，不重发。30507全量/lint通过后追加空data-src用例60288红→属性边界/空值修正15302全量1071绿；最新包未跑最终R8矩阵。
 
@@ -28,7 +28,8 @@
 
 1. 上传7779三红→10314修后16绿，63955外层ack两个红→已修。49846完整build/lint21m19s全过，6eeb11e4已装；43991仅测试滚动未绘制item失败，改test父LazyList scrollToNode，36226 AndroidTest重建，36089上传合成UI完整通过，无真实作品写入。
 2. 10577同包Reader7/生产ForumPostFeatureDeviceTest全过；source1936只读第81/82/83章图数2/0/3，82源数据尚无补图。MuMu现在线，通知为原拒绝，无活跃下载/翻译。生产`am start ... https://novalpie.cc/upload`被工具策略拦截，**不要换工具/坐标重试此被拦操作**；受控表单不是生产入口全验收。
-3. 5691编辑器存档三红→11412六绿，UI后台校验失败保留已接；52982完整1093unit/build/lint通过11m40s、bfa63da5尚未装。随后74292未知指针误清正文红、65413相似archiveID误删正文红→两处范围/未知处理已改。**51225全量unit/Debug/AndroidTest正在跑，不并发编辑/另一个Gradle/启动MuMu**。EditorArchiveDeviceTest待新包实机。EpubParser/持久上传/全编辑器状态仍未完成。
+3. 存档门禁/实机闭环，8554 lint7m50s已结束。39633 EPUB四红→2782五绿；34125扩展9项一红→42340读写十项绿。18751全量1103unit/Debug/AndroidTest过，18d5330d包已装，21622 Android真实XML读写往返/分章及上传UI过，报告已取。MuMu在线，无活跃下载/翻译；准备保存parser切片并继续后续。
+4. EpubParser按nav/NCX分片+严格缺文件、单次实体解码及引用身份已实现；仍需大预算/真实带图上传、SVG/spine图片、无效HTML/编码、完整编辑器/persistent上传/权限/性能矩阵/R8升级。Beta7不能提前发布。
 
 ## 最新社区增量
 
