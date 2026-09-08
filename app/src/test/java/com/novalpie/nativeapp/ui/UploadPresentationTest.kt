@@ -5,6 +5,9 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class UploadPresentationTest {
+    @Test fun newBookUsesAWebsiteSerialStatusRatherThanATranslationChunkingLabel() {
+        assertEquals("连载中", UploadBookDraft().spans)
+    }
     @Test
     fun validatesWebsiteUploadRequiredFieldsAndSubmitType() {
         assertEquals("请输入书名", validateUploadBookDraft(UploadBookDraft()))

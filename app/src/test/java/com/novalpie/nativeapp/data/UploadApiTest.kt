@@ -173,6 +173,34 @@ class UploadApiTest {
         openStream = { ByteArrayInputStream(bytes) }
     )
 
+    @Test fun appendAcknowledgementForAnotherBookMustStopBeforeTheNextChunk() = runBlocking {
+        server.enqueue(jsonResponse("""{"success":true,"novel_id":99}"""))
+        server.enqueue(jsonResponse("""{"success":true,"novel_id":42}"""))
+        val result = runCatching { api.appendManagedChapters(42, "chinese", (1..51).map { UploadChapter("章$it", "正文", it) }) }
+        assertTrue("不能用其他书的回执当当前追加成功", result.isFailure)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun uploadWithNoExplicitSuccessCannotClaimThatANewBookWasCreated() = runBlocking {
+        server.enqueue(jsonResponse("""{"novel_id":42,"message":"pending"}"""))
+        val result = runCatching { api.uploadBook(UploadBookRequest("Title", authorName = "Author", chapters = listOf(UploadChapter("一", "文", 1)))) }
+        assertTrue(result.isFailure || result.getOrThrow().success.not())
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun uploadUsesExplicitEnvelopeSuccessWithoutLosingNestedBookId() = runBlocking {
+        server.enqueue(jsonResponse("""{"success":true,"data":{"novel_id":42}}"""))
+        val result = api.uploadBook(UploadBookRequest("Title", authorName = "Author", chapters = listOf(UploadChapter("一", "文", 1))))
+        assertTrue(result.success)
+        assertEquals(42L, result.novelId)
+    }
+
+    @Test fun explicitRejectionInAnyEnvelopeCannotBeHiddenByNestedSuccess() = runBlocking {
+        server.enqueue(jsonResponse("""{"success":false,"message":"blocked","data":{"success":true,"novel_id":42}}"""))
+        val result = api.uploadBook(UploadBookRequest("Title", authorName = "Author", chapters = listOf(UploadChapter("一", "文", 1))))
+        assertTrue(!result.success)
+    }
+
     private fun jsonResponse(body: String): MockResponse = MockResponse()
         .setHeader("content-type", "application/json")
         .setBody(body.trimIndent())

@@ -793,6 +793,7 @@ fun NovalPieApp(
                     onPickEpub = viewModel::selectUploadEpub,
                     onDraftChange = viewModel::updateUploadBookDraft,
                     onSubmit = viewModel::submitUploadBook,
+                    onConfirmRetry = viewModel::confirmRetryUploadBook,
                     onClear = viewModel::clearUploadBook,
                     onOpenEditor = viewModel::openUploadEditor,
                     onOpenBook = viewModel::openUploadedBook
@@ -1060,6 +1061,7 @@ fun NovalPieApp(
                     onPickEpub = viewModel::selectUploadEpub,
                     onDraftChange = viewModel::updateUploadBookDraft,
                     onSubmit = viewModel::submitUploadBook,
+                    onConfirmRetry = viewModel::confirmRetryUploadBook,
                     onClear = viewModel::clearUploadBook,
                     onOpenEditor = viewModel::openUploadEditor,
                     onOpenBook = viewModel::openUploadedBook

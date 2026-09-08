@@ -11,7 +11,7 @@ data class UploadBookDraft(
     val author: String = "",
     val description: String = "",
     val language: String = "ja",
-    val spans: String = "balanced",
+    val spans: String = "连载中",
     val isAdult: Boolean = false,
     val source: String = "",
     val sourceUrl: String = "",
@@ -37,3 +37,8 @@ fun normalizeUploadTags(raw: String): List<String> = raw
 
 fun uploadParseMode(sizeBytes: Long): UploadParseMode =
     if (sizeBytes > WEBSITE_SERVER_EPUB_THRESHOLD_BYTES) UploadParseMode.SERVER_CHUNKED else UploadParseMode.LOCAL
+
+fun websiteUploadSpans(draft: UploadBookDraft): String {
+    val complete = draft.spans in setOf("已完结", "19 完结")
+    return if (draft.isAdult) { if (complete) "19 完结" else "19" } else { if (complete) "已完结" else "连载中" }
+}

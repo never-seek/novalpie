@@ -446,7 +446,8 @@ data class UploadBookState(
     val processing: Boolean = false,
     val progressLabel: String? = null,
     val submitResult: LoadResult<UploadActionResult> = LoadResult.Idle,
-    val actionMessage: String? = null
+    val actionMessage: String? = null,
+    val submissionUncertain: Boolean = false,
 )
 
 data class UploadEditorState(
@@ -1035,7 +1036,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         onDeleted = { id -> if ((currentRoute as? AppRoute.MessageDetail)?.messageId == id) goBack() },
         onChanged = { if (messageCenterState.messages !is LoadResult.Idle) messageInboxFeature.refresh() },
     )
-    private var uploadRequestSerial = 0L
+    private val uploadFeature = com.novalpie.nativeapp.feature.upload.UploadBookViewModel(
+        com.novalpie.nativeapp.feature.upload.WebsiteUploadRepository(api, ::readUploadDocument, { uploadSource(it) }),
+    )
     private var editorRequestSerial = 0L
     private var editorProcessorRequestSerial = 0L
     private var authRequestSerial = 0L
@@ -1102,8 +1105,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     var workspaceState: WorkspaceState
         get() = workspaceFeature.state
         private set(value) { workspaceFeature.present { value } }
-    var uploadBookState by mutableStateOf(UploadBookState())
-        private set
+    val uploadBookState: UploadBookState get() = uploadFeature.state
     var uploadEditorState by mutableStateOf(UploadEditorState(archives = editorArchiveStore.list()))
         private set
     var politicalExamState by mutableStateOf(PoliticalExamState())
@@ -1216,6 +1218,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     publicProfileFeature.environmentChanged()
                     workspaceFeature.environmentChanged()
                     forumPostFeature.environmentChanged()
+                    uploadFeature.environmentChanged()
                     nativeEpubDownloadState = NativeEpubDownloadState()
                     replacementLoadRevision++;pendingReaderReplacementCreates.clear();deletedPendingReaderReplacementCreates.clear()
                     readerReplacementState = ReaderReplacementState()
@@ -3015,171 +3018,19 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun openUploadBook() {
-        if (uploadBookState.existingNovelId != null) uploadBookState = UploadBookState()
+        uploadFeature.enter(null)
         navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.UploadBook))
     }
 
-    fun updateUploadBookDraft(draft: UploadBookDraft) {
-        uploadBookState = uploadBookState.copy(
-            draft = draft.copy(chapterCount = (uploadBookState.chapters as? LoadResult.Success)?.value?.size ?: 0),
-            actionMessage = null,
-            submitResult = LoadResult.Idle
-        )
-    }
+    fun updateUploadBookDraft(draft: UploadBookDraft) = uploadFeature.draft(draft)
 
-    fun selectUploadEpub(rawUri: String) {
-        if (uploadBookState.processing) return
-        val requestSerial = ++uploadRequestSerial
-        uploadBookState = uploadBookState.copy(
-            processing = true,
-            progressLabel = "正在读取 EPUB 文件…",
-            chapters = LoadResult.Loading,
-            submitResult = LoadResult.Idle,
-            actionMessage = null,
-            serverFilePath = null
-        )
-        viewModelScope.launch {
-            val result = runCatching {
-                val document = readUploadDocument(rawUri)
-                if (!document.displayName.endsWith(".epub", ignoreCase = true)) {
-                    throw IOException("仅支持 EPUB 格式文件")
-                }
-                if (document.sizeBytes == 0L) throw IOException("EPUB 文件为空")
-                if (!isFreshRequestSerial(requestSerial, uploadRequestSerial)) return@launch
-                uploadBookState = uploadBookState.copy(
-                    selectedFile = document,
-                    progressLabel = if (uploadParseMode(document.sizeBytes.coerceAtLeast(0L)) == UploadParseMode.SERVER_CHUNKED) {
-                        "文件超过 50 MiB，正在按 5 MiB 流式分片上传…"
-                    } else {
-                        "正在本机解析 EPUB 目录与章节…"
-                    }
-                )
-                val source = uploadSource(document)
-                if (uploadParseMode(document.sizeBytes.coerceAtLeast(0L)) == UploadParseMode.SERVER_CHUNKED) {
-                    val path = api.uploadFileInChunks(source)
-                    api.parseUploadedEpub(path).copy(epubFilePath = path)
-                } else {
-                    withContext(Dispatchers.IO) { EpubParser.parse(source) }
-                }
-            }
-            if (!isFreshRequestSerial(requestSerial, uploadRequestSerial)) return@launch
-            uploadBookState = result.fold(
-                onSuccess = { parsed ->
-                    val current = uploadBookState.draft
-                    uploadBookState.copy(
-                        draft = current.copy(
-                            title = current.title.ifBlank { parsed.title },
-                            author = current.author.ifBlank { parsed.author },
-                            description = current.description.ifBlank { parsed.description },
-                            language = parsed.language.ifBlank { current.language },
-                            chapterCount = parsed.chapters.size
-                        ),
-                        chapters = LoadResult.Success(parsed.chapters),
-                        serverFilePath = parsed.epubFilePath,
-                        processing = false,
-                        progressLabel = null,
-                        actionMessage = "EPUB 解析完成，共 ${parsed.chapters.size} 章"
-                    )
-                },
-                onFailure = { failure ->
-                    uploadBookState.copy(
-                        chapters = LoadResult.Error(apiFailureMessage("解析 EPUB", failure)),
-                        processing = false,
-                        progressLabel = null,
-                        actionMessage = apiFailureMessage("解析 EPUB", failure)
-                    )
-                }
-            )
-        }
-    }
+    fun selectUploadEpub(rawUri: String) = uploadFeature.select(rawUri)
 
-    fun submitUploadBook() {
-        if (uploadBookState.processing) return
-        val chapters = (uploadBookState.chapters as? LoadResult.Success)?.value.orEmpty()
-        val draft = uploadBookState.draft.copy(chapterCount = chapters.size)
-        val appendBookId = uploadBookState.existingNovelId
-        val validation = if (appendBookId != null) {
-            when {
-                chapters.isEmpty() -> "请先选择并解析 EPUB 文件"
-                draft.submitType !in setOf("chinese", "personal", "shared") -> "提交方式无效"
-                else -> null
-            }
-        } else {
-            validateUploadBookDraft(draft)
-        }
-        validation?.let { error ->
-            uploadBookState = uploadBookState.copy(actionMessage = error)
-            return
-        }
-        val document = uploadBookState.selectedFile ?: run {
-            uploadBookState = uploadBookState.copy(actionMessage = "请先选择 EPUB 文件")
-            return
-        }
-        uploadBookState = uploadBookState.copy(
-            processing = true,
-            progressLabel = "正在安全上传书籍与 ${chapters.size} 章内容…",
-            submitResult = LoadResult.Loading,
-            actionMessage = null
-        )
-        viewModelScope.launch {
-            val request = UploadBookRequest(
-                title = draft.title,
-                titleTranslation = draft.titleTranslation,
-                authorName = draft.author,
-                description = draft.description,
-                language = draft.language,
-                spans = draft.spans,
-                isAdult = draft.isAdult,
-                source = draft.source,
-                sourceUrl = draft.sourceUrl,
-                tags = normalizeUploadTags(draft.tagsText),
-                submitType = draft.submitType,
-                chapters = chapters,
-                epubFilePath = uploadBookState.serverFilePath,
-                coverUrl = draft.coverUrl.takeIf { it.isNotBlank() }
-            )
-            val result = runCatching {
-                val uploaded = if (appendBookId != null) {
-                    api.appendManagedChapters(
-                        bookId = appendBookId,
-                        submitType = draft.submitType,
-                        chapters = chapters,
-                        epubFilePath = uploadBookState.serverFilePath,
-                        epubFile = if (uploadBookState.serverFilePath == null) uploadSource(document) else null
-                    )
-                } else {
-                    api.uploadBook(
-                        upload = request,
-                        epubFile = if (request.epubFilePath == null) uploadSource(document) else null
-                    )
-                }
-                uploaded.also { if (!it.success) error(it.message ?: "上传失败") }
-            }
-            uploadBookState = result.fold(
-                onSuccess = { uploaded ->
-                    uploadBookState.copy(
-                        processing = false,
-                        progressLabel = null,
-                        submitResult = LoadResult.Success(uploaded),
-                        actionMessage = uploaded.message ?: if (appendBookId != null) "章节追加成功" else "上传成功"
-                    )
-                },
-                onFailure = { failure ->
-                    uploadBookState.copy(
-                        processing = false,
-                        progressLabel = null,
-                        submitResult = LoadResult.Error(apiFailureMessage("上传书籍", failure)),
-                        actionMessage = apiFailureMessage("上传书籍", failure)
-                    )
-                }
-            )
-        }
-    }
+    fun submitUploadBook() = uploadFeature.submit()
 
-    fun clearUploadBook() {
-        uploadRequestSerial++
-        uploadBookState = UploadBookState(existingNovelId = (currentRoute as? AppRoute.BookAppend)?.bookId)
-    }
+    fun confirmRetryUploadBook() = uploadFeature.submit(confirmUncertainRetry = true)
+
+    fun clearUploadBook() = uploadFeature.clear()
 
     fun openUploadedBook(novelId: Long) {
         if (novelId > 0L) openBook(novelId)
@@ -3950,6 +3801,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             return
         }
         uploadEditorState = state.copy(busy = true, actionMessage = "正在生成上传文件…")
+        val appendBookId = routes.asReversed().filterIsInstance<AppRoute.BookAppend>().firstOrNull()?.bookId
+        val requestSerial = ++editorRequestSerial
+        val environmentRevision = dependencies.environment.revision
         viewModelScope.launch {
             val result = runCatching {
                 withContext(Dispatchers.IO) {
@@ -3960,8 +3814,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             result.onSuccess { file ->
-                val appendBookId = routes.asReversed().filterIsInstance<AppRoute.BookAppend>().firstOrNull()?.bookId
-                uploadBookState = UploadBookState(
+                if (requestSerial != editorRequestSerial || environmentRevision != dependencies.environment.revision || currentRoute != AppRoute.UploadEditor) {
+                    uploadEditorState = uploadEditorState.copy(busy = false, actionMessage = "页面已变化，未发送到其他书籍；编辑草稿保留")
+                    return@onSuccess
+                }
+                val adopted = uploadFeature.adopt(UploadBookState(
                     existingNovelId = appendBookId,
                     draft = UploadBookDraft(
                         title = state.metadata.title,
@@ -3982,7 +3839,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     ),
                     chapters = LoadResult.Success(state.chapters),
                     actionMessage = "编辑器内容已准备好，请核对后确认上传"
-                )
+                ))
+                if (!adopted) {
+                    uploadEditorState = uploadEditorState.copy(busy = false, actionMessage = "目标书籍仍有上传任务，请完成后重试；编辑草稿保留")
+                    return@onSuccess
+                }
                 uploadEditorState = uploadEditorState.copy(busy = false, actionMessage = "已发送到上传页")
                 val target = appendBookId?.let { AppRoute.BookAppend(it) } ?: AppRoute.UploadBook
                 val withoutEditor = routes.toMutableList().apply {
@@ -5341,8 +5202,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             return
         }
         if (!hasBookManagementAccess(bookId)) return
-        uploadRequestSerial++
-        uploadBookState = UploadBookState(existingNovelId = bookId)
+        uploadFeature.enter(bookId)
         navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.BookAppend(bookId)))
     }
 
@@ -5946,8 +5806,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 is AppRoute.BookEditInfo -> loadBookEditInfo(bookId)
                 is AppRoute.BookChapters -> loadManagedChapters(bookId)
                 is AppRoute.BookAppend -> {
-                    uploadRequestSerial++
-                    uploadBookState = UploadBookState(existingNovelId = bookId)
+                    uploadFeature.enter(bookId)
                 }
                 else -> Unit
             }
@@ -5960,6 +5819,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         navigator.pop()
         rootRouteTab(currentRoute)?.let { currentTab = it }
         when (val restored = currentRoute) {
+            AppRoute.UploadBook -> uploadFeature.enter(null)
+            is AppRoute.BookAppend -> uploadFeature.enter(restored.bookId)
             is AppRoute.MessageDetail -> if (messageDetailState.messageId != restored.messageId) loadMessageDetail(restored.messageId)
             is AppRoute.MessageConversation -> if (messageConversationState.targetUserId != restored.targetUserId) loadMessageConversation(restored.targetUserId, restored.targetName)
             is AppRoute.UserProfileDetail -> publicProfileFeature.enter(restored.userId, forumState.hideSpoilers)
@@ -6961,6 +6822,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         profileFeature.close()
         publicProfileFeature.close()
         workspaceFeature.close()
+        uploadFeature.close()
         super.onCleared()
     }
 

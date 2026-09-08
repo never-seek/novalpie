@@ -2554,6 +2554,7 @@ class NovalPieApi(
                 requestBody("/api/users/me/chapters/append", "POST", multipart.build())
             )
             if (!result.success) throw IOException(result.message ?: "append chapters failed")
+            if (result.novelId != null && result.novelId != bookId) throw IOException("追加回执的书籍身份不符，请先核对目录；未继续下一批")
             lastResult = result.copy(novelId = result.novelId ?: bookId)
         }
         lastResult
@@ -3102,9 +3103,22 @@ class NovalPieApi(
 
     private fun normalizeUploadResult(raw: Any): UploadActionResult {
         val source = unwrapObject(raw, "data", "result")
+        val layers = mutableListOf<JSONObject>()
+        fun collect(value: JSONObject) {
+            layers += value
+            listOf("data", "result").forEach { key -> value.optJSONObject(key)?.let(::collect) }
+        }
+        (raw as? JSONObject)?.let(::collect)
+        val statuses = layers.mapNotNull { it.firstBooleanOrNull("success") }
+        val success = when {
+            false in statuses -> false
+            true in statuses -> true
+            else -> throw IOException("上传回执未确认，请核对作品或目录后再决定是否重试")
+        }
         return UploadActionResult(
-            success = source.firstBooleanOrNull("success") ?: true,
-            message = source.firstStringOrNull("message", "msg"),
+            success = success,
+            message = if (!success) layers.firstOrNull { it.firstBooleanOrNull("success") == false }?.firstStringOrNull("message", "msg")
+                ?: source.firstStringOrNull("message", "msg") else source.firstStringOrNull("message", "msg"),
             novelId = source.longOrNull("novel_id") ?: source.longOrNull("novelId") ?: source.longOrNull("id")
         )
     }

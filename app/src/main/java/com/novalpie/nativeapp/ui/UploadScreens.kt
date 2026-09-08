@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -40,6 +41,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -61,13 +66,22 @@ fun UploadBookScreen(
     onSubmit: () -> Unit,
     onClear: () -> Unit,
     onOpenEditor: () -> Unit,
-    onOpenBook: (Long) -> Unit
+    onOpenBook: (Long) -> Unit,
+    onConfirmRetry: () -> Unit = {},
 ) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.toString()?.let(onPickEpub)
     }
     val chapters = (state.chapters as? LoadResult.Success)?.value.orEmpty()
     val appendMode = state.existingNovelId != null
+    var confirmRetry by remember(state.existingNovelId) { mutableStateOf(false) }
+    if (confirmRetry) AlertDialog(
+        onDismissRequest = { confirmRetry = false },
+        title = { Text("确认再次提交？") },
+        text = { Text("上次请求可能已写入部分或全部章节。请先在作品与目录中核对；再次提交可能重复创建书籍或章节。只有确认需要重试时再继续。") },
+        confirmButton = { TextButton(onClick = { confirmRetry = false; onConfirmRetry() }) { Text("已核对，仍需重试") } },
+        dismissButton = { TextButton(onClick = { confirmRetry = false }) { Text("返回核对") } },
+    )
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -164,13 +178,13 @@ fun UploadBookScreen(
         item {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
-                    onClick = onSubmit,
+                    onClick = { if (state.submissionUncertain) confirmRetry = true else onSubmit() },
                     enabled = !state.processing && hasAuthToken && chapters.isNotEmpty(),
                     modifier = Modifier.fillMaxWidth().height(54.dp)
                 ) {
                     Icon(Icons.Filled.UploadFile, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text(if (state.processing) "处理中…" else if (appendMode) "确认追加 ${chapters.size} 章" else "确认上传 ${chapters.size} 章")
+                    Text(if (state.processing) "处理中…" else if (state.submissionUncertain) "核对后重试" else if (appendMode) "确认追加 ${chapters.size} 章" else "确认上传 ${chapters.size} 章")
                 }
                 Text(
                     if (appendMode) "追加会写入现有书籍。提交前请确认章节顺序与翻译类型。" else "上传会写入 novalpie.cc。提交前请确认书名、作者、标签、成人内容标记与翻译类型。",
@@ -293,6 +307,13 @@ private fun UploadMetadataCard(
             OutlinedTextField(draft.sourceUrl, { onDraftChange(draft.copy(sourceUrl = it)) }, label = { Text("来源链接") }, enabled = !processing, modifier = Modifier.fillMaxWidth(), singleLine = true)
             OutlinedTextField(draft.coverUrl, { onDraftChange(draft.copy(coverUrl = it)) }, label = { Text("封面图片链接") }, enabled = !processing, modifier = Modifier.fillMaxWidth(), singleLine = true)
             OutlinedTextField(draft.tagsText, { onDraftChange(draft.copy(tagsText = it)) }, label = { Text("标签（逗号或换行分隔）") }, enabled = !processing, modifier = Modifier.fillMaxWidth(), minLines = 2)
+            Text("连载状态", fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("连载中", "已完结").forEach { value ->
+                    FilterChip(selected = draft.spans == value,
+                        onClick = { onDraftChange(draft.copy(spans = value)) }, label = { Text(value) }, enabled = !processing)
+                }
+            }
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(Modifier.weight(1f)) {
                     Text("19禁内容", fontWeight = FontWeight.SemiBold)
