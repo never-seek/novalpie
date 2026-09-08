@@ -1,4 +1,4 @@
-# EPUB 双图反馈：复现与修订（未最终验收）
+# EPUB 双图反馈：复现与修订（开发包整书已验，最终R8待验）
 
 来源：App1871评论4643，吴龙小卒，2026-09-06 12:45。用户报告每张图下载两遍，未给具体书。
 
@@ -40,3 +40,16 @@
 - 只读章节GET遇500增加一次700ms延迟重试（不含任何授权/写入），403不重试，定向测试通过。
 - 当前开发包`8F5453215BC48616066831696CD5A57B8B617D2E8E7C7089482CCA5D95B86358`，73131整书预检通过：1365导出章节，1133重复图章节真实校对，9171额外副本移除，23处export-only图保留，76593ms；无未解决mismatch。报告`20260908-full-precheck-success-report.json`，只含计数/4个样本，不保存正文。
 - 本次未下载整书图片，仅校图；临时TXT/任务校对文件已按test finally清理。现完整成品预期正文图引用`19573 - 9171 = 10402`；最终大包生成/保存/外部打开/R8仍待，不能拿预检替代。
+
+## 2026-09-08 修正后整书成品通过
+
+开发包SHA256 `72ee1915d15b81da3bc2e4e77b8b9375c88651fcdeca2e7c16db92304f58cd9f`，本地构建提交`dcdc857`。`NativeLargeDownloadLiveDeviceTest`（exec62934）在MuMu Android15从源下载到完整ZIP验证通过：
+
+- 1365章；10402个正文图片文件、10402处正文引用，另有独立封面；与校图预期完全一致。
+- 成品12,197,807,311字节（约11.36GiB）；耗时1,471,770ms（24分32秒，包含下载/校图/保存/全包CRC和逐图哈希检查）。并发设置8。
+- 所有成品图片SHA256都与本任务保存的原始下载资源哈希一致；无重复ZIP路径，章节数/正文引用数一致，failedAssets=0。
+- HOME后台仍有7102前台服务；873至1365章观测PSS约200–214MB，没有随本轮资源累计至十几GB同步上涨。这不是通用阅读性能门禁。
+- MuMu公共存储仍走明确的App本机兼容目录（URI authority `com.novalpie.app.debug.downloads`），不声称系统Downloads成功。完成文件已实际以FileProvider读取整个ZIP。
+- 测试finally仅删除自己的完成URI；成功后download-work、files/native-downloads均为4KB。用户既有下载、会话和设置未清除。
+
+报告：`agent-bridge/artifacts/beta7-device/20260908-corrected-full-350192-report.json`（1,734,333字节，SHA256 `f5b59a5db8bff9d1fb52b6c879b0419f08348a1ad843577c7f8df4c0eaa56839`）；运行元信息/log同前缀去掉`-report`。保留23处export-only图是上次真实预检结论；本轮成品总数与其一致。没有在第三方阅读器逐页打开整本12GB包，独立阅读器打开小书证据另列；最终同一优化Beta包仍需复验。

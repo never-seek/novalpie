@@ -16,6 +16,7 @@ internal data class TranslationTask(
     val completed: Set<Long> = emptySet(), val total: Int = 0, val currentChapterId: Long? = null,
     val currentTitle: String? = null, val finishedChunks: Int = 0, val totalChunks: Int = 0,
     val message: String? = null, val updatedAt: Long = System.currentTimeMillis(),
+    val targets: List<TranslationChapter>? = null,
 ) {
     override fun toString() = "TranslationTask(id=$id,bookId=$bookId,phase=$phase)"
 }
@@ -29,24 +30,34 @@ internal class TranslationTaskStore(rootDirectory: File) {
     }
     @Synchronized fun save(task: TranslationTask) {
         require(task.accountId > 0 && task.bookId > 0 && task.configId > 0)
-        write(File(directory(task.id), "task.json"), JSONObject().put("schema", 1).put("id", task.id).put("account", task.accountId)
+        task.targets?.let { targets ->
+            require(targets.all { it.id > 0 } && targets.map { it.id }.distinct().size == targets.size)
+            require(task.completed.all { id -> targets.any { it.id == id } })
+        }
+        write(File(directory(task.id), "task.json"), JSONObject().put("schema", 2).put("id", task.id).put("account", task.accountId)
             .put("book", task.bookId).put("title", task.title).put("config", task.configId).put("phase", task.phase.name)
             .put("completed", JSONArray(task.completed.toList())).put("total", task.total).put("chapter", task.currentChapterId ?: JSONObject.NULL)
             .put("chapterTitle", task.currentTitle ?: JSONObject.NULL).put("chunks", task.finishedChunks).put("totalChunks", task.totalChunks)
-            .put("message", task.message ?: JSONObject.NULL).put("updated", System.currentTimeMillis()))
+            .put("message", task.message ?: JSONObject.NULL).put("updated", System.currentTimeMillis())
+            .put("targets", task.targets?.let { chapters -> JSONArray().apply { chapters.forEach { chapter ->
+                put(JSONObject().put("id", chapter.id).put("title", chapter.title).put("number", chapter.number).put("status", chapter.status))
+            } } } ?: JSONObject.NULL))
     }
     @Synchronized fun load(accountId: Long): List<TranslationTask> = root.listFiles().orEmpty().filter { it.isDirectory }.mapNotNull { dir ->
         run {
             require(dir.canonicalFile.parentFile == root)
             val json = read(File(dir, "task.json")) ?: return@run null
-            require(json.getInt("schema") == 1 && json.getString("id") == dir.name)
+            require(json.getInt("schema") in 1..2 && json.getString("id") == dir.name)
             if (json.getLong("account") != accountId) return@run null
             val stored = TranslationPhase.valueOf(json.getString("phase"))
             TranslationTask(id = dir.name, accountId = accountId, bookId = json.getLong("book"), title = json.getString("title"), configId = json.getLong("config"),
                 phase = when (stored) { TranslationPhase.Submitting -> TranslationPhase.SubmissionUncertain; TranslationPhase.Queued, TranslationPhase.Preparing, TranslationPhase.Translating -> TranslationPhase.Paused; else -> stored },
                 completed = json.getJSONArray("completed").let { a -> (0 until a.length()).map { a.getLong(it) }.toSet() }, total = json.optInt("total"),
                 currentChapterId = json.optLong("chapter").takeIf { it > 0 }, currentTitle = json.text("chapterTitle"),
-                finishedChunks = json.optInt("chunks"), totalChunks = json.optInt("totalChunks"), message = json.text("message"), updatedAt = json.optLong("updated"))
+                finishedChunks = json.optInt("chunks"), totalChunks = json.optInt("totalChunks"), message = json.text("message"), updatedAt = json.optLong("updated"),
+                targets = if (json.isNull("targets")) null else json.getJSONArray("targets").let { a -> (0 until a.length()).map { index ->
+                    a.getJSONObject(index).let { item -> TranslationChapter(item.getLong("id"), item.getString("title"), item.getInt("number"), item.getString("status")) }
+                }.also { targets -> require(targets.all { it.id > 0 } && targets.map { it.id }.distinct().size == targets.size) } })
         }
     }.sortedByDescending { it.updatedAt }
     @Synchronized fun checkpoint(task: TranslationTask, chapterId: Long, name: String, data: JSONObject) {
