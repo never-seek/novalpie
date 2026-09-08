@@ -717,7 +717,8 @@ fun NovalPieApp(
                     onDeleteRule = viewModel::deleteAdminBaseUrlRule,
                     onSaveShopItem = viewModel::saveAdminShopItem,
                     onToggleShopItem = viewModel::toggleAdminShopItem,
-                    onDeleteShopItem = viewModel::deleteAdminShopItem
+                    onDeleteShopItem = viewModel::deleteAdminShopItem,
+                    onSchedulerLinesChange = viewModel::updateAdminSchedulerLines,
                 )
 
                 AppRoute.MessageCenter -> MessageCenterScreen(

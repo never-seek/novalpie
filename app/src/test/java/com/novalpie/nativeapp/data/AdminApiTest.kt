@@ -14,6 +14,20 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class AdminApiTest {
+    @Test fun rejectedAdminWritesDoNotReturnAsSuccessfullyCompletedOperations() = runBlocking {
+        server.enqueue(json("""{"success":false,"message":"需要重新审核"}"""))
+        val result = runCatching { api.adminUpdateReviewSettings(true, false) }
+        assertTrue("旧UI会将正常返回当成功，明确拒绝必须中止", result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message.orEmpty().contains("需要重新审核"))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun adminWriteWithoutAcknowledgementRemainsUnconfirmedAndIsNotRetried() = runBlocking {
+        server.enqueue(json("""{"message":"pending"}"""))
+        val result = runCatching { api.adminReviewAction(17, "approve") }
+        assertTrue(result.isFailure)
+        assertEquals(1, server.requestCount)
+    }
     private lateinit var server: MockWebServer
     private lateinit var api: NovalPieApi
 

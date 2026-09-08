@@ -1145,7 +1145,7 @@ class NovalPieApi(
         autoApproveUpload: Boolean,
         autoApproveDelete: Boolean
     ): UserCheckinAction = withContext(Dispatchers.IO) {
-        normalizeAdminAction(
+        normalizeConfirmedAdminAction(
             post(
                 "/api/admin/review-settings",
                 JSONObject()
@@ -1158,7 +1158,7 @@ class NovalPieApi(
     suspend fun adminReviewAction(id: Long, action: String): UserCheckinAction = withContext(Dispatchers.IO) {
         require(id > 0) { "review id must be positive" }
         require(action in setOf("approve", "reject")) { "unsupported review action" }
-        normalizeAdminAction(
+        normalizeConfirmedAdminAction(
             post(
                 "/api/admin/review-requests",
                 JSONObject().put("id", id).put("action", action)
@@ -1175,14 +1175,14 @@ class NovalPieApi(
         type.takeIf(String::isNotBlank)?.let { body.put("type", it) }
         status.takeIf(String::isNotBlank)?.let { body.put("status", it) }
         keyword.takeIf(String::isNotBlank)?.let { body.put("q", it) }
-        normalizeAdminAction(post("/api/admin/review-requests", body))
+        normalizeConfirmedAdminAction(post("/api/admin/review-requests", body))
     }
 
     suspend fun adminUpdateKeyStatus(id: Long, approvalStatus: String): UserCheckinAction =
         withContext(Dispatchers.IO) {
             require(id > 0) { "key id must be positive" }
             require(approvalStatus in setOf("pending", "approved", "rejected")) { "unsupported key status" }
-            normalizeAdminAction(
+            normalizeConfirmedAdminAction(
                 put(
                     "/api/admin/key-management",
                     JSONObject().put("id", id).put("approval_status", approvalStatus)
@@ -1192,7 +1192,7 @@ class NovalPieApi(
 
     suspend fun adminDeleteKey(id: Long): UserCheckinAction = withContext(Dispatchers.IO) {
         require(id > 0) { "key id must be positive" }
-        normalizeAdminAction(delete("/api/admin/key-management?id=$id"))
+        normalizeConfirmedAdminAction(delete("/api/admin/key-management?id=$id"))
     }
 
     suspend fun adminSaveCookieConfig(
@@ -1211,12 +1211,12 @@ class NovalPieApi(
             body.put("config_key", config.configKey)
             post("/api/admin/cookie-config", body)
         }
-        normalizeAdminAction(raw)
+        normalizeConfirmedAdminAction(raw)
     }
 
     suspend fun adminDeleteCookieConfig(id: Long): UserCheckinAction = withContext(Dispatchers.IO) {
         require(id > 0) { "cookie config id must be positive" }
-        normalizeAdminAction(delete("/api/admin/cookie-config", JSONObject().put("id", id)))
+        normalizeConfirmedAdminAction(delete("/api/admin/cookie-config", JSONObject().put("id", id)))
     }
 
     suspend fun adminSaveBaseUrlRule(rule: AdminBaseUrlRule): UserCheckinAction = withContext(Dispatchers.IO) {
@@ -1230,12 +1230,12 @@ class NovalPieApi(
             body.put("pattern", rule.pattern)
             post("/api/admin/baseurl-rules", body)
         }
-        normalizeAdminAction(raw)
+        normalizeConfirmedAdminAction(raw)
     }
 
     suspend fun adminDeleteBaseUrlRule(id: Long): UserCheckinAction = withContext(Dispatchers.IO) {
         require(id > 0) { "rule id must be positive" }
-        normalizeAdminAction(delete("/api/admin/baseurl-rules?id=$id"))
+        normalizeConfirmedAdminAction(delete("/api/admin/baseurl-rules?id=$id"))
     }
 
     suspend fun adminSaveShopItem(item: AdminShopItem): UserCheckinAction = withContext(Dispatchers.IO) {
@@ -1258,12 +1258,12 @@ class NovalPieApi(
         } else {
             post("/api/admin/shop/items", body)
         }
-        normalizeAdminAction(raw)
+        normalizeConfirmedAdminAction(raw)
     }
 
     suspend fun adminDeleteShopItem(id: Long): UserCheckinAction = withContext(Dispatchers.IO) {
         require(id > 0) { "shop item id must be positive" }
-        normalizeAdminAction(delete("/api/admin/shop/items?id=$id"))
+        normalizeConfirmedAdminAction(delete("/api/admin/shop/items?id=$id"))
     }
 
     suspend fun updateCurrentUser(profile: UserProfile): UserProfile = withContext(Dispatchers.IO) {
@@ -5050,6 +5050,17 @@ class NovalPieApi(
 
     private fun normalizeAdminAction(raw: Any): UserCheckinAction {
         val acknowledgement = normalizeMessageActionResult(raw)
+        return UserCheckinAction(acknowledgement.success, acknowledgement.message)
+    }
+
+    private fun normalizeConfirmedAdminAction(raw: Any): UserCheckinAction {
+        val acknowledgement = normalizeMessageActionResult(raw)
+        val layers = mutableListOf<JSONObject>()
+        fun collect(value: JSONObject) { layers += value; listOf("data", "result").forEach { value.optJSONObject(it)?.let(::collect) } }
+        (raw as? JSONObject)?.let(::collect)
+        val declared = layers.mapNotNull { it.firstBooleanOrNull("success", "ok", "status") } + listOfNotNull(booleanFromAny(raw))
+        if (false in declared) throw AdminActionRejectedException(acknowledgement.message ?: "管理操作被服务器拒绝")
+        if (true !in declared) throw IOException("管理操作回执未确认，请先核对站点；未自动重发")
         return UserCheckinAction(
             success = acknowledgement.success,
             message = acknowledgement.message,

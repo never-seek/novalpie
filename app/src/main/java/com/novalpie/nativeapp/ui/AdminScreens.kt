@@ -40,18 +40,19 @@ import com.novalpie.nativeapp.model.AdminShopItem
 internal fun AdminCookieEditorDialog(
     initial: AdminCookieConfig,
     onDismiss: () -> Unit,
-    onSave: (AdminCookieConfig, String?) -> Unit
+    onSave: (AdminCookieConfig, String?) -> Unit,
+    initialRaw: String? = null,
 ) {
     var key by remember(initial.id) { mutableStateOf(initial.configKey) }
     var description by remember(initial.id) { mutableStateOf(initial.description.orEmpty()) }
-    var cookieRaw by remember(initial.id) { mutableStateOf("") }
+    var cookieRaw by remember(initial.id, initialRaw) { mutableStateOf(initialRaw.orEmpty()) }
     var proxy by remember(initial.id) { mutableStateOf(initial.proxyIp.orEmpty()) }
     var active by remember(initial.id) { mutableStateOf(initial.isActive) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial.id > 0) "编辑 Cookie 配置" else "新增 Cookie 配置") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = key,
                     onValueChange = { key = it },

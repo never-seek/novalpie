@@ -35,6 +35,7 @@ import com.novalpie.nativeapp.data.ChineseVariantSettingsStore
 import com.novalpie.nativeapp.data.DownloadSettingsStore
 import com.novalpie.nativeapp.data.EpubDownloadTicket
 import com.novalpie.nativeapp.data.EpubParser
+import com.novalpie.nativeapp.feature.admin.AdminCommand
 import com.novalpie.nativeapp.data.EpubWriter
 import com.novalpie.nativeapp.data.EditorArchiveStore
 import com.novalpie.nativeapp.data.EditorBatchImporter
@@ -382,7 +383,12 @@ data class AdminState(
     val schedulerLogs: LoadResult<AdminSchedulerLogs> = LoadResult.Idle,
     val shopItems: LoadResult<List<AdminShopItem>> = LoadResult.Idle,
     val actionLoading: Boolean = false,
-    val actionMessage: String? = null
+    val actionMessage: String? = null,
+    val actionError: Boolean = false,
+    val actionUncertain: Boolean = false,
+    val failedEditDraft: com.novalpie.nativeapp.feature.admin.AdminEditDraft? = null,
+    val schedulerLines: Int = 100,
+    val accessRevision: Long = 0,
 )
 
 data class AdminReviewQuery(
@@ -1026,7 +1032,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private var bookEditRequestSerial = 0L
     private var bookChapterRequestSerial = 0L
     private val publicProfileFeature = com.novalpie.nativeapp.feature.profile.PublicProfileViewModel(dependencies.publicProfileRepository)
-    private var adminRequestSerial = 0L
+    private val adminFeature = com.novalpie.nativeapp.feature.admin.AdminViewModel(dependencies.adminRepository, { isAdminProfile(currentUserProfile()) })
     private var toolsRequestSerial = 0L
     private val messageInboxFeature = com.novalpie.nativeapp.feature.messages.MessageInboxViewModel(dependencies.messagesRepository)
     private val conversationFeature = com.novalpie.nativeapp.feature.messages.ConversationViewModel(dependencies.messagesRepository)
@@ -1091,8 +1097,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     var userProfileDetailState: UserProfileDetailState
         get() = publicProfileFeature.state
         private set(value) { publicProfileFeature.present { value } }
-    var adminState by mutableStateOf(AdminState())
-        private set
+    var adminState: AdminState
+        get() = adminFeature.state
+        private set(value) { adminFeature.present { value } }
     var toolsState by mutableStateOf(ToolsState())
         private set
     val messageCenterState: MessageCenterState get() = messageInboxFeature.state
@@ -1219,6 +1226,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     workspaceFeature.environmentChanged()
                     forumPostFeature.environmentChanged()
                     uploadFeature.environmentChanged()
+                    adminFeature.environmentChanged()
                     nativeEpubDownloadState = NativeEpubDownloadState()
                     replacementLoadRevision++;pendingReaderReplacementCreates.clear();deletedPendingReaderReplacementCreates.clear()
                     readerReplacementState = ReaderReplacementState()
@@ -2546,7 +2554,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun loadAdminSection(section: AdminSection = adminState.section) {
-        loadAdminSectionInternal(section, null)
+        adminFeature.load(section)
     }
 
     fun updateAdminOverviewDays(days: Int) {
@@ -2604,243 +2612,37 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         loadAdminSection(AdminSection.Shop)
     }
 
-    private fun loadAdminSectionInternal(section: AdminSection, message: String?) {
-        if (!isAdminProfile(currentUserProfile())) return
-        val requestSerial = ++adminRequestSerial
-        val overviewDays = adminState.overviewDays
-        val reviewQuery = adminState.reviewQuery
-        val operationLogQuery = adminState.operationLogQuery
-        val shopQuery = adminState.shopQuery
-        adminState = when (section) {
-            AdminSection.Overview -> adminState.copy(
-                section = section,
-                overview = LoadResult.Loading,
-                actionLoading = false,
-                actionMessage = message
-            )
-            AdminSection.Review -> adminState.copy(
-                section = section,
-                reviewSettings = LoadResult.Loading,
-                reviewRequests = LoadResult.Loading,
-                actionLoading = false,
-                actionMessage = message
-            )
-            AdminSection.Keys -> adminState.copy(
-                section = section,
-                keys = LoadResult.Loading,
-                baseUrlRules = LoadResult.Loading,
-                actionLoading = false,
-                actionMessage = message
-            )
-            AdminSection.OperationLogs -> adminState.copy(
-                section = section,
-                operationLogs = LoadResult.Loading,
-                actionLoading = false,
-                actionMessage = message
-            )
-            AdminSection.Scraper -> adminState.copy(
-                section = section,
-                cookieConfigs = LoadResult.Loading,
-                schedulerLogs = LoadResult.Loading,
-                actionLoading = false,
-                actionMessage = message
-            )
-            AdminSection.Shop -> adminState.copy(
-                section = section,
-                shopItems = LoadResult.Loading,
-                actionLoading = false,
-                actionMessage = message
-            )
-        }
-        viewModelScope.launch {
-            when (section) {
-                AdminSection.Overview -> {
-                    val result = runCatching { api.adminOverview(days = overviewDays) }
-                    if (!isFreshRequestSerial(requestSerial, adminRequestSerial)) return@launch
-                    adminState = adminState.copy(overview = result.toLoadResult("管理总览"))
-                }
-                AdminSection.Review -> {
-                    val settings = async { runCatching { api.adminReviewSettings() } }
-                    val requests = async {
-                        runCatching {
-                            api.adminReviewRequests(
-                                type = reviewQuery.type.trim(),
-                                status = reviewQuery.status.trim(),
-                                keyword = reviewQuery.keyword.trim()
-                            )
-                        }
-                    }
-                    val settingsResult = settings.await()
-                    val requestsResult = requests.await()
-                    if (!isFreshRequestSerial(requestSerial, adminRequestSerial)) return@launch
-                    adminState = adminState.copy(
-                        reviewSettings = settingsResult.toLoadResult("审核设置"),
-                        reviewRequests = requestsResult.toLoadResult("审核请求")
-                    )
-                }
-                AdminSection.Keys -> {
-                    val keys = async { runCatching { api.adminKeys() } }
-                    val rules = async { runCatching { api.adminBaseUrlRules() } }
-                    val keysResult = keys.await()
-                    val rulesResult = rules.await()
-                    if (!isFreshRequestSerial(requestSerial, adminRequestSerial)) return@launch
-                    adminState = adminState.copy(
-                        keys = keysResult.toLoadResult("Key 管理"),
-                        baseUrlRules = rulesResult.toLoadResult("BaseURL 规则")
-                    )
-                }
-                AdminSection.OperationLogs -> {
-                    val result = runCatching {
-                        api.adminOperationLogs(
-                            page = operationLogQuery.page,
-                            action = operationLogQuery.action.trim(),
-                            status = operationLogQuery.status.trim(),
-                            userId = operationLogQuery.userId.trim(),
-                            novelId = operationLogQuery.novelId.trim(),
-                            keyword = operationLogQuery.keyword.trim(),
-                            startDate = operationLogQuery.startDate.trim(),
-                            endDate = operationLogQuery.endDate.trim()
-                        )
-                    }
-                    if (!isFreshRequestSerial(requestSerial, adminRequestSerial)) return@launch
-                    adminState = adminState.copy(operationLogs = result.toLoadResult("操作日志"))
-                }
-                AdminSection.Scraper -> {
-                    val cookies = async { runCatching { api.adminCookieConfigs() } }
-                    val logs = async { runCatching { api.adminSchedulerLogs() } }
-                    val cookieResult = cookies.await()
-                    val logResult = logs.await()
-                    if (!isFreshRequestSerial(requestSerial, adminRequestSerial)) return@launch
-                    adminState = adminState.copy(
-                        cookieConfigs = cookieResult.toLoadResult("Cookie 配置"),
-                        schedulerLogs = logResult.toLoadResult("调度日志")
-                    )
-                }
-                AdminSection.Shop -> {
-                    val result = runCatching {
-                        api.adminShopItems(
-                            type = shopQuery.type.trim(),
-                            active = shopQuery.isActive,
-                            keyword = shopQuery.keyword.trim()
-                        )
-                    }
-                    if (!isFreshRequestSerial(requestSerial, adminRequestSerial)) return@launch
-                    adminState = adminState.copy(shopItems = result.toLoadResult("商店商品"))
-                }
-            }
-        }
-    }
-
     fun toggleAdminReviewSetting(kind: String) {
+        if (kind !in setOf("upload", "delete")) return
         val settings = (adminState.reviewSettings as? LoadResult.Success)?.value ?: return
-        val upload = if (kind == "upload") !settings.autoApproveUpload else settings.autoApproveUpload
-        val delete = if (kind == "delete") !settings.autoApproveDelete else settings.autoApproveDelete
-        runAdminMutation("更新审核设置", "审核设置已更新") {
-            api.adminUpdateReviewSettings(upload, delete)
-        }
+        adminFeature.mutate(AdminCommand.ReviewSettings(
+            if (kind == "upload") !settings.autoApproveUpload else settings.autoApproveUpload,
+            if (kind == "delete") !settings.autoApproveDelete else settings.autoApproveDelete))
     }
 
     fun approveAllAdminReviews() {
         val query = adminState.reviewQuery
         if (query.status.isNotBlank() && query.status != "pending") return
-        runAdminMutation("批量通过审核请求", "审核请求已批量处理") {
-            api.adminApproveAllReviews(
-                type = query.type.trim(),
-                status = query.status.trim(),
-                keyword = query.keyword.trim()
-            )
-        }
+        adminFeature.mutate(AdminCommand.ReviewAll(query))
     }
 
-    fun adminReviewAction(requestId: Long, action: String) {
-        runAdminMutation("处理审核请求", if (action == "approve") "审核已通过" else "审核已拒绝") {
-            api.adminReviewAction(requestId, action)
-        }
-    }
+    fun adminReviewAction(requestId: Long, action: String) = adminFeature.mutate(AdminCommand.Review(requestId, action))
+    fun updateAdminKeyStatus(keyId: Long, status: String) = adminFeature.mutate(AdminCommand.KeyStatus(keyId, status))
+    fun deleteAdminKey(keyId: Long) = adminFeature.mutate(AdminCommand.DeleteKey(keyId))
+    fun toggleAdminCookieConfig(config: AdminCookieConfig) = adminFeature.mutate(AdminCommand.SaveCookie(config.copy(isActive = !config.isActive), null, false))
+    fun saveAdminCookieConfig(config: AdminCookieConfig, cookieRaw: String?) = adminFeature.mutate(AdminCommand.SaveCookie(config, cookieRaw))
+    fun deleteAdminCookieConfig(configId: Long) = adminFeature.mutate(AdminCommand.DeleteCookie(configId))
+    fun setAdminBaseUrlRuleAction(rule: AdminBaseUrlRule, action: String) = adminFeature.mutate(AdminCommand.SaveRule(rule.copy(action = action), false))
+    fun saveAdminBaseUrlRule(rule: AdminBaseUrlRule) = adminFeature.mutate(AdminCommand.SaveRule(rule))
+    fun deleteAdminBaseUrlRule(ruleId: Long) = adminFeature.mutate(AdminCommand.DeleteRule(ruleId))
+    fun toggleAdminShopItem(item: AdminShopItem) = adminFeature.mutate(AdminCommand.SaveShop(item.copy(isActive = !item.isActive), false))
+    fun saveAdminShopItem(item: AdminShopItem) = adminFeature.mutate(AdminCommand.SaveShop(item))
+    fun deleteAdminShopItem(itemId: Long) = adminFeature.mutate(AdminCommand.DeleteShop(itemId))
 
-    fun updateAdminKeyStatus(keyId: Long, status: String) {
-        runAdminMutation("更新 Key 状态", "Key 状态已更新") {
-            api.adminUpdateKeyStatus(keyId, status)
-        }
-    }
-
-    fun deleteAdminKey(keyId: Long) {
-        runAdminMutation("删除 Key", "Key 已删除") { api.adminDeleteKey(keyId) }
-    }
-
-    fun toggleAdminCookieConfig(config: AdminCookieConfig) {
-        runAdminMutation("更新 Cookie 配置", "Cookie 配置状态已更新") {
-            api.adminSaveCookieConfig(config.copy(isActive = !config.isActive), cookieRaw = null)
-        }
-    }
-
-    fun saveAdminCookieConfig(config: AdminCookieConfig, cookieRaw: String?) {
-        runAdminMutation("保存 Cookie 配置", "Cookie 配置已保存") {
-            api.adminSaveCookieConfig(config, cookieRaw)
-        }
-    }
-
-    fun deleteAdminCookieConfig(configId: Long) {
-        runAdminMutation("删除 Cookie 配置", "Cookie 配置已删除") {
-            api.adminDeleteCookieConfig(configId)
-        }
-    }
-
-    fun setAdminBaseUrlRuleAction(rule: AdminBaseUrlRule, action: String) {
-        runAdminMutation("更新 BaseURL 规则", "BaseURL 规则已更新") {
-            api.adminSaveBaseUrlRule(rule.copy(action = action))
-        }
-    }
-
-    fun saveAdminBaseUrlRule(rule: AdminBaseUrlRule) {
-        runAdminMutation("保存 BaseURL 规则", "BaseURL 规则已保存") {
-            api.adminSaveBaseUrlRule(rule)
-        }
-    }
-
-    fun deleteAdminBaseUrlRule(ruleId: Long) {
-        runAdminMutation("删除 BaseURL 规则", "BaseURL 规则已删除") {
-            api.adminDeleteBaseUrlRule(ruleId)
-        }
-    }
-
-    fun toggleAdminShopItem(item: AdminShopItem) {
-        runAdminMutation("更新商品状态", "商品状态已更新") {
-            api.adminSaveShopItem(item.copy(isActive = !item.isActive))
-        }
-    }
-
-    fun saveAdminShopItem(item: AdminShopItem) {
-        runAdminMutation("保存商品", "商品已保存") { api.adminSaveShopItem(item) }
-    }
-
-    fun deleteAdminShopItem(itemId: Long) {
-        runAdminMutation("删除商品", "商品已删除") { api.adminDeleteShopItem(itemId) }
-    }
-
-    private fun runAdminMutation(
-        label: String,
-        successMessage: String,
-        block: suspend () -> UserCheckinAction
-    ) {
-        if (!isAdminProfile(currentUserProfile()) || adminState.actionLoading) return
-        val section = adminState.section
-        val requestSerial = ++adminRequestSerial
-        adminState = adminState.copy(actionLoading = true, actionMessage = "$label…")
-        viewModelScope.launch {
-            runCatching { block() }
-                .onSuccess { action ->
-                    if (!isFreshRequestSerial(requestSerial, adminRequestSerial)) return@onSuccess
-                    loadAdminSectionInternal(section, action.message ?: successMessage)
-                }
-                .onFailure { failure ->
-                    if (!isFreshRequestSerial(requestSerial, adminRequestSerial)) return@onFailure
-                    adminState = adminState.copy(
-                        actionLoading = false,
-                        actionMessage = apiFailureMessage(label, failure)
-                    )
-                }
-        }
+    fun updateAdminSchedulerLines(lines: Int) {
+        if (lines !in setOf(50, 100, 200, 500, 1000)) return
+        adminState = adminState.copy(schedulerLines = lines)
+        adminFeature.load(AdminSection.Scraper)
     }
 
     fun loadTools() {
@@ -3000,6 +2802,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
      * cleared state after logout or role revocation.
      */
     private fun sanitizeAdminSurfaceIfNeeded(isAdmin: Boolean) {
+        if (!isAdmin) adminFeature.environmentChanged()
         val currentStack = routes.toList()
         val sanitizedStack = sanitizeAdminRouteStack(currentStack, isAdmin)
         applySanitizedAdminRouteStack(currentStack, sanitizedStack)
@@ -3011,7 +2814,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     ) {
         if (sanitizedStack == currentStack) return
 
-        adminRequestSerial++
+        adminFeature.environmentChanged()
         navigator.replaceAll(sanitizedStack)
         currentTab = BottomTab.Tools
         adminState = AdminState()
@@ -5828,6 +5631,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         navigator.pop()
         rootRouteTab(currentRoute)?.let { currentTab = it }
         when (val restored = currentRoute) {
+            is AppRoute.Admin -> adminFeature.enter(restored.section)
             AppRoute.UploadBook -> uploadFeature.enter(null)
             is AppRoute.BookAppend -> uploadFeature.enter(restored.bookId)
             is AppRoute.MessageDetail -> if (messageDetailState.messageId != restored.messageId) loadMessageDetail(restored.messageId)
@@ -6832,6 +6636,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         publicProfileFeature.close()
         workspaceFeature.close()
         uploadFeature.close()
+        adminFeature.close()
         super.onCleared()
     }
 

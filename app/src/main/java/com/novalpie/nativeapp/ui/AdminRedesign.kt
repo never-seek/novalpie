@@ -3,6 +3,8 @@ package com.novalpie.nativeapp.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +44,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +52,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -87,6 +91,7 @@ private data class AdminActionConfirmation(
     val title: String,
     val message: String,
     val destructive: Boolean = false,
+    val onCancel: () -> Unit = {},
     val action: () -> Unit
 )
 
@@ -126,20 +131,25 @@ internal fun AdminScreen(
     onDeleteRule: (Long) -> Unit,
     onSaveShopItem: (AdminShopItem) -> Unit,
     onToggleShopItem: (AdminShopItem) -> Unit,
-    onDeleteShopItem: (Long) -> Unit
+    onDeleteShopItem: (Long) -> Unit,
+    onSchedulerLinesChange: (Int) -> Unit = {},
 ) {
     var confirmation by remember { mutableStateOf<AdminActionConfirmation?>(null) }
     var cookieEditor by remember { mutableStateOf<AdminCookieConfig?>(null) }
+    var cookieEditorRaw by remember { mutableStateOf<String?>(null) }
     var ruleEditor by remember { mutableStateOf<AdminBaseUrlRule?>(null) }
     var shopEditor by remember { mutableStateOf<AdminShopItem?>(null) }
     var keyPane by rememberSaveable { mutableStateOf(AdminKeyPane.Keys) }
     var scraperPane by rememberSaveable { mutableStateOf(AdminScraperPane.Cookies) }
     var shopLayout by rememberSaveable { mutableStateOf(AdminShopLayout.Grid) }
     var expandedLogId by rememberSaveable { mutableStateOf<Long?>(null) }
+    LaunchedEffect(state.accessRevision) {
+        confirmation = null; cookieEditor = null; cookieEditorRaw = null; ruleEditor = null; shopEditor = null
+    }
 
     confirmation?.let { pending ->
         AlertDialog(
-            onDismissRequest = { confirmation = null },
+            onDismissRequest = { confirmation = null; pending.onCancel() },
             title = { Text(pending.title) },
             text = { Text(pending.message) },
             confirmButton = {
@@ -158,19 +168,22 @@ internal fun AdminScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { confirmation = null }) { Text("取消") }
+                TextButton(onClick = { confirmation = null; pending.onCancel() }) { Text("取消") }
             }
         )
     }
     cookieEditor?.let { initial ->
         AdminCookieEditorDialog(
             initial = initial,
-            onDismiss = { cookieEditor = null },
+            initialRaw = cookieEditorRaw,
+            onDismiss = { cookieEditor = null; cookieEditorRaw = null },
             onSave = { config, raw ->
                 cookieEditor = null
+                cookieEditorRaw = null
                 confirmation = AdminActionConfirmation(
                     title = if (config.id > 0) "保存 Cookie 配置" else "新增 Cookie 配置",
-                    message = "确认提交 ${config.configKey} 的配置？只有确认后才会写入站点。"
+                    message = "确认提交 ${config.configKey} 的配置？只有确认后才会写入站点。",
+                    onCancel = { cookieEditorRaw = raw; cookieEditor = config },
                 ) { onSaveCookie(config, raw) }
             }
         )
@@ -183,7 +196,8 @@ internal fun AdminScreen(
                 ruleEditor = null
                 confirmation = AdminActionConfirmation(
                     title = if (rule.id > 0) "保存 BaseURL 规则" else "新增 BaseURL 规则",
-                    message = "确认提交 ${rule.pattern} 的规则？只有确认后才会写入站点。"
+                    message = "确认提交 ${rule.pattern} 的规则？只有确认后才会写入站点。",
+                    onCancel = { ruleEditor = rule },
                 ) { onSaveRule(rule) }
             }
         )
@@ -196,14 +210,15 @@ internal fun AdminScreen(
                 shopEditor = null
                 confirmation = AdminActionConfirmation(
                     title = if (item.id > 0) "保存商品" else "新建商品",
-                    message = "确认提交“${item.name}”？本地图片仅作草稿预览，不会上传；仅图片 URL 或徽章内容会写入站点。"
+                    message = "确认提交“${item.name}”？本地图片仅作草稿预览，不会上传；仅图片 URL 或徽章内容会写入站点。",
+                    onCancel = { shopEditor = item },
                 ) { onSaveShopItem(item) }
             }
         )
     }
 
     LazyColumn(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().testTag("admin-scroll"),
         contentPadding = PaddingValues(
             start = NovalPieSpacing.screenHorizontal,
             top = NovalPieSpacing.lg,
@@ -226,7 +241,26 @@ internal fun AdminScreen(
             )
         }
         state.actionMessage?.let { message ->
-            item { AdminInlineMessage(message) }
+            item { AdminInlineMessage(message, state.actionError) }
+        }
+        state.failedEditDraft?.let { draft ->
+            item {
+                TextButton(enabled = !state.actionLoading, onClick = {
+                    when (draft) {
+                        is com.novalpie.nativeapp.feature.admin.AdminEditDraft.Cookie -> { cookieEditorRaw = draft.raw; cookieEditor = draft.config }
+                        is com.novalpie.nativeapp.feature.admin.AdminEditDraft.Rule -> ruleEditor = draft.rule
+                        is com.novalpie.nativeapp.feature.admin.AdminEditDraft.Shop -> shopEditor = draft.item
+                    }
+                }) { Text("继续编辑未保存的内容") }
+                if (state.actionUncertain) Text("上次写入结果未确认，请先在站点核对；重新保存仍需再次确认。", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        if (state.section == AdminSection.Scraper && scraperPane == AdminScraperPane.Logs) {
+            item { Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(50, 100, 200, 500, 1000).forEach { lines ->
+                    FilterChip(selected = state.schedulerLines == lines, onClick = { onSchedulerLinesChange(lines) }, label = { Text("$lines 行") })
+                }
+            } }
         }
 
         when (state.section) {
@@ -428,16 +462,16 @@ private fun AdminSectionRail(
 }
 
 @Composable
-private fun AdminInlineMessage(message: String) {
+private fun AdminInlineMessage(message: String, error: Boolean = false) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(NovalPieRadius.md),
-        color = MaterialTheme.colorScheme.secondaryContainer
+        color = if (error) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
     ) {
         Text(
             text = message,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            color = if (error) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
             modifier = Modifier.padding(NovalPieSpacing.md)
         )
     }

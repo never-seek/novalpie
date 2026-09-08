@@ -121,6 +121,9 @@ internal class AppContainer(context: Context) {
     val workspaceRepository: com.novalpie.nativeapp.feature.workspace.WorkspaceRepository by lazy {
         com.novalpie.nativeapp.feature.workspace.WebsiteWorkspaceRepository(api)
     }
+    val adminRepository: com.novalpie.nativeapp.feature.admin.AdminRepository by lazy {
+        com.novalpie.nativeapp.feature.admin.WebsiteAdminRepository(api)
+    }
     val searchPreferences: SearchPreferences by lazy {
         StoredSearchPreferences(SearchSettingsStore(application), SearchHistoryStore(application))
     }
