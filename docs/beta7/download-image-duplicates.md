@@ -53,3 +53,13 @@
 - 测试finally仅删除自己的完成URI；成功后download-work、files/native-downloads均为4KB。用户既有下载、会话和设置未清除。
 
 报告：`agent-bridge/artifacts/beta7-device/20260908-corrected-full-350192-report.json`（1,734,333字节，SHA256 `f5b59a5db8bff9d1fb52b6c879b0419f08348a1ad843577c7f8df4c0eaa56839`）；运行元信息/log同前缀去掉`-report`。保留23处export-only图是上次真实预检结论；本轮成品总数与其一致。没有在第三方阅读器逐页打开整本12GB包，独立阅读器打开小书证据另列；最终同一优化Beta包仍需复验。
+
+## 2026-09-09 图片扩展名/错误类型补查
+
+源反馈1938说保存的图后缀变成file，未提供资源URL。已有opaque.file+octet-stream真实PNG字节的单测验证不会依赖后缀；新78654另外复现两个边界：错误image/webp响应头压过真实PNG、HTML错误页被声明image/png后仍发布图片。
+
+改为真实PNG/JPEG/GIF/WebP/AVIF/BMP/SVG签名优先、512字节检查、HTML错误页在发布临时图片之前拒绝；原图字节不变。任务资源缓存也先检查类型，旧缓存HTML不会使重试永久复用坏内容，网络恢复后能重新获取并写入正确缓存。
+
+7790归档相关测试绿；73042缓存重取/坏图不缓存绿，旧完整包pipeline2不能绕新验证一项红；改pipeline3，重试使用已有授权/源文本/原图重打包，不能盲重扣积分。17940全量/构建执行中，新增Android图片类型设备用例待装。本次未拿未定位的1938帖子当实际同图复现，也不把合成测试当当前源图已修。
+
+01:22实际完成：17940全量153suites/1116tests/0失败及Debug/AndroidTest通过2m12s；`D00DDE143EA804F878A64098DE903A50B0AFA9402C6DFF274873CED2B9A6EA16`已无损安装。31553 MuMu实际staging/ZIP：错WebP响应头+PNG字节+file路径生成image-1.png/正确OPF，原字节一致；HTML错误页拒绝、无阶段文件发布。报告20260909-image-type-device-report.json。随后8778真实公共规则+原文/替换×EPUB/TXT4组合全过8.226s，按书停用/单条隐藏/派生朗读文本/原文未变都检查；临时规则与四测试URI已删除并回读ruleRemoved=true，报告20260909-image-types-public-exports-report.json。没有再次运行12GB大书；最终R8仍待。

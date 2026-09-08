@@ -20,6 +20,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeEpubArchiveWriterTest {
+    @Test fun actualImageSignatureWinsOverAnIncorrectDeclaredImageType() = runBlocking {
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 13, 10, 26, 10) + ByteArray(24)
+        val file = File.createTempFile("novalpie-mime-test-", ".asset").apply { delete() }
+        try {
+            val staged = stageNativeEpubFile(png.inputStream(), "image/webp", file)
+            assertEquals("image/png", staged.mediaType)
+            assertArrayEquals(png, file.readBytes())
+        } finally { file.delete() }
+    }
+
+    @Test fun htmlErrorMasqueradingAsImageNeverPublishesAStagedAsset() = runBlocking {
+        val file = File.createTempFile("novalpie-html-test-", ".asset").apply { delete() }
+        try {
+            val failure = runCatching { stageNativeEpubFile("<!DOCTYPE html><html>Resource unavailable</html>".byteInputStream(), "image/png", file) }
+            assertTrue("错误页不是图片，不能进入EPUB", failure.isFailure)
+            assertFalse("拒绝前不能发布文件", file.exists())
+        } finally { file.delete() }
+    }
     @Test fun failedDeclaredCoverDoesNotBecomeASuccessfulCoverlessArchive()=runBlocking {
         val result=runCatching {
             NativeEpubArchiveWriter.write(ByteArrayOutputStream(),

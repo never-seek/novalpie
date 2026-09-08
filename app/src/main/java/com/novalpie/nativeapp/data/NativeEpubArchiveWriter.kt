@@ -193,7 +193,6 @@ private fun detectNativeEpubMediaType(declared: String?, header: ByteArray): Str
         ?.trim()
         ?.lowercase(Locale.US)
         ?.takeIf(String::isNotBlank)
-    if (normalized?.startsWith("image/") == true) return normalized
 
     fun startsWith(vararg bytes: Int): Boolean =
         header.size >= bytes.size && bytes.indices.all { index ->
@@ -220,6 +219,9 @@ private fun detectNativeEpubMediaType(declared: String?, header: ByteArray): Str
     if (startsWith(0x42, 0x4D)) return "image/bmp"
 
     val textHeader = String(header, Charsets.UTF_8).trimStart('\uFEFF', ' ', '\t', '\r', '\n')
+    if (Regex("^(?:<!doctype\\s+html\\b|<html\\b|<head\\b|<body\\b)", RegexOption.IGNORE_CASE).containsMatchIn(textHeader)) {
+        throw java.io.IOException("图片服务返回了错误网页，未作为图片写入 EPUB")
+    }
     if (textHeader.startsWith("<svg", ignoreCase = true) ||
         (textHeader.startsWith("<?xml", ignoreCase = true) &&
             textHeader.contains("<svg", ignoreCase = true))
@@ -227,6 +229,21 @@ private fun detectNativeEpubMediaType(declared: String?, header: ByteArray): Str
         return "image/svg+xml"
     }
     return normalized?.takeUnless { it == "application/octet-stream" || it == "binary/octet-stream" }
+}
+
+/** Bounded inspection of a task-owned original; bytes are never rewritten or decoded here. */
+internal fun inspectNativeEpubFileType(file: File, declared: String?): String? {
+    val header = ByteArray(512)
+    var length = 0
+    file.inputStream().use { input ->
+        while (length < header.size) {
+            val count = input.read(header, length, header.size - length)
+            if (count < 0) break
+            if (count > 0) length += count
+        }
+    }
+    if (length == 0) throw java.io.IOException("图片内容为空")
+    return detectNativeEpubMediaType(declared, header.copyOf(length))
 }
 
 /** Copies an asset once while calculating the exact metadata required by a STORE ZIP entry. */
@@ -238,8 +255,9 @@ internal suspend fun stageNativeEpubFile(
 ): NativeEpubStagedFile {
     val crc = CRC32()
     var size = 0L
-    val header = ByteArray(32)
+    val header = ByteArray(512)
     var headerSize = 0
+    var detectedType: String? = null
     // Never expose the destination while the network bytes are still being copied. Android's
     // cache/filesystem can be observed by another worker (or an interrupted old job) between two
     // reads; publishing a partially written final path lets that observer retain a bad length and
@@ -266,6 +284,7 @@ internal suspend fun stageNativeEpubFile(
             }
             }
             if (size <= 0L) throw IllegalStateException("图片内容为空")
+            detectedType = detectNativeEpubMediaType(mediaType, header.copyOf(headerSize))
             if (destination.exists() && !destination.delete()) {
                 throw IllegalStateException("无法替换 EPUB 阶段文件")
             }
@@ -279,7 +298,7 @@ internal suspend fun stageNativeEpubFile(
     }
     return NativeEpubStagedFile(
         file = destination,
-        mediaType = detectNativeEpubMediaType(mediaType, header.copyOf(headerSize)),
+        mediaType = detectedType,
         size = size,
         crc = crc.value,
     )

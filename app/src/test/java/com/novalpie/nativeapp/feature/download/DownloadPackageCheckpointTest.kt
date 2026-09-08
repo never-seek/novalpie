@@ -12,6 +12,16 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class DownloadPackageCheckpointTest {
     @get:Rule val temp=TemporaryFolder()
+    @Test fun archiveBuiltBeforeImageTypeValidationCannotSkipTheNewValidation()=runBlocking {
+        val dir = temp.newFolder(); val file = java.io.File(dir, "result.epub").apply { writeText("synthetic completed archive") }
+        val task = DownloadTask("old-mime", 1, 2, "测试", DownloadFormat.Epub)
+        val checkpoint = DownloadPackageCheckpoint(dir); val control = NativeDownloadControl()
+        checkpoint.record(task, file, "source", control)
+        val receipt = java.io.File(dir, "package.complete")
+        val json = org.json.JSONObject(receipt.readText()).put("exportPipeline", 2)
+        receipt.writeText(json.toString())
+        assertFalse(checkpoint.reusable(task, file, "source", control))
+    }
     @Test fun onlyTheSameFrozenInputAndUnchangedBytesCanReuseTheCompletedPackage()=runBlocking {
         val dir=temp.newFolder()
         val file=java.io.File(dir,"result.txt").apply{writeText("complete result")}

@@ -147,7 +147,7 @@ internal class NativeDownloadTaskRunner(
         completed
     }
 
-    private suspend fun openResource(root:File,url:String,control:NativeDownloadControl,resourceLocks:ConcurrentHashMap<String,Mutex>):NativeEpubAsset {
+    internal suspend fun openResource(root:File,url:String,control:NativeDownloadControl,resourceLocks:ConcurrentHashMap<String,Mutex>):NativeEpubAsset {
         val key=MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString(""){"%02x".format(it)}
         return resourceLocks.getOrPut(root.absolutePath+key){Mutex()}.withLock {openResourceLocked(root,url,key,control)}
     }
@@ -155,12 +155,18 @@ internal class NativeDownloadTaskRunner(
         val data=File(root,"$key.bin")
         val metadata=File(root,"$key.json")
         val cached=metadata.readTextOrNull()?.let{runCatching{JSONObject(it)}.getOrNull()}
-        if(data.isFile&&cached?.optLong("bytes")==data.length()&&cached.optString("sha256")==fileDigest(data))return NativeEpubAsset(cached.optString("mime").takeIf{it.isNotBlank()},data.inputStream())
+        if(data.isFile&&cached?.optLong("bytes")==data.length()&&cached.optString("sha256")==fileDigest(data)) {
+            val inspected = runCatching { inspectNativeEpubFileType(data, cached.optString("mime").takeIf { it.isNotBlank() }) }
+            if (inspected.isSuccess) return NativeEpubAsset(inspected.getOrNull(), data.inputStream())
+            // A cached HTML error must not trap every retry. Refetch, keeping the old task file
+            // untouched until a valid new original has been downloaded and inspected.
+        }
         val part=File.createTempFile("$key-",".part",root)
         try {
             var mime:String?=null
             part.outputStream().use {output->api.streamAsset(url){input,type->mime=type;copyNativeDownloadStream(input,output,control::awaitIfPaused)}}
             if(part.length()==0L)throw IOException("插图响应为空")
+            mime = inspectNativeEpubFileType(part, mime)
             if(data.exists()&&!data.delete())throw IOException("无法替换损坏插图检查点")
             if(!part.renameTo(data))throw IOException("无法保存插图检查点")
             metadata.writeText(JSONObject().put("bytes",data.length()).put("mime",mime.orEmpty()).put("sha256",fileDigest(data)).toString())
