@@ -3745,18 +3745,27 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun loadEditorArchive(id: String) {
-        val archive = editorArchiveStore.load(id) ?: run {
-            uploadEditorState = uploadEditorState.copy(actionMessage = "存档不存在")
-            return
+        if (uploadEditorState.busy) return
+        val request = ++editorRequestSerial
+        val before = uploadEditorState
+        uploadEditorState = before.copy(busy = true, actionMessage = "正在校验存档…")
+        viewModelScope.launch {
+            val result = try { Result.success(withContext(Dispatchers.IO) { editorArchiveStore.load(id) }) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (failure: Exception) { Result.failure(failure) }
+            if (request != editorRequestSerial) return@launch
+            val current = uploadEditorState.copy(busy = false)
+            if (current.text != before.text || current.metadata != before.metadata) {
+                uploadEditorState = current.copy(actionMessage = "编辑内容已变化，未用存档覆盖新草稿")
+                return@launch
+            }
+            uploadEditorState = result.fold(onSuccess = { archive ->
+                if (archive == null) current.copy(actionMessage = "存档不存在，当前编辑内容保留")
+                else replaceEditorDocument(current.copy(text = archive.textContent, metadata = archive.metadata,
+                    fileName = archive.fileName, chapters = emptyList(), selectedTab = EditorTab.Text,
+                    actionMessage = "存档已加载，请重新生成章节目录"))
+            }, onFailure = { current.copy(actionMessage = apiFailureMessage("读取存档", it)) })
         }
-        uploadEditorState = replaceEditorDocument(uploadEditorState.copy(
-            text = archive.textContent,
-            metadata = archive.metadata,
-            fileName = archive.fileName,
-            chapters = emptyList(),
-            selectedTab = EditorTab.Text,
-            actionMessage = "存档已加载，请重新生成章节目录"
-        ))
     }
 
     fun deleteEditorArchive(id: String) {
