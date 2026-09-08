@@ -48,7 +48,7 @@ class NativeLargeDownloadLiveDeviceTest {
             // The writer records each quota against real reader data before removing only excess.
             File(work,"image-reconciliation").listFiles()?.filter { it.extension == "json" }?.forEach { file ->
                 val correction = JSONObject(file.readText())
-                assertEquals(correction.getInt("retainedOccurrences"), correction.getJSONArray("images").length())
+                assertEquals(correction.getInt("retainedOccurrences"), correction.getJSONArray("images").length() + correction.optInt("sourceOnlyOccurrences"))
                 sourceImageOccurrences -= correction.getInt("removed")
             }
             File(work,"assets").listFiles()?.filter{it.extension=="json"}?.forEach{file->

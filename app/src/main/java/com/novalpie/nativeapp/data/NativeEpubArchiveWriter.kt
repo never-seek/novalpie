@@ -609,7 +609,7 @@ object NativeEpubArchiveWriter {
     suspend fun writeTransformedTxt(
         output: Writer,
         source: Reader,
-        transformChapter: (chapterOrder: Int, title: String, body: String) -> NativeDownloadChapterText,
+        transformChapter: suspend (chapterOrder: Int, title: String, body: String) -> NativeDownloadChapterText,
         awaitIfPaused: suspend () -> Unit = {},
     ) {
         val writer = output.buffered()

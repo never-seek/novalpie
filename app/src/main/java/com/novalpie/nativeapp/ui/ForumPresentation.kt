@@ -803,11 +803,11 @@ private fun forumInlineText(raw: String): String =
 
 private fun forumHtmlAttribute(tag: String, name: String): String? {
     val quoted = Regex(
-        """\b${Regex.escape(name)}\s*=\s*(["'])(.*?)\1""",
+        """(?<![\w:-])${Regex.escape(name)}\s*=\s*(["'])(.*?)\1""",
         setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
     ).find(tag)?.groupValues?.getOrNull(2)
-    if (!quoted.isNullOrBlank()) return forumInlineText(quoted)
-    return Regex("""\b${Regex.escape(name)}\s*=\s*([^\s>]+)""", RegexOption.IGNORE_CASE)
+    if (quoted != null) return forumInlineText(quoted).takeIf(String::isNotBlank)
+    return Regex("""(?<![\w:-])${Regex.escape(name)}\s*=\s*([^\s>]+)""", RegexOption.IGNORE_CASE)
         .find(tag)
         ?.groupValues
         ?.getOrNull(1)
@@ -847,14 +847,16 @@ private fun forumNormalizeImageUrl(raw: String): String? {
 
 internal fun forumCommentThreads(comments: List<ForumComment>): List<ForumCommentThread> {
     if (comments.isEmpty()) return emptyList()
-    val byId = comments.associateBy { it.id }
+    val byId = comments.associateBy { it.id }.toMutableMap().apply {
+        comments.filter { it.parentCommentId == null }.forEach { put(it.id, it) }
+    }
     val repliesByRoot = linkedMapOf<Long, MutableList<ForumComment>>()
     val rootById = linkedMapOf<Long, ForumComment>()
 
     comments.forEach { comment ->
         val root = forumCommentRoot(comment, byId)
         if (root.id !in rootById) rootById[root.id] = root
-        if (root.id != comment.id) {
+        if (root !== comment) {
             repliesByRoot.getOrPut(root.id) { mutableListOf() }.add(comment)
         }
     }
@@ -885,12 +887,15 @@ internal fun forumCommentThreadRootId(
     comment: ForumComment,
     availableComments: List<ForumComment> = emptyList(),
 ): Long {
-    val byId = availableComments.associateBy(ForumComment::id)
+    val byId = availableComments.associateBy(ForumComment::id).toMutableMap().apply {
+        availableComments.filter { it.parentCommentId == null }.forEach { put(it.id, it) }
+    }
     val visited = mutableSetOf<Long>()
     var current = comment
     while (visited.add(current.id)) {
         val parentId = current.parentCommentId ?: return current.id
         val parent = byId[parentId] ?: return parentId
+        if (parent.parentCommentId == null) return parent.id
         current = parent
     }
     return current.id
@@ -999,7 +1004,7 @@ internal fun forumCommentActionTarget(
     availableComments: List<ForumComment> = emptyList(),
 ): ForumCommentActionTarget {
     val rootId = forumCommentThreadRootId(comment, availableComments)
-    if (rootId == comment.id) return ForumCommentActionTarget(parentCommentId = rootId)
+    if (comment.parentCommentId == null) return ForumCommentActionTarget(parentCommentId = rootId)
     return ForumCommentActionTarget(
         parentCommentId = rootId,
         replyId = comment.id,
@@ -1020,6 +1025,7 @@ private fun forumCommentRoot(
     while (visited.add(current.id)) {
         val parentId = current.parentCommentId ?: return current
         current = byId[parentId] ?: return current
+        if (current.parentCommentId == null) return current
     }
     return comment
 }

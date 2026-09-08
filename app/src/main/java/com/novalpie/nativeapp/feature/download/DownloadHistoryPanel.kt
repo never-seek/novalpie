@@ -64,7 +64,11 @@ internal fun DownloadHistoryPanel(accountId:Long,onOpenBook:(Long)->Unit) {
 /** Only this task's published URI is shared, never the private authorization/cache directory. */
 internal fun openCompletedDownload(context:Context,task:DownloadTask,share:Boolean) {
     require(downloadCanOpen(task))
-    val source=Uri.parse(task.destinationUri)
+    openDownloadedFile(context, requireNotNull(task.destinationUri), task.title, task.format == DownloadFormat.Epub, share)
+}
+
+internal fun openDownloadedFile(context: Context, sourceUri: String, title: String, epub: Boolean, share: Boolean) {
+    val source=Uri.parse(sourceUri)
     val uri=when(source.scheme) {
         "content"->source.also{context.contentResolver.openFileDescriptor(it,"r")?.use{descriptor->require(descriptor.statSize!=0L)} ?: error("文件不存在")}
         "file"->{
@@ -75,11 +79,11 @@ internal fun openCompletedDownload(context:Context,task:DownloadTask,share:Boole
         }
         else->error("下载地址无效")
     }
-    val mime=if(task.format==DownloadFormat.Epub)"application/epub+zip"else"text/plain"
+    val mime=if(epub)"application/epub+zip"else"text/plain"
     val intent=Intent(if(share)Intent.ACTION_SEND else Intent.ACTION_VIEW).apply {
         if(share){type=mime;putExtra(Intent.EXTRA_STREAM,uri)}else setDataAndType(uri,mime)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        clipData=ClipData.newRawUri(task.title,uri)
+        clipData=ClipData.newRawUri(title,uri)
     }
     context.startActivity(Intent.createChooser(intent,if(share)"分享下载文件"else"选择阅读器"))
 }

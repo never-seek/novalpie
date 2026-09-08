@@ -77,6 +77,35 @@ class DownloadImageOccurrenceLiveDeviceTest {
             }
             val report = JSONObject().put("bookId", bookId).put("chapters", chapters).put("exportImageOccurrences", total)
                 .put("adjacentExportDuplicates", adjacentTotal).put("newAuthorizations", authorizations).put("imageRequests", 0).put("samples", reports)
+            if (InstrumentationRegistry.getArguments().getString("verifyFullImagePrecheck") == "true") {
+                val checkFolder = File(packageRoot, "whole-quotas")
+                val reads = java.util.concurrent.atomic.AtomicInteger()
+                val precheckStarted = android.os.SystemClock.elapsedRealtime()
+                val checker = com.novalpie.nativeapp.feature.download.TaskExportImageReconciler(checkFolder) { number ->
+                    val chapter = catalog.firstOrNull { it.number == number }
+                        ?: catalog.getOrNull(number - 1)?.takeIf { it.number == null } ?: error("Unknown chapter number $number")
+                    reads.incrementAndGet()
+                    readerBlocksForContent(container.api.chapterContent(chapter.id, showImages = true))
+                        .filterIsInstance<ReaderContentBlock.Image>().map { it.originalUrl ?: it.url }
+                }
+                try {
+                    val sourceOnly = withTimeout(15 * 60 * 1000L) { temp.reader(Charsets.UTF_8).use { checker.prepare(it, 4) } }
+                    report.put("sourceOnlyOccurrences", sourceOnly)
+                    report.put("fullPrecheck", true)
+                } catch (failure: Exception) {
+                    report.put("fullPrecheck", false).put("fullPrecheckError", failure.javaClass.simpleName + ": " + failure.message?.take(180))
+                    throw failure
+                } finally {
+                    val entries = checkFolder.listFiles().orEmpty().filter { it.extension == "json" && !it.name.endsWith("-mismatch.json") }.map { JSONObject(it.readText()) }
+                    val mismatches = checkFolder.listFiles().orEmpty().filter { it.name.endsWith("-mismatch.json") }.map { JSONObject(it.readText()) }
+                    report.put("mismatches", JSONArray(mismatches))
+                    report.put("precheckReads", reads.get()).put("precheckedChapters", entries.size)
+                        .put("removedExtraOccurrences", entries.sumOf { it.getInt("removed") })
+                        .put("precheckElapsedMs", android.os.SystemClock.elapsedRealtime() - precheckStarted)
+                    val folder = File(context.getExternalFilesDir(null), "beta7-qa").apply { mkdirs() }
+                    File(folder, "image-occurrence-live.json").writeText(report.toString(2))
+                }
+            }
             if (InstrumentationRegistry.getArguments().getString("verifyImageArchive") == "true") {
                 val hashes = ConcurrentHashMap<String, String>()
                 fun digest(file: File): String = file.inputStream().use { input ->

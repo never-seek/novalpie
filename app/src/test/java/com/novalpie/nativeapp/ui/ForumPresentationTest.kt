@@ -12,6 +12,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ForumPresentationTest {
+    @Test fun commentAndReplyIdsMayCoincideWithoutLosingEitherRecord() {
+        val root = com.novalpie.nativeapp.model.ForumComment(10, 1, authorName = "甲", content = "父")
+        val reply = com.novalpie.nativeapp.model.ForumComment(10, 1, parentCommentId = 10, authorName = "乙", content = "子")
+        val threads = forumCommentThreads(listOf(root, reply))
+        assertEquals(1, threads.size)
+        assertEquals("父", threads.single().comment.content)
+        assertEquals(listOf("子"), threads.single().replies.map { it.content })
+        assertEquals(ForumCommentActionTarget(10, 10), forumCommentActionTarget(reply, listOf(root, reply)))
+    }
     @Test
     fun trailingSpoilerAnnotationIsStillHitWhenTextLayoutReturnsEndOffset() {
         val annotated = buildAnnotatedString {

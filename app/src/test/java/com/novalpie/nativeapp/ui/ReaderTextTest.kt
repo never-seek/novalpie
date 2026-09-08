@@ -12,6 +12,15 @@ import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 class ReaderTextTest {
+    @Test fun emptyQuotedImageAttributesAreNotReinterpretedAsAQuotedRelativeUrl() {
+        val blocks = readerBlocksFromContent("""<p>正文</p><img src=""><img src=''><img src="https://images.test/real.webp">""")
+        val images = blocks.filterIsInstance<ReaderContentBlock.Image>()
+        assertEquals(listOf("https://images.test/real.webp"), images.map { it.url })
+    }
+    @Test fun anEmptyLazySourceDoesNotMaskTheRealFallbackSource() {
+        val blocks = readerBlocksFromContent("""<img data-src="" src="https://images.test/real.webp">""")
+        assertEquals(listOf("https://images.test/real.webp"), blocks.filterIsInstance<ReaderContentBlock.Image>().map { it.url })
+    }
     @Test
     fun plainReaderTextDecodesEntitiesWithoutEatingAngleBracketContent() {
         val source="&lt;例子1&gt;\n甲 &amp; 乙\n&#x1F642;"

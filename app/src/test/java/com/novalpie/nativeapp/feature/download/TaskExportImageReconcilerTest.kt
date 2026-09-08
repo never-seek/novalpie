@@ -17,6 +17,21 @@ import java.util.zip.ZipInputStream
 class TaskExportImageReconcilerTest {
     @get:Rule val temp = TemporaryFolder()
     private val url = "https://images.test/one.webp"
+    @Test fun transientSourceReadGetsOnlyOneRetryAndConfirmedPermissionsNeverRetry() = runBlocking {
+        var reads = 0
+        val checker = TaskExportImageReconciler(temp.newFolder()) {
+            reads++
+            if (reads == 1) throw NovalPieApiException(500, "/api/chapters/1/content", "fixture")
+            listOf(url)
+        }
+        val body = "[图片: $url]\n[图片: $url]"
+        assertEquals(1, Regex("\\[图片").findAll(checker.reconcile(1, body)).count())
+        assertEquals(2, reads)
+        var rejected = 0
+        val forbidden = TaskExportImageReconciler(temp.newFolder()) { rejected++; throw NovalPieApiException(403, "/api/chapters/1/content", "fixture") }
+        assertTrue(runCatching { forbidden.reconcile(1, body) }.isFailure)
+        assertEquals(1, rejected)
+    }
     @Test fun correctedArchiveKeepsOneVerifiedOccurrenceAndDoesNotRefetchQuotaOnRetry() = runBlocking {
         var sourceReads = 0
         val reconciler = TaskExportImageReconciler(temp.newFolder()) { sourceReads++; listOf(url) }
@@ -44,5 +59,21 @@ class TaskExportImageReconcilerTest {
         val reconciler = TaskExportImageReconciler(temp.newFolder()) { error("No extra requests") }
         val body = "正文\n[图片: $url]"
         assertEquals(body, reconciler.reconcile(1, body))
+    }
+    @Test fun precheckIsParallelButBoundedAndResumesFromSavedChapterSnapshots() = runBlocking {
+        val active = java.util.concurrent.atomic.AtomicInteger()
+        val maximum = java.util.concurrent.atomic.AtomicInteger()
+        val reads = java.util.concurrent.atomic.AtomicInteger()
+        val reconciler = TaskExportImageReconciler(temp.newFolder()) {
+            reads.incrementAndGet()
+            val now = active.incrementAndGet(); maximum.updateAndGet { maxOf(it, now) }
+            try { kotlinx.coroutines.delay(30); listOf(url) } finally { active.decrementAndGet() }
+        }
+        val source = (1..20).joinToString("\n") { "第${it}章\n[图片: $url]\n正文\n[图片: $url]" }
+        reconciler.prepare(StringReader(source), 999)
+        assertTrue(maximum.get() in 2..4)
+        assertEquals(20, reads.get())
+        reconciler.prepare(StringReader(source), 999)
+        assertEquals(20, reads.get())
     }
 }

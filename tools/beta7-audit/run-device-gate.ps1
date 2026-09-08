@@ -6,7 +6,9 @@ param(
     [long]$BookId = 0,
     [long]$ChapterId = 0,
     [switch]$AllowPublicRuleWrite,
-    [switch]$VerifyImageArchive
+    [switch]$VerifyImageArchive,
+    [switch]$VerifyFullImagePrecheck,
+    [switch]$AllowForumWrite
 )
 $ErrorActionPreference = 'Stop'
 if ($TestClass -notmatch '^com\.novalpie\.nativeapp\.[A-Za-z0-9_.]+$') { throw 'Only NovalPie test classes are accepted' }
@@ -42,6 +44,8 @@ if ($BookId -gt 0) { $instrumentArgs += @('-e', 'bookId', $BookId.ToString()); $
 if ($ChapterId -gt 0) { $instrumentArgs += @('-e', 'chapterId', $ChapterId.ToString()); $metadata.chapterId = $ChapterId }
 if ($AllowPublicRuleWrite) { $instrumentArgs += @('-e', 'allowPublicRuleWrite', 'true'); $metadata.publicRuleWrite = $true }
 if ($VerifyImageArchive) { $instrumentArgs += @('-e', 'verifyImageArchive', 'true'); $metadata.verifyImageArchive = $true }
+if ($VerifyFullImagePrecheck) { $instrumentArgs += @('-e', 'verifyFullImagePrecheck', 'true'); $metadata.verifyFullImagePrecheck = $true }
+if ($AllowForumWrite) { $instrumentArgs += @('-e', 'allowForumWrite', 'true'); $metadata.allowForumWrite = $true }
 $instrumentArgs += 'com.novalpie.app.debug.test/androidx.test.runner.AndroidJUnitRunner'
 $log = & $Adb @instrumentArgs 2>&1
 $logText = $log -join "`n"

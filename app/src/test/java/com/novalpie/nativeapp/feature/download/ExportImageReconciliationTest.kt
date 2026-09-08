@@ -35,4 +35,12 @@ class ExportImageReconciliationTest {
         assertTrue(corrected.body.contains("[图片: ]"))
         assertNull(normalizedExportImageUrl(":"))
     }
+    @Test fun olderExportOnlyPictureIsPreservedWhileKnownDuplicateCopiesAreRemoved() {
+        val extra = "https://images.test/older.png"
+        val body = "前[图片: $a]中[图片: $b]后[图片: $extra]\n[图片: $a][图片: $b]"
+        val result = reconcileExportImageOccurrences(body, listOf(a, b))
+        assertEquals(2, result.removed)
+        assertEquals(1, result.sourceOnlyOccurrences)
+        assertEquals("前[图片: $a]中[图片: $b]后[图片: $extra]\n", result.body)
+    }
 }

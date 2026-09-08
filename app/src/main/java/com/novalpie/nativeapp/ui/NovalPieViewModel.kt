@@ -544,6 +544,9 @@ data class ForumPostDetailState(
     val actionLoading: Boolean = false,
     /** Locally staged option ids are kept separate from the source's authoritative user votes. */
     val selectedPollOptionIds: Set<Long> = emptySet(),
+    val commentsPage: Int = 1,
+    val commentsHasMore: Boolean = false,
+    val commentsLoadingMore: Boolean = false,
 )
 
 /**
@@ -572,8 +575,8 @@ internal fun forumPostDetailWithLoadedComments(
         onSuccess = { sourceComments ->
             LoadResult.Success(
                 (sourceComments + visibleComments.filterNot { current ->
-                    sourceComments.any { it.id == current.id }
-                }).distinctBy(ForumComment::id),
+                    sourceComments.any { it.id == current.id && it.parentCommentId == current.parentCommentId }
+                }).distinctBy { it.parentCommentId to it.id },
             )
         },
         onFailure = { failure ->
@@ -613,7 +616,7 @@ private fun forumPostDetailWithImmediateReply(
 ): ForumPostDetailState {
     val echoedReply = reply ?: return state
     val visible = (state.comments as? LoadResult.Success)?.value ?: return state
-    val merged = (visible.filterNot { it.id == echoedReply.id } + echoedReply)
+    val merged = (visible.filterNot { it.id == echoedReply.id && it.parentCommentId == echoedReply.parentCommentId } + echoedReply)
     val rootId = forumCommentThreads(merged)
         .firstOrNull { thread ->
             thread.comment.id == echoedReply.id || thread.replies.any { it.id == echoedReply.id }
@@ -708,6 +711,7 @@ data class NativeEpubDownloadState(
     val message: String? = null,
     /** A failed/cancelled job can be retried from the same native detail page. */
     val canRetry: Boolean = false,
+    val completedUri: String? = null,
 )
 
 /** Global because a card can request its original before a detail route has been opened. */
@@ -1011,10 +1015,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private val navigator = AppNavigator(readerSessionRouteStack(startupReaderSession))
     private val routes:List<AppRoute> get() = navigator.entries
     private val forumFeature=com.novalpie.nativeapp.feature.forum.ForumFeedViewModel(dependencies.forumFeedRepository)
-    private var forumPostDetailRequestSerial = 0L
-    private var forumPostBodyRequestSerial = 0L
-    private var forumPostCommentsRequestSerial = 0L
-    private var forumBookReferenceRequestSerial = 0L
+    private val forumPostFeature = com.novalpie.nativeapp.feature.forum.ForumPostViewModel(dependencies.forumPostRepository)
     private val bookFeature=com.novalpie.nativeapp.feature.books.BookDetailViewModel(
         dependencies.bookRepository,progress=readerProgressStore::load,
         onComments={bookId,comments->loadBookCommentBookReferences(bookId,comments,bookDetailRequestSerial)},
@@ -1068,8 +1069,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         private set
     val forumState:ForumState get()=forumFeature.state.feed
     internal val forumScrollPosition:GridScrollPosition get()=forumFeature.state.scroll
-    var forumPostDetailState by mutableStateOf(ForumPostDetailState())
-        private set
+    val forumPostDetailState: ForumPostDetailState get() = forumPostFeature.state
     var forumCreateState by mutableStateOf(ForumCreateState())
         private set
     var homeState:HomeState
@@ -1215,11 +1215,14 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     profileFeature.environmentChanged()
                     publicProfileFeature.environmentChanged()
                     workspaceFeature.environmentChanged()
+                    forumPostFeature.environmentChanged()
+                    nativeEpubDownloadState = NativeEpubDownloadState()
                     replacementLoadRevision++;pendingReaderReplacementCreates.clear();deletedPendingReaderReplacementCreates.clear()
                     readerReplacementState = ReaderReplacementState()
                     when(val route=currentRoute){
                         AppRoute.Home->loadHome()
                         is AppRoute.BookDetail->loadBookDetail(route.bookId)
+                        is AppRoute.ForumPostDetail->loadForumPostDetail(route.postId)
                         AppRoute.MessageCenter->loadMessageCenter()
                         is AppRoute.MessageDetail->loadMessageDetail(route.messageId)
                         is AppRoute.MessageConversation->loadMessageConversation(route.targetUserId,route.targetName)
@@ -1235,14 +1238,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             AppContainer.from(application).downloads.state.collect { state ->
                 val task=state.task ?: return@collect
-                nativeEpubDownloadState=NativeEpubDownloadState(
-                    bookId=task.bookId,format=if(task.format==DownloadFormat.Epub)NativeBookDownloadFormat.Epub else NativeBookDownloadFormat.Txt,
-                    replacementMode=if(task.applyReplacement)NativeDownloadReplacementMode.EffectiveReaderRules else NativeDownloadReplacementMode.Source,
-                    busy=state.busy,paused=task.phase==DownloadPhase.Paused,
-                    progress=NativeEpubExportProgress(completedChapters=task.completedChapters,completedImages=task.completedAssets,
-                        totalChapters=task.totalChapters,totalImages=task.totalAssets,failedImages=task.failedAssets),
-                    message=downloadStatusText(state),canRetry=!state.busy&&task.phase in setOf(DownloadPhase.Failed,DownloadPhase.NeedsRetry,DownloadPhase.Cancelled,DownloadPhase.Paused),
-                )
+                val currentAccount = authToken?.let(::decodeAuthTokenProfile)?.id
+                if (currentAccount == null || task.accountId != currentAccount) {
+                    nativeEpubDownloadState = NativeEpubDownloadState()
+                    return@collect
+                }
+                nativeEpubDownloadState = com.novalpie.nativeapp.feature.download.nativeDownloadStateFromTask(task, state)
             }
         }
         viewModelScope.launch {
@@ -4431,178 +4432,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun loadForumPostDetail(
-        postId: Long,
-        preservedActionMessage: String? = null,
-        retainVisibleComments: Boolean = false,
-    ) {
-        val routeRequestSerial = ++forumPostDetailRequestSerial
-        val bodyRequestSerial = ++forumPostBodyRequestSerial
-        val commentsRequestSerial = ++forumPostCommentsRequestSerial
-        // A full reload starts a new snapshot of both body and comments.  Any card lookup that
-        // belonged to the prior snapshot is now stale even if this route has the same post id.
-        ++forumBookReferenceRequestSerial
-        val previous = forumPostDetailState.takeIf { it.postId == postId }
-        val retainedComments = previous?.comments
-            ?.takeIf { retainVisibleComments && it is LoadResult.Success }
-            ?: LoadResult.Loading
-        forumPostDetailState = ForumPostDetailState(
-            postId = postId,
-            detail = LoadResult.Loading,
-            comments = retainedComments,
-            commentDraft = previous?.commentDraft.orEmpty(),
-            replyingToCommentId = previous?.replyingToCommentId,
-            replyingToName = previous?.replyingToName,
-            commentClientRequestId = previous?.commentClientRequestId,
-            expandedCommentIds = previous?.expandedCommentIds.orEmpty(),
-            actionMessage = preservedActionMessage,
-        )
-        requestForumPostBody(
-            postId = postId,
-            routeRequestSerial = routeRequestSerial,
-            bodyRequestSerial = bodyRequestSerial,
-            preservedActionMessage = preservedActionMessage,
-        )
-        requestForumPostComments(
-            postId = postId,
-            routeRequestSerial = routeRequestSerial,
-            commentsRequestSerial = commentsRequestSerial,
-            retainVisibleComments = retainVisibleComments,
-            preservedActionMessage = preservedActionMessage,
-        )
-    }
-
-    /** Retries only the body request so slow/comment retry state remains independently useful. */
-    fun retryForumPostBody() {
-        val postId = forumPostDetailState.postId
-        if (postId <= 0 || currentRoute != AppRoute.ForumPostDetail(postId)) return
-        val bodyRequestSerial = ++forumPostBodyRequestSerial
-        forumPostDetailState = forumPostDetailForPostRetry(forumPostDetailState)
-        requestForumPostBody(
-            postId = postId,
-            routeRequestSerial = forumPostDetailRequestSerial,
-            bodyRequestSerial = bodyRequestSerial,
-            preservedActionMessage = forumPostDetailState.actionMessage,
-        )
-    }
-
-    /** Retries only the comments endpoint and leaves the readable post on screen. */
-    fun retryForumPostComments() {
-        val postId = forumPostDetailState.postId
-        if (postId <= 0 || currentRoute != AppRoute.ForumPostDetail(postId)) return
-        val commentsRequestSerial = ++forumPostCommentsRequestSerial
-        forumPostDetailState = forumPostDetailForCommentsRetry(forumPostDetailState)
-        requestForumPostComments(
-            postId = postId,
-            routeRequestSerial = forumPostDetailRequestSerial,
-            commentsRequestSerial = commentsRequestSerial,
-            retainVisibleComments = false,
-            preservedActionMessage = forumPostDetailState.actionMessage,
-        )
-    }
-
-    private fun requestForumPostBody(
-        postId: Long,
-        routeRequestSerial: Long,
-        bodyRequestSerial: Long,
-        preservedActionMessage: String?,
-    ) {
-        viewModelScope.launch {
-            val result = runCatching { api.forumPostDetail(postId) }
-            if (
-                routeRequestSerial != forumPostDetailRequestSerial ||
-                bodyRequestSerial != forumPostBodyRequestSerial ||
-                currentRoute != AppRoute.ForumPostDetail(postId)
-            ) return@launch
-            forumPostDetailState = forumPostDetailWithLoadedDetail(forumPostDetailState, result).copy(
-                actionMessage = preservedActionMessage ?: forumPostDetailState.actionMessage,
-            )
-            refreshForumBookReferences(postId)
-        }
-    }
-
-    private fun requestForumPostComments(
-        postId: Long,
-        routeRequestSerial: Long,
-        commentsRequestSerial: Long,
-        retainVisibleComments: Boolean,
-        preservedActionMessage: String?,
-    ) {
-        viewModelScope.launch {
-            val result = runCatching { api.forumPostComments(postId = postId) }
-            if (
-                routeRequestSerial != forumPostDetailRequestSerial ||
-                commentsRequestSerial != forumPostCommentsRequestSerial ||
-                currentRoute != AppRoute.ForumPostDetail(postId)
-            ) return@launch
-            forumPostDetailState = forumPostDetailWithLoadedComments(
-                state = forumPostDetailState,
-                result = result,
-                retainVisibleComments = retainVisibleComments,
-            ).copy(
-                actionMessage = preservedActionMessage ?: forumPostDetailState.actionMessage,
-            )
-            refreshForumBookReferences(postId)
-        }
-    }
-
-    /** Re-resolve references as each independent post section becomes available. */
-    private fun refreshForumBookReferences(postId: Long) {
-        loadForumBookReferences(
-            postId = postId,
-            contents = buildList {
-                (forumPostDetailState.detail as? LoadResult.Success<ForumPostDetail>)
-                    ?.value
-                    ?.content
-                    ?.let(::add)
-                (forumPostDetailState.comments as? LoadResult.Success<List<ForumComment>>)
-                    ?.value
-                    .orEmpty()
-                    .map(ForumComment::content)
-                    .forEach(::add)
-            },
-        )
-    }
-
-    /**
-     * Resolve each source book marker once per detail route. Compose receives immutable loading
-     * states and therefore never starts network work during recomposition or while a comment row
-     * is being flung.
-     */
-    private fun loadForumBookReferences(postId: Long, contents: List<String>) {
-        val referenceRequestSerial = ++forumBookReferenceRequestSerial
-        val bookIds = forumBookReferenceIds(contents)
-        if (currentRoute != AppRoute.ForumPostDetail(postId) || forumPostDetailState.postId != postId) return
-        if (bookIds.isEmpty()) {
-            forumPostDetailState = forumPostDetailState.copy(bookReferences = emptyMap())
-            return
-        }
-
-        forumPostDetailState = forumPostDetailState.copy(
-            bookReferences = bookIds.associateWith { LoadResult.Loading }
-        )
-        viewModelScope.launch {
-            val requests = bookIds.associateWith { bookId ->
-                async { runCatching { api.bookDetail(bookId) } }
-            }
-            val resolved = requests.mapValues { (_, request) ->
-                request.await().toLoadResult("关联书籍")
-            }
-            if (
-                currentRoute != AppRoute.ForumPostDetail(postId) ||
-                forumPostDetailState.postId != postId ||
-                referenceRequestSerial != forumBookReferenceRequestSerial
-            ) {
-                return@launch
-            }
-            forumPostDetailState = forumPostDetailWithResolvedBookReferences(
-                state = forumPostDetailState,
-                resolutionSerial = referenceRequestSerial,
-                activeResolutionSerial = forumBookReferenceRequestSerial,
-                resolved = resolved,
-            )
-        }
-    }
+    fun loadForumPostDetail(postId: Long, preservedActionMessage: String? = null, retainVisibleComments: Boolean = false) =
+        forumPostFeature.load(postId, preservedActionMessage, retainVisibleComments)
+    fun retryForumPostBody() = forumPostFeature.retryBody()
+    fun retryForumPostComments() = forumPostFeature.retryComments()
+    fun loadMoreForumPostComments() = forumPostFeature.loadMore()
+    internal fun forumPostScroll(postId: Long) = forumPostFeature.scroll(postId)
+    fun saveForumPostScroll(postId: Long, index: Int, offset: Int) = forumPostFeature.saveScroll(postId, index, offset)
 
     /**
      * Book reviews use the same source sharing marker as forum comments, but they live under a
@@ -4679,269 +4515,21 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun updateForumCommentDraft(value: String) {
-        if (forumPostDetailState.commentDraft == value) return
-        forumPostDetailState = forumPostDetailState.copy(
-            commentDraft = value,
-            commentClientRequestId = null,
-        )
-    }
-
-    fun replyToForumComment(comment: ForumComment) {
-        val submissionCommentId = forumReplySubmissionCommentId(comment, currentForumComments())
-        forumPostDetailState = forumPostDetailState.copy(
-            replyingToCommentId = submissionCommentId,
-            replyingToName = comment.authorName,
-            commentClientRequestId = null,
-            commentDraft = replyComposerDraftForTarget(
-                currentDraft = forumPostDetailState.commentDraft,
-                previousTargetName = forumPostDetailState.replyingToName,
-                nextTargetName = comment.authorName,
-            ),
-        )
-    }
-
-    fun cancelForumReply() {
-        forumPostDetailState = forumPostDetailState.copy(
-            replyingToCommentId = null,
-            replyingToName = null,
-            commentClientRequestId = null,
-        )
-    }
-
-    fun toggleForumCommentReplies(commentId: Long) {
-        if (commentId <= 0) return
-        val expanded = forumPostDetailState.expandedCommentIds.toMutableSet()
-        if (!expanded.add(commentId)) expanded.remove(commentId)
-        forumPostDetailState = forumPostDetailState.copy(expandedCommentIds = expanded)
-    }
-
-    fun toggleForumPollOption(optionId: Long) {
-        val poll = (forumPostDetailState.detail as? LoadResult.Success<ForumPostDetail>)?.value?.poll ?: return
-        if (poll.isClosed || poll.userVoteOptionIds.isNotEmpty()) return
-        forumPostDetailState = forumPostDetailState.copy(
-            selectedPollOptionIds = forumPollSelectedOptionIdsAfterToggle(
-                selectedOptionIds = forumPostDetailState.selectedPollOptionIds,
-                optionId = optionId,
-                allowMultiple = poll.allowMultiple,
-                maxChoices = poll.maxChoices,
-            ),
-        )
-    }
-
-    /** Submits the source-compatible poll payload and reloads only after the server accepts it. */
-    fun submitForumPoll() {
-        val postId = forumPostDetailState.postId
-        val poll = (forumPostDetailState.detail as? LoadResult.Success<ForumPostDetail>)?.value?.poll ?: return
-        val selected = forumPostDetailState.selectedPollOptionIds
-        if (
-            postId <= 0 || forumPostDetailState.actionLoading ||
-            !forumPollCanSubmit(
-                hasAuthToken = !authToken.isNullOrBlank(),
-                isClosed = poll.isClosed,
-                userVoteOptionIds = poll.userVoteOptionIds,
-                selectedOptionIds = selected,
-            )
-        ) return
-        val routeRequestSerial = forumPostDetailRequestSerial
-        forumPostDetailState = forumPostDetailState.copy(actionLoading = true, actionMessage = null)
-        viewModelScope.launch {
-            val result = runCatching { api.submitForumPoll(postId, selected.toList()) }
-            if (
-                routeRequestSerial != forumPostDetailRequestSerial ||
-                currentRoute != AppRoute.ForumPostDetail(postId) ||
-                forumPostDetailState.postId != postId
-            ) return@launch
-            forumPostDetailState = result.fold(
-                onSuccess = { action ->
-                    forumPostDetailState.copy(
-                        actionLoading = false,
-                        actionMessage = action.message ?: if (action.success) "投票已提交" else "投票提交失败",
-                        selectedPollOptionIds = if (action.success) emptySet() else selected,
-                    )
-                },
-                onFailure = { failure ->
-                    forumPostDetailState.copy(
-                        actionLoading = false,
-                        actionMessage = apiFailureMessage("投票", failure),
-                    )
-                },
-            )
-            if (result.getOrNull()?.success == true) {
-                loadForumPostDetail(
-                    postId = postId,
-                    preservedActionMessage = forumPostDetailState.actionMessage,
-                    retainVisibleComments = true,
-                )
-            }
-        }
-    }
-
-    fun submitForumComment() {
-        val postId = forumPostDetailState.postId
-        val content = forumPostDetailState.commentDraft.trim()
-        if (postId <= 0 || content.isBlank() || forumPostDetailState.actionLoading) return
-        val routeRequestSerial = forumPostDetailRequestSerial
-        val parentCommentId = forumPostDetailState.replyingToCommentId
-        val replyToName = forumPostDetailState.replyingToName
-        val clientRequestId = forumPostDetailState.commentClientRequestId
-            ?: java.util.UUID.randomUUID().toString()
-        forumPostDetailState = forumPostDetailState.copy(actionLoading = true, actionMessage = null)
-        forumPostDetailState = forumPostDetailState.copy(commentClientRequestId = clientRequestId)
-        viewModelScope.launch {
-            val result = runCatching {
-                api.createForumComment(
-                    postId = postId,
-                    content = content,
-                    parentCommentId = parentCommentId,
-                    replyToName = replyToName,
-                    clientRequestId = clientRequestId,
-                )
-            }
-            if (
-                routeRequestSerial != forumPostDetailRequestSerial ||
-                currentRoute != AppRoute.ForumPostDetail(postId) ||
-                forumPostDetailState.postId != postId ||
-                forumPostDetailState.commentClientRequestId != clientRequestId
-            ) {
-                return@launch
-            }
-            forumPostDetailState = forumPostDetailAfterCommentSubmission(
-                forumPostDetailState,
-                result,
-            )
-            if (result.getOrNull()?.success == true) {
-                loadForumPostDetail(
-                    postId = postId,
-                    preservedActionMessage = forumPostDetailState.actionMessage,
-                    retainVisibleComments = true,
-                )
-            }
-        }
-    }
-
-    fun likeForumPost() {
-        reactOnForumPost(forumPostActionLabel(ForumPostAction.Like)) { api.toggleForumPostLike(forumPostDetailState.postId) }
-    }
-
-    fun dislikeForumPost() {
-        reactOnForumPost(forumPostActionLabel(ForumPostAction.Dislike)) { api.reactToForumPost(forumPostDetailState.postId, "down") }
-    }
-
-    fun emojiForumPost() {
-        reactOnForumPost(forumPostActionLabel(ForumPostAction.Emoji)) { api.reactToForumPost(forumPostDetailState.postId, "emoji:heart") }
-    }
-
-    fun awardForumPost() {
-        reactOnForumPost(forumPostActionLabel(ForumPostAction.Award)) { api.reactToForumPost(forumPostDetailState.postId, "award", awardPoints = 10) }
-    }
-
-    fun likeForumComment(comment: ForumComment) {
-        val target = forumCommentActionTarget(comment, currentForumComments())
-        reactOnForumComment(comment, forumCommentActionLabel(ForumPostAction.Like)) {
-            api.toggleForumCommentLike(forumPostDetailState.postId, target.parentCommentId, target.replyId)
-        }
-    }
-
-    fun dislikeForumComment(comment: ForumComment) {
-        val target = forumCommentActionTarget(comment, currentForumComments())
-        reactOnForumComment(comment, forumCommentActionLabel(ForumPostAction.Dislike)) {
-            api.reactToForumComment(
-                postId = forumPostDetailState.postId,
-                parentCommentId = target.parentCommentId,
-                replyId = target.replyId,
-                reactionType = "down",
-            )
-        }
-    }
-
-    fun emojiForumComment(comment: ForumComment) {
-        val target = forumCommentActionTarget(comment, currentForumComments())
-        reactOnForumComment(comment, forumCommentActionLabel(ForumPostAction.Emoji)) {
-            api.reactToForumComment(
-                postId = forumPostDetailState.postId,
-                parentCommentId = target.parentCommentId,
-                replyId = target.replyId,
-                reactionType = "emoji:heart",
-            )
-        }
-    }
-
-    fun awardForumComment(comment: ForumComment) {
-        val target = forumCommentActionTarget(comment, currentForumComments())
-        reactOnForumComment(comment, forumCommentActionLabel(ForumPostAction.Award)) {
-            api.reactToForumComment(
-                postId = forumPostDetailState.postId,
-                parentCommentId = target.parentCommentId,
-                replyId = target.replyId,
-                reactionType = "award",
-                awardPoints = 10,
-            )
-        }
-    }
-
-    private fun currentForumComments(): List<ForumComment> =
-        (forumPostDetailState.comments as? LoadResult.Success<List<ForumComment>>)?.value.orEmpty()
-
-    private fun reactOnForumPost(label: String, action: suspend () -> com.novalpie.nativeapp.model.ForumActionResult) {
-        if (forumPostDetailState.postId <= 0 || forumPostDetailState.actionLoading) return
-        val postId = forumPostDetailState.postId
-        val identity=ContentMutationIdentity(AppRoute.ForumPostDetail(postId),forumPostDetailRequestSerial,dependencies.environment.revision)
-        forumPostDetailState = forumPostDetailState.copy(actionLoading = true, actionMessage = null)
-        viewModelScope.launch {
-            if(!isCurrentContentMutation(identity,currentRoute,forumPostDetailRequestSerial,dependencies.environment.revision))return@launch
-            val result = runCatching { action() }
-            if(!isCurrentContentMutation(identity,currentRoute,forumPostDetailRequestSerial,dependencies.environment.revision))return@launch
-            forumPostDetailState = result.fold(
-                onSuccess = {
-                    forumPostDetailState.copy(
-                        actionLoading = false,
-                        actionMessage = it.message ?: "$label 已同步"
-                    )
-                },
-                onFailure = {
-                    forumPostDetailState.copy(
-                        actionLoading = false,
-                        actionMessage = apiFailureMessage(label, it)
-                    )
-                }
-            )
-            if(result.getOrNull()?.success==true)loadForumPostDetail(postId,preservedActionMessage=forumPostDetailState.actionMessage,retainVisibleComments=true)
-        }
-    }
-
-    private fun reactOnForumComment(comment: ForumComment, label: String, action: suspend () -> com.novalpie.nativeapp.model.ForumActionResult) {
-        if (comment.id <= 0 || forumPostDetailState.postId <= 0 || forumPostDetailState.actionLoading) return
-        val postId = forumPostDetailState.postId
-        val identity=ContentMutationIdentity(AppRoute.ForumPostDetail(postId),forumPostDetailRequestSerial,dependencies.environment.revision)
-        forumPostDetailState = forumPostDetailState.copy(actionLoading = true, actionMessage = null)
-        viewModelScope.launch {
-            if(!isCurrentContentMutation(identity,currentRoute,forumPostDetailRequestSerial,dependencies.environment.revision))return@launch
-            val result = runCatching { action() }
-            if(!isCurrentContentMutation(identity,currentRoute,forumPostDetailRequestSerial,dependencies.environment.revision))return@launch
-            forumPostDetailState = result.fold(
-                onSuccess = {
-                    forumPostDetailState.copy(
-                        actionLoading = false,
-                        actionMessage = it.message ?: "$label 已同步"
-                    )
-                },
-                onFailure = {
-                    forumPostDetailState.copy(
-                        actionLoading = false,
-                        actionMessage = apiFailureMessage(label, it)
-                    )
-                }
-            )
-            if (result.getOrNull()?.success == true) {
-                loadForumPostDetail(
-                    postId = postId,
-                    preservedActionMessage = forumPostDetailState.actionMessage,
-                    retainVisibleComments = true,
-                )
-            }
-        }
-    }
+    fun updateForumCommentDraft(value: String) = forumPostFeature.draft(value)
+    fun replyToForumComment(comment: ForumComment) = forumPostFeature.reply(comment)
+    fun cancelForumReply() = forumPostFeature.cancelReply()
+    fun toggleForumCommentReplies(commentId: Long) = forumPostFeature.toggleReplies(commentId)
+    fun toggleForumPollOption(optionId: Long) = forumPostFeature.toggleVote(optionId)
+    fun submitForumPoll() = forumPostFeature.vote(!authToken.isNullOrBlank())
+    fun submitForumComment() = forumPostFeature.send()
+    fun likeForumPost() = forumPostFeature.react(com.novalpie.nativeapp.feature.forum.ForumReaction.Like)
+    fun dislikeForumPost() = forumPostFeature.react(com.novalpie.nativeapp.feature.forum.ForumReaction.Dislike)
+    fun emojiForumPost() = forumPostFeature.react(com.novalpie.nativeapp.feature.forum.ForumReaction.Joy)
+    fun awardForumPost() = forumPostFeature.react(com.novalpie.nativeapp.feature.forum.ForumReaction.Award)
+    fun likeForumComment(comment: ForumComment) = forumPostFeature.react(com.novalpie.nativeapp.feature.forum.ForumReaction.Like, comment)
+    fun dislikeForumComment(comment: ForumComment) = forumPostFeature.react(com.novalpie.nativeapp.feature.forum.ForumReaction.Dislike, comment)
+    fun emojiForumComment(comment: ForumComment) = forumPostFeature.react(com.novalpie.nativeapp.feature.forum.ForumReaction.Joy, comment)
+    fun awardForumComment(comment: ForumComment) = forumPostFeature.react(com.novalpie.nativeapp.feature.forum.ForumReaction.Award, comment)
 
     fun updateBookCommentDraft(value: String) {
         bookDetailState = bookDetailState.copy(commentDraft = value)
@@ -6375,6 +5963,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             is AppRoute.MessageDetail -> if (messageDetailState.messageId != restored.messageId) loadMessageDetail(restored.messageId)
             is AppRoute.MessageConversation -> if (messageConversationState.targetUserId != restored.targetUserId) loadMessageConversation(restored.targetUserId, restored.targetName)
             is AppRoute.UserProfileDetail -> publicProfileFeature.enter(restored.userId, forumState.hideSpoilers)
+            is AppRoute.ForumPostDetail -> forumPostFeature.enter(restored.postId)
             else -> Unit
         }
         if (leavingReader != null) {
@@ -6515,7 +6104,29 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         retainCommentComposer: Boolean = false,
     ) {
         if(bookId<=0)return
+        if (!nativeEpubDownloadState.busy) nativeEpubDownloadState = NativeEpubDownloadState(bookId = bookId)
         bookFeature.load(bookId,!authToken.isNullOrBlank(),retainCommentComposer,preservedActionMessage)
+        loadLatestCompletedNativeDownload(bookId)
+    }
+
+    private fun loadLatestCompletedNativeDownload(bookId: Long) {
+        val account = authToken?.let(::decodeAuthTokenProfile)?.id ?: return
+        val container = AppContainer.from(getApplication())
+        val expectedState = nativeEpubDownloadState
+        viewModelScope.launch(Dispatchers.IO) {
+            val completed = runCatching {
+                container.downloadStore.recover(account).tasks
+                    .filter { it.bookId == bookId && it.phase == DownloadPhase.Completed && !it.destinationUri.isNullOrBlank() }
+                    .maxByOrNull { it.updatedAt }
+            }.getOrNull() ?: return@launch
+            withContext(Dispatchers.Main.immediate) {
+                if (currentRoute == AppRoute.BookDetail(bookId) && bookDetailState.bookId == bookId &&
+                    authToken?.let(::decodeAuthTokenProfile)?.id == account &&
+                    !container.downloads.state.value.busy && nativeEpubDownloadState.bookId == bookId && nativeEpubDownloadState === expectedState) {
+                    nativeEpubDownloadState = com.novalpie.nativeapp.feature.download.nativeDownloadCompletedState(completed)
+                }
+            }
+        }
     }
 
     /** Mirrors the reader's favourite action while keeping the detail action independently busy. */
@@ -7340,6 +6951,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     override fun onCleared() {
         searchFeature.close()
         forumFeature.close()
+        forumPostFeature.close()
         libraryFeature.close()
         bookFeature.close()
         messageInboxFeature.close()

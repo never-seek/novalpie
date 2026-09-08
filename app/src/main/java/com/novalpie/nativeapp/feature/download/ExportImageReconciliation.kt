@@ -1,7 +1,7 @@
 package com.novalpie.nativeapp.feature.download
 
 /** Source download TXT can append an extra inventory copy after authored inline illustrations. */
-internal data class ExportImageReconciliation(val body: String, val removed: Int)
+internal data class ExportImageReconciliation(val body: String, val removed: Int, val sourceOnlyOccurrences: Int = 0)
 
 internal fun normalizedExportImageUrl(raw: String): String? {
     val value = raw.trim().replace(Regex("\\s+"), "").trimStart(':', '：').removePrefix("图片://")
@@ -19,7 +19,7 @@ internal fun reconcileExportImageOccurrences(body: String, authoritativeImages: 
     val urls = matches.map { normalizedExportImageUrl(it.groupValues[1])!! }
     if (urls.size == urls.distinct().size) return ExportImageReconciliation(body, 0)
     val expected = authoritativeImages.mapNotNull(::normalizedExportImageUrl)
-    require(expected.isNotEmpty() && expected.toSet() == urls.toSet()) {
+    require(expected.isNotEmpty() && urls.toSet().containsAll(expected.toSet())) {
         "导出图片与正文图片无法对应，未删除任何插图；请刷新章节后重试"
     }
     val quotas = expected.groupingBy { it }.eachCount()
@@ -27,6 +27,7 @@ internal fun reconcileExportImageOccurrences(body: String, authoritativeImages: 
     require(quotas.all { (url, count) -> (counts[url] ?: 0) >= count }) { "导出文件缺少正文插图，未生成成功包" }
     val used = mutableMapOf<String, Int>()
     val retained = mutableListOf<String>()
+    var sourceOnly = 0
     var cursor = 0
     var removed = 0
     val output = StringBuilder()
@@ -34,12 +35,17 @@ internal fun reconcileExportImageOccurrences(body: String, authoritativeImages: 
         output.append(body, cursor, match.range.first)
         val url = urls[index]
         val seen = used[url] ?: 0
-        if (seen < quotas.getValue(url)) {
+        val quota = quotas[url]
+        if (quota == null) {
+            // Source export may still contain an older illustration omitted by today's reader.
+            // It is not a proven duplicate: preserve every such reference and surface the count.
+            output.append(match.value); sourceOnly++
+        } else if (seen < quota) {
             output.append(match.value); retained += url; used[url] = seen + 1
         } else removed++
         cursor = match.range.last + 1
     }
     output.append(body, cursor, body.length)
     require(retained == expected) { "导出插图顺序与正文不一致，未生成成功包" }
-    return ExportImageReconciliation(output.toString(), removed)
+    return ExportImageReconciliation(output.toString(), removed, sourceOnly)
 }

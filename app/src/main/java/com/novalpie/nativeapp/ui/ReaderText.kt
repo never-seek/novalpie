@@ -267,10 +267,10 @@ private fun appendReaderTextBlocks(target: MutableList<ReaderContentBlock>, raw:
 }
 
 private fun htmlImageAttribute(tag: String, name: String): String? {
-    val quoted = Regex("""\b${Regex.escape(name)}\s*=\s*(["'])(.*?)\1""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-        .find(tag)?.groupValues?.getOrNull(2)
-    if (!quoted.isNullOrBlank()) return quoted
-    return Regex("""\b${Regex.escape(name)}\s*=\s*([^\s>]+)""", RegexOption.IGNORE_CASE)
+    val quotedMatch = Regex("""(?<![\w:-])${Regex.escape(name)}\s*=\s*(["'])(.*?)\1""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        .find(tag)
+    if (quotedMatch != null) return quotedMatch.groupValues.getOrNull(2)?.takeIf(String::isNotBlank)
+    return Regex("""(?<![\w:-])${Regex.escape(name)}\s*=\s*([^\s>]+)""", RegexOption.IGNORE_CASE)
         .find(tag)?.groupValues?.getOrNull(1)
 }
 

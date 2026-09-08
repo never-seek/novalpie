@@ -106,6 +106,9 @@ internal class AppContainer(context: Context) {
     val forumFeedRepository: com.novalpie.nativeapp.feature.forum.ForumFeedRepository by lazy {
         com.novalpie.nativeapp.feature.forum.WebsiteForumFeedRepository(api)
     }
+    val forumPostRepository: com.novalpie.nativeapp.feature.forum.ForumPostRepository by lazy {
+        com.novalpie.nativeapp.feature.forum.WebsiteForumPostRepository(api)
+    }
     val blockingRepository: com.novalpie.nativeapp.feature.profile.BlockingRepository by lazy {
         com.novalpie.nativeapp.feature.profile.WebsiteBlockingRepository(api)
     }

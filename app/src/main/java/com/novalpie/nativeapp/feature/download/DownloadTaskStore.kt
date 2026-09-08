@@ -34,6 +34,7 @@ internal data class DownloadTask(
     val totalChapters:Int=0,
     val totalAssets:Int=0,
     val failedAssets:Int=0,
+    val sourceOnlyImages: Int = 0,
 ) {
     val mayAuthorizeAgain: Boolean get() = !authorizationAttempted && authorizationFile == null &&
         phase !in setOf(DownloadPhase.AuthorizationUncertain,DownloadPhase.Completed,DownloadPhase.Cancelled)
@@ -63,6 +64,7 @@ internal class DownloadTaskStore(directory: File) {
             .put("authorization_file", task.authorizationFile ?: JSONObject.NULL)
             .put("completed_chapters", task.completedChapters).put("completed_assets", task.completedAssets)
             .put("total_chapters",task.totalChapters).put("total_assets",task.totalAssets).put("failed_assets",task.failedAssets)
+            .put("source_only_images", task.sourceOnlyImages)
             .put("destination_uri", task.destinationUri ?: JSONObject.NULL).put("failure", task.failure ?: JSONObject.NULL)
             .put("created_at", task.createdAt).put("updated_at", task.updatedAt).toString().toByteArray(Charsets.UTF_8)
         val atomic = AtomicFile(file)
@@ -102,6 +104,7 @@ internal class DownloadTaskStore(directory: File) {
                     destinationUri=value.nullableString("destination_uri"),failure=value.nullableString("failure"),
                     createdAt=value.getLong("created_at"),updatedAt=value.getLong("updated_at"),
                     totalChapters=value.optInt("total_chapters"),totalAssets=value.optInt("total_assets"),failedAssets=value.optInt("failed_assets"),
+                    sourceOnlyImages=value.optInt("source_only_images"),
                 )
             } catch (_: Exception) {
                 // A corrupt/newer record stays on disk for recovery, never becomes an empty task.

@@ -93,15 +93,20 @@ internal class NativeDownloadTaskRunner(
             val assets=File(work,"assets").apply{mkdirs()}
             val staging=File(work,"staging").apply{mkdirs()}
             var imageCatalog: List<com.novalpie.nativeapp.model.Chapter>? = null
+            val catalogLock = Mutex()
             val imageReconciler = TaskExportImageReconciler(File(work, "image-reconciliation")) { number ->
                 control.awaitIfPaused()
-                val catalog = imageCatalog ?: api.chapters(task.bookId).also { imageCatalog = it }
+                val catalog = catalogLock.withLock { imageCatalog ?: api.chapters(task.bookId).also { imageCatalog = it } }
                 val matching = catalog.filter { it.number == number }
                 val chapter = matching.singleOrNull() ?: catalog.getOrNull(number - 1)?.takeIf { it.number == null }
                     ?: throw IOException("无法对应第${number}章的插图，请刷新目录后重试")
                 com.novalpie.nativeapp.ui.readerBlocksForContent(api.chapterContent(chapter.id, showImages = true))
                     .filterIsInstance<com.novalpie.nativeapp.ui.ReaderContentBlock.Image>().map { it.originalUrl ?: it.url }
             }
+            val sourceOnlyImages = source.reader(Charsets.UTF_8).use { reader ->
+                imageReconciler.prepare(reader, task.requestedConcurrency, control::awaitIfPaused)
+            }
+            save(current.get().copy(sourceOnlyImages = sourceOnlyImages))
             var lastSaved=0L
             val progressLock=Any()
             finished.outputStream().use {output->source.reader(Charsets.UTF_8).use {reader->

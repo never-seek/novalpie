@@ -1095,10 +1095,13 @@ private fun ForumPostDetailRoute(
     val context = LocalContext.current
     ForumPostDetailScreen(
         state = viewModel.forumPostDetailState,
+        scrollPosition = viewModel.forumPostScroll(route.postId),
+        onSaveScroll = { index, offset -> viewModel.saveForumPostScroll(route.postId, index, offset) },
         hasAuthToken = !viewModel.authToken.isNullOrBlank(),
         onBack = viewModel::goBack,
         onRetryPost = viewModel::retryForumPostBody,
         onRetryComments = viewModel::retryForumPostComments,
+        onMoreComments = viewModel::loadMoreForumPostComments,
         onDraftChange = viewModel::updateForumCommentDraft,
         onSubmitComment = viewModel::submitForumComment,
         onReplyComment = viewModel::replyToForumComment,
@@ -1972,10 +1975,13 @@ private fun ForumMetric(icon: ImageVector, label: String, color: Color = Materia
 @Composable
 private fun ForumPostDetailScreen(
     state: ForumPostDetailState,
+    scrollPosition: GridScrollPosition = GridScrollPosition(),
+    onSaveScroll: (Int, Int) -> Unit = { _, _ -> },
     hasAuthToken: Boolean,
     onBack: () -> Unit,
     onRetryPost: () -> Unit,
     onRetryComments: () -> Unit,
+    onMoreComments: () -> Unit = {},
     onDraftChange: (String) -> Unit,
     onSubmitComment: () -> Unit,
     onReplyComment: (ForumComment) -> Unit,
@@ -1997,7 +2003,10 @@ private fun ForumPostDetailScreen(
     onOpenWeb: () -> Unit
 ) {
     val spoilerPreference = LocalForumSpoilerPreference.current
-    val listState = rememberLazyListState()
+    val listState = rememberLazyListState(scrollPosition.firstVisibleItemIndex, scrollPosition.firstVisibleItemScrollOffset)
+    DisposableEffect(state.postId, listState) {
+        onDispose { onSaveScroll(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) }
+    }
     val isScrollInProgress: () -> Boolean = { listState.isScrollInProgress }
     LaunchedEffect(state.replyingToCommentId) {
         forumPostDetailComposerScrollIndex(state.replyingToCommentId)?.let { index ->
@@ -2086,7 +2095,7 @@ private fun ForumPostDetailScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    items(threads) { thread ->
+                    items(threads, key = { it.comment.id }) { thread ->
                         ForumCommentThreadBlock(
                             thread = thread,
                             bookReferences = state.bookReferences,
@@ -2103,6 +2112,11 @@ private fun ForumPostDetailScreen(
                         )
                     }
                 }
+            }
+        }
+        if (state.commentsHasMore) item {
+            TextButton(onClick = onMoreComments, enabled = !state.commentsLoadingMore, modifier = Modifier.fillMaxWidth()) {
+                Text(if (state.commentsLoadingMore) "正在加载更多评论…" else "加载更多评论")
             }
         }
     }
@@ -7245,7 +7259,12 @@ internal fun ReaderScreen(
                         }
                         if (readerBodyLayout.previousChapterControl) item(key = "reader-window-previous") {
                             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                                TextButton(onClick = onLoadPreviousChapter, enabled = !state.loadingPreviousChapter && !state.loadingNextChapter) {
+                                TextButton(onClick = {
+                                    readerBodyLayout.chapters.firstOrNull()?.chapter?.let { first ->
+                                        latestVisibleChapterChanged(first.chapterId, first.title)
+                                    }
+                                    onLoadPreviousChapter()
+                                }, enabled = !state.loadingPreviousChapter && !state.loadingNextChapter) {
                                     Text(if (state.loadingPreviousChapter) "正在加载上一章…" else "加载上一章")
                                 }
                                 state.previousChapterError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -10378,6 +10397,18 @@ private fun BookDetailBottomActionBar(
                 )
                 if (!downloadStateForBook.busy && downloadStateForBook.canRetry) {
                     TextButton(onClick = onRetryDownload) { Text("重试") }
+                }
+                downloadStateForBook.completedUri?.let { uri ->
+                    TextButton(onClick = {
+                        runCatching { com.novalpie.nativeapp.feature.download.openDownloadedFile(context, uri, bookTitle,
+                            downloadStateForBook.format == NativeBookDownloadFormat.Epub, false) }
+                            .onFailure { Toast.makeText(context, "文件已移走或没有可用阅读器，请到“我的→下载记录”查看", Toast.LENGTH_LONG).show() }
+                    }) { Text("打开") }
+                    TextButton(onClick = {
+                        runCatching { com.novalpie.nativeapp.feature.download.openDownloadedFile(context, uri, bookTitle,
+                            downloadStateForBook.format == NativeBookDownloadFormat.Epub, true) }
+                            .onFailure { Toast.makeText(context, "文件不可用，请到“我的→下载记录”查看", Toast.LENGTH_LONG).show() }
+                    }) { Text("分享") }
                 }
                 }
             }

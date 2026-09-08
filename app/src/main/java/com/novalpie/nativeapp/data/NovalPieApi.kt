@@ -1956,6 +1956,19 @@ class NovalPieApi(
         )
     }
 
+    internal suspend fun forumPostCommentPage(postId: Long, page: Int, limit: Int = 100): com.novalpie.nativeapp.feature.forum.ForumCommentsPage = withContext(Dispatchers.IO) {
+        val raw = requireSuccessfulEnvelope(get("/api/posts/$postId/comments", mapOf("page" to page.toString(), "limit" to limit.toString())), "评论读取被拒绝")
+        val root = raw as? JSONObject
+        val pagination = root?.optJSONObject("pagination") ?: root?.optJSONObject("data")?.optJSONObject("pagination")
+        val returned = pagination?.intOrNull("page") ?: page
+        require(returned == page) { "评论返回了不同页码" }
+        val pages = pagination?.firstLongOrNull("pages", "total_pages")
+        val total = pagination?.longOrNull("total")
+        val count = extractArray(raw, "comments", "items", "records", "list", "data").size
+        val more = when { pages != null -> page < pages; total != null -> page.toLong() * limit < total; else -> count >= limit }
+        com.novalpie.nativeapp.feature.forum.ForumCommentsPage(normalizeForumComments(raw), page, more)
+    }
+
     suspend fun createForumComment(
         postId: Long,
         content: String,
@@ -4760,7 +4773,7 @@ class NovalPieApi(
         }
         // The website occasionally repeats a child comment in both a top-level page and its
         // parent's `replies` array. Keep its first position so the visual thread remains stable.
-        return comments.distinctBy(ForumComment::id)
+        return comments.distinctBy { it.parentCommentId to it.id }
     }
 
     private fun appendForumCommentWithReplies(
