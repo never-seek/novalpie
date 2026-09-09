@@ -74,6 +74,7 @@ fun UploadBookScreen(
     }
     val chapters = (state.chapters as? LoadResult.Success)?.value.orEmpty()
     val appendMode = state.existingNovelId != null
+    val busy = state.processing || state.restoringDraft
     var confirmRetry by remember(state.existingNovelId) { mutableStateOf(false) }
     if (confirmRetry) AlertDialog(
         onDismissRequest = { confirmRetry = false },
@@ -91,7 +92,7 @@ fun UploadBookScreen(
         item {
             UploadHero(
                 chapterCount = chapters.size,
-                processing = state.processing,
+                processing = busy,
                 appendMode = appendMode,
                 onOpenEditor = onOpenEditor
             )
@@ -132,7 +133,7 @@ fun UploadBookScreen(
         item {
             UploadFileCard(
                 document = state.selectedFile,
-                processing = state.processing,
+                processing = busy,
                 onPick = { picker.launch(arrayOf("application/epub+zip", "application/octet-stream", "*/*")) },
                 onClear = onClear
             )
@@ -158,13 +159,18 @@ fun UploadBookScreen(
         state.actionMessage?.let { message ->
             item { UploadNotice(message, state.submitResult is LoadResult.Error || state.chapters is LoadResult.Error) }
         }
+        if (state.restoringDraft) item { UploadNotice("正在恢复本账号的上传草稿…", false) }
+        state.draftStorageError?.let { message -> item {
+            UploadNotice(message, true)
+            TextButton(onClick = onClear, enabled = !busy) { Text("清空此上传草稿") }
+        } }
 
         if (!appendMode) {
-            item { UploadMetadataCard(state.draft, state.processing, onDraftChange) }
+            item { UploadMetadataCard(state.draft, busy, onDraftChange) }
         }
 
         item {
-            UploadSubmissionCard(state.draft, state.processing, onDraftChange)
+            UploadSubmissionCard(state.draft, busy, onDraftChange)
         }
 
         item {
@@ -179,12 +185,12 @@ fun UploadBookScreen(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
                     onClick = { if (state.submissionUncertain) confirmRetry = true else onSubmit() },
-                    enabled = !state.processing && hasAuthToken && chapters.isNotEmpty(),
+                    enabled = !busy && hasAuthToken && chapters.isNotEmpty() && state.submitResult !is LoadResult.Success,
                     modifier = Modifier.fillMaxWidth().height(54.dp)
                 ) {
                     Icon(Icons.Filled.UploadFile, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text(if (state.processing) "处理中…" else if (state.submissionUncertain) "核对后重试" else if (appendMode) "确认追加 ${chapters.size} 章" else "确认上传 ${chapters.size} 章")
+                    Text(if (busy) "处理中…" else if (state.submitResult is LoadResult.Success) "已上传" else if (state.submissionUncertain) "核对后重试" else if (appendMode) "确认追加 ${chapters.size} 章" else "确认上传 ${chapters.size} 章")
                 }
                 Text(
                     if (appendMode) "追加会写入现有书籍。提交前请确认章节顺序与翻译类型。" else "上传会写入 novalpie.cc。提交前请确认书名、作者、标签、成人内容标记与翻译类型。",

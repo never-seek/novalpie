@@ -10,13 +10,18 @@ import com.novalpie.nativeapp.ui.*
 import kotlinx.coroutines.*
 
 /** Parsing, draft and submission state belong to the selected book, not the navigation shell. */
-internal class UploadBookViewModel(private val repository: UploadRepository, scope: CoroutineScope? = null) : ViewModel() {
+internal class UploadBookViewModel(private val repository: UploadRepository, scope: CoroutineScope? = null,
+    private val drafts: UploadDraftPersistence? = null, private val accountId: () -> Long? = { null },
+) : ViewModel() {
     private val parent = scope ?: viewModelScope
     private val work = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
     private class Entry(val bookId: Long?) {
         var state = UploadBookState(existingNovelId = bookId)
         var serial = 0L
         var job: Job? = null
+        var restored = false
+        var storageBlocked = false
+        var owner: Long? = null
     }
     private val entries = linkedMapOf<Long?, Entry>()
     private var current = Entry(null).also { entries[null] = it }
@@ -24,38 +29,94 @@ internal class UploadBookViewModel(private val repository: UploadRepository, sco
     var state by mutableStateOf(current.state)
         private set
 
-    private fun update(entry: Entry, transform: (UploadBookState) -> UploadBookState) {
+    private fun update(entry: Entry, persist: Boolean = true, transform: (UploadBookState) -> UploadBookState) {
         entry.state = transform(entry.state)
         if (current === entry) state = entry.state
+        val owner = entry.owner
+        if (persist && !entry.storageBlocked && !entry.state.restoringDraft && drafts != null && owner != null) {
+            val account = environment
+            drafts.schedule(owner, entry.state) {
+                if (account == environment) update(entry, persist = false) { it.copy(draftStorageError = "上传草稿未能保存到本机，请检查剩余空间；当前输入保留") }
+            }
+        }
     }
     fun enter(bookId: Long?) {
         require(bookId == null || bookId > 0)
         current = entries.getOrPut(bookId) { Entry(bookId) }
         state = current.state
+        restore(current)
+    }
+    private fun restore(entry: Entry) {
+        if (entry.restored) return
+        entry.restored = true
+        entry.owner = accountId()
+        val owner = entry.owner ?: return
+        val persistence = drafts ?: return
+        val serial = ++entry.serial; val account = environment
+        update(entry, persist = false) { it.copy(restoringDraft = true) }
+        entry.job = work.launch {
+            try {
+                val saved = persistence.load(owner, entry.bookId)
+                if (!fresh(entry, serial, account)) return@launch
+                update(entry, persist = false) { saved?.copy(restoringDraft = false) ?: it.copy(restoringDraft = false) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                if (fresh(entry, serial, account)) {
+                    entry.storageBlocked = true
+                    update(entry, persist = false) { it.copy(restoringDraft = false, draftStorageError = "上传草稿读取失败，原文件保留；不会用空内容覆盖，请清空此草稿后重新选择原文件") }
+                }
+            }
+        }
     }
     fun adopt(prepared: UploadBookState): Boolean {
         enter(prepared.existingNovelId)
-        if (state.processing) return false
+        if (state.processing || state.restoringDraft || current.storageBlocked || state.submissionUncertain) return false
         current.serial++
         current.job?.cancel()
         update(current) { prepared }
         return true
     }
-    fun draft(value: UploadBookDraft) = update(current) {
+    suspend fun adoptFromEditor(prepared: UploadBookState, stillRequested: () -> Boolean = { true }): Boolean {
+        enter(prepared.existingNovelId)
+        val entry = current; val account = environment
+        if (entry.state.restoringDraft) entry.job?.join()
+        if (current !== entry || account != environment || !stillRequested()) return false
+        return adopt(prepared)
+    }
+    fun draft(value: UploadBookDraft) {
+        restore(current)
+        if (state.restoringDraft) return
+        update(current) {
         // A form edit must not erase an in-flight or unconfirmed server operation.
         it.copy(draft = value.copy(chapterCount = (it.chapters as? LoadResult.Success)?.value?.size ?: 0),
             submitResult = if (it.processing || it.submissionUncertain) it.submitResult else LoadResult.Idle,
             actionMessage = if (it.processing || it.submissionUncertain) it.actionMessage else null)
+        }
     }
     fun clear() {
-        if (state.processing) return
+        if (state.processing || state.restoringDraft) return
+        if (current.storageBlocked && drafts != null && current.owner != null) {
+            val entry = current; val owner = entry.owner!!; val account = environment
+            update(entry, persist = false) { it.copy(restoringDraft = true) }
+            entry.job = work.launch {
+                try {
+                    drafts.discard(owner, entry.bookId)
+                    if (account != environment) return@launch
+                    entry.storageBlocked = false
+                    update(entry) { UploadBookState(existingNovelId = entry.bookId) }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { if (account == environment) update(entry, persist = false) { it.copy(restoringDraft = false, draftStorageError = "未能清空此上传草稿，请检查存储空间") } }
+            }
+            return
+        }
         current.serial++; current.job?.cancel()
         update(current) { UploadBookState(existingNovelId = it.existingNovelId) }
     }
 
     fun select(uri: String) {
         val entry = current
-        if (entry.state.processing || entry.state.submissionUncertain) return
+        restore(entry)
+        if (entry.state.processing || entry.state.submissionUncertain || entry.state.restoringDraft || entry.storageBlocked) return
         val serial = ++entry.serial; val account = environment
         update(entry) { it.copy(processing = true, progressLabel = "正在读取 EPUB 文件…", chapters = LoadResult.Loading,
             selectedFile = null, serverFilePath = null, submitResult = LoadResult.Idle, actionMessage = null) }
@@ -86,7 +147,8 @@ internal class UploadBookViewModel(private val repository: UploadRepository, sco
 
     fun submit(confirmUncertainRetry: Boolean = false) {
         val entry = current; val snapshot = entry.state
-        if (snapshot.processing) return
+        if (snapshot.processing || snapshot.restoringDraft || entry.storageBlocked) return
+        if (snapshot.submitResult is LoadResult.Success) return
         if (snapshot.submissionUncertain && !confirmUncertainRetry) {
             update(entry) { it.copy(actionMessage = "上次提交结果未确认，请先核对作品与目录；没有重复提交") }
             return
@@ -109,7 +171,13 @@ internal class UploadBookViewModel(private val repository: UploadRepository, sco
         update(entry) { it.copy(processing = true, progressLabel = "正在安全上传书籍与 ${chapters.size} 章内容…",
             submitResult = LoadResult.Loading, actionMessage = null, submissionUncertain = false) }
         entry.job = work.launch {
+            var requested = false
             try {
+                entry.owner?.let { drafts?.checkpoint(it, entry.state) }
+                update(entry, persist = false) { it.copy(draftStorageError = null) }
+                currentCoroutineContext().ensureActive()
+                if (!fresh(entry, serial, account) || (entry.owner != null && entry.owner != accountId())) return@launch
+                requested = true
                 val result = repository.submit(submission)
                 if (!fresh(entry, serial, account)) return@launch
                 if (!result.success) {
@@ -123,8 +191,9 @@ internal class UploadBookViewModel(private val repository: UploadRepository, sco
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
                 if (fresh(entry, serial, account)) update(entry) { it.copy(processing = false, progressLabel = null,
-                    submitResult = LoadResult.Error(apiFailureMessage("上传书籍", failure)), submissionUncertain = true,
-                    actionMessage = "提交中断或回执未确认，可能已有部分章节写入。请先核对作品和目录，勿直接重复上传；草稿已保留。") }
+                    submitResult = LoadResult.Error(apiFailureMessage("上传书籍", failure)), submissionUncertain = requested,
+                    actionMessage = if (requested) "提交中断或回执未确认，可能已有部分章节写入。请先核对作品和目录，勿直接重复上传；草稿已保留。"
+                        else "上传检查点未能保存，本次未发出上传请求；请检查本机空间后重试") }
             }
         }
     }

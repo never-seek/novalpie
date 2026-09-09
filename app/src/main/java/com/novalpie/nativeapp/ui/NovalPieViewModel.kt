@@ -454,6 +454,8 @@ data class UploadBookState(
     val submitResult: LoadResult<UploadActionResult> = LoadResult.Idle,
     val actionMessage: String? = null,
     val submissionUncertain: Boolean = false,
+    val restoringDraft: Boolean = false,
+    val draftStorageError: String? = null,
 )
 
 data class UploadEditorState(
@@ -1044,6 +1046,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     )
     private val uploadFeature = com.novalpie.nativeapp.feature.upload.UploadBookViewModel(
         com.novalpie.nativeapp.feature.upload.WebsiteUploadRepository(api, ::readUploadDocument, { uploadSource(it) }),
+        drafts = dependencies.uploadDrafts,
+        accountId = { authToken?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0)?.id } },
     )
     private var editorRequestSerial = 0L
     private var editorProcessorRequestSerial = 0L
@@ -3630,7 +3634,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     uploadEditorState = uploadEditorState.copy(busy = false, actionMessage = "页面已变化，未发送到其他书籍；编辑草稿保留")
                     return@onSuccess
                 }
-                val adopted = uploadFeature.adopt(UploadBookState(
+                val adopted = uploadFeature.adoptFromEditor(UploadBookState(
                     existingNovelId = appendBookId,
                     draft = UploadBookDraft(
                         title = state.metadata.title,
@@ -3651,7 +3655,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     ),
                     chapters = LoadResult.Success(state.chapters),
                     actionMessage = "编辑器内容已准备好，请核对后确认上传"
-                ))
+                )) { requestSerial == editorRequestSerial && environmentRevision == dependencies.environment.revision && currentRoute == AppRoute.UploadEditor }
                 if (!adopted) {
                     uploadEditorState = uploadEditorState.copy(busy = false, actionMessage = "目标书籍仍有上传任务，请完成后重试；编辑草稿保留")
                     return@onSuccess

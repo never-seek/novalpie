@@ -7,6 +7,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class UploadBookViewModelTest {
+    @Test fun repeatedClickAfterAConfirmedCompletionCannotAppendTheSameChaptersTwice() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val repository = Repository(); val model = UploadBookViewModel(repository, scope)
+        try {
+            model.enter(10); model.select("first"); model.submit(); model.submit()
+            assertTrue(model.state.submitResult is LoadResult.Success)
+            assertEquals(1, repository.writes.size)
+        } finally { model.close(); scope.cancel() }
+    }
     private open class Repository : UploadRepository {
         val writes = mutableListOf<UploadSubmission>()
         override suspend fun document(uri: String) = UploadDocument(uri, "合成.epub", 100)

@@ -55,3 +55,21 @@ EPUB解析下一片39633四红：spine文件缺失仍成功、head混入正文�
 17:21解析39633四红→2782五绿，34125扩展9项中HTML注释/属性含>一红→修tag边界与注释，42340解析/写出10项绿色。18751完整1103unit/Debug/AndroidTest通过4m26s；APK18d5330d...96d47943，尚未安装。新EpubImportDeviceTest会在Android真实XML实现上验证往返正文/标题及共享文件片段，未进行真实上传。
 
 17:23已无损装`18D5330D30A50586142A480F6C3E47C7C29D21E0F15668BF7C8EEB5996D47943`，21622真实Android XML解析/EPUB两章往返及共享文件两锚点分章通过，原文特殊字符/末尾保留、head标题不重复；同包UploadFeatureDeviceTest通过。报告`20260908-epub-import-device-report.json` SHA256 `339293fb28922c6e385aae7bd00d45736626bc89adfbde24435ad3450edcef80`。0真实上传/0用户文件改动。本机解析对应切片已运行，不等于所有EPUB变体或全上传模块通过。
+
+## 2026-09-09 持久上传草稿
+
+10590两红：feature重建丢草稿、未存提交检查点仍可发请求。新增UploadDraftStore/StoredUploadDrafts应用级有序保存，按account/book隔离；metadata原子指针，章节二进制独立generation+SHA/长度，metadata编辑复用章节文件不整书重写。所有字段/目录层级/rawPath/spineIndex保留，不存网站Token。
+
+VM进入恢复期间表单禁用，读取失败保留原文件、阻止默认空白覆写；明确“清空此草稿”只清该account/book目录。真正submit前await检查点，记录Loading为Uncertain；失败则0网络写，重启不自动重发已发送但不明结果。旧自动保存按revision序不会覆盖新checkpoint，页面退出不取消应用scope已安排的落盘任务。
+
+3375上传领域12项通过2m18s；新增未知提交恢复/坏记录保留/延迟自动保存测试及UploadDraftDeviceTest（真实Android文件、重建VM，非实际杀进程），85497全量构建中。未安装这次持久草稿变化。还不等于完整大书上传批次协调器/进程恢复每批POST/真实受控上传已完成。
+
+08:22追加衔接回归：85497全量1125通过后发现编辑器转入时异步恢复未结束会直接拒绝。77941红，改adoptFromEditor等待恢复并再次核对请求/页面/账号，新增中途返回不得覆盖旧草稿；8625全量1127unit/Debug/AndroidTest通过4m39s，准备安装。仍未真实上传，也没有触碰用户已有上传草稿文件。
+
+08:24已无损装`71D99895EA82CEEC4F11EFC3B52AB0E9C0250908705FB88CFC77FC7188218BF2`；74102 UploadDraftDeviceTest真实Android文件保存→重新创建store/VM→完整字段/章节恢复、账号/目标隔离、未知请求不重发全部通过（0网络写）；同包UploadFeatureDeviceTest表单也过。报告20260909-upload-draft-device-report.json SHA256 `02b7bde66660e6f4405d87a30f6f1adffd780dc0cd1e771169a0194519c28b6b`。此为组件重建，不声称已验证真正force-stop/全应用进程恢复；临时合成目录已删，用户真实草稿未动。
+
+08:29同71d99895包Reader7/生产Forum回归也通过。63690另两红：确认成功后连点会重复追加、同长度损坏章节memo能绕提交检查点。修为已成功按钮/动作禁重复（换文件/明确编辑后另任务）、提交前流式SHA校验存储章节，普通表单输入仍不反复整书哈希。80603完整unit/build/lint执行中，最后这两改尚未装；不把先前1127当最新通过。
+
+08:38最后80603完整1129unit/Debug/AndroidTest/lint全部通过8m29s，APK `BB1B1EEC9716BD8560D3E0FE97A397F059F35AA40268D0B10D8D8638BEE83D59`，正在MuMu启动后做此最终草稿小片实机复验。
+
+08:40 bb1b1eec已install-r，86986同包UploadDraftDeviceTest/UploadFeatureDeviceTest/AdminFeatureDeviceTest全部通过；恢复报告再次相同字段/0writes。最新防重复/哈希guard已包含在此包的1129单测，进程kill场景仍需独立两阶段测试。

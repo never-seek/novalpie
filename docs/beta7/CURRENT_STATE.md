@@ -1,6 +1,6 @@
 # Beta 7 当前工作点
 
-更新：2026-09-09 01:23。完整经过见 execution-log.md，本文只保留最新事实，避免把旧包证据误认成终验。
+更新：2026-09-09 08:42。完整经过见 execution-log.md，本文只保留最新事实，避免把旧包证据误认成终验。
 
 ## 发布状态
 
@@ -8,8 +8,8 @@
 
 ## 工程与设备
 
-- 分支`codex/native-app2-current-20260821`，最新本地提交`83b6c77`（未push），管理/上传/原子存档/EPUB导入切片已保存。图片类型/缓存修订在未提交变化中；没有远端发布或版本号变更。
-- 最后已安装开发APK：`D00DDE143EA804F878A64098DE903A50B0AFA9402C6DFF274873CED2B9A6EA16`，1116全量unit/Debug/AndroidTest；MuMu图片真实staging/ZIP类型、Admin合成UI、真实公共规则/原文替换四导出均过。前4a64b89d管理/论坛/Reader7过。管理+图片最新lint尚待。版本仍Beta6开发字段，不是Beta7成品。
+- 分支`codex/native-app2-current-20260821`，最新本地提交`5914fb9`（未push），管理/图片类型/上传/存档/EPUB导入切片已保存。UploadDraftStore持久草稿变化未提交；没有远端发布或版本号变更。
+- 最后已安装开发APK：`BB1B1EEC9716BD8560D3E0FE97A397F059F35AA40268D0B10D8D8638BEE83D59`，1129全量unit/Debug/AndroidTest/lint通过；MuMu草稿真实文件恢复/账号书隔离/未知不重发、上传表单、管理表单过。前71d99895 Reader7/生产Forum过。版本仍Beta6开发字段，不是Beta7成品。
 - **exec62934整书350192下载/成品验证通过并结束，测试自有12GB成品已删除，工作目录均4KB。** 报告20260908-corrected-full-350192-report已取。MuMu随后正常shutdown为构建让资源，用户数据保留；没有运行下载任务。
 - 上一27437180包文件打开/连续窗口/分页5/Reader7/源验证码cancel账号一致皆过；本人1871嵌套测试回复2439/root4549/target2391已回读一次，标记729d0bbc保留，不重发。30507全量/lint通过后追加空data-src用例60288红→属性边界/空值修正15302全量1071绿；最新包未跑最终R8矩阵。
 
@@ -30,7 +30,9 @@
 2. 10577同包Reader7/生产ForumPostFeatureDeviceTest全过；source1936只读第81/82/83章图数2/0/3，82源数据尚无补图。MuMu现在线，通知为原拒绝，无活跃下载/翻译。生产`am start ... https://novalpie.cc/upload`被工具策略拦截，**不要换工具/坐标重试此被拦操作**；受控表单不是生产入口全验收。
 3. 存档门禁/实机闭环，8554 lint7m50s已结束。39633 EPUB四红→2782五绿；34125扩展9项一红→42340读写十项绿。18751全量1103unit/Debug/AndroidTest过，18d5330d包已装，21622 XML导入/往返+上传UI、11204分页5/生产论坛切帖过，报告已取。MuMu随后正常shutdown，最新parser lint正在执行（session以exec为准），禁止编辑lint读取源码/并发Gradle。无活跃下载/翻译。
 4. 77664 parser lint已成功7m21s。AdminViewModel/Repository已接root，独立分区读/全局单write锁/失败草稿/日志行数。84680两红→37465定向16绿；11758装备兼容1红→分开confirmedAdmin parser，12824全量1111/build成功4m20s。4a64b89d包已install-r，41221 AdminFeature合成表单+69097生产forum/Reader7全部通过；无真实admin写入。
-5. 78654图片类型/HTML两红→7790绿，73042旧pipeline2一红→改3；17940全量1116/build通过。d00dde14已装，31553图片类型/管理UI过，8778真实公共规则+4导出全过8.226s且临时规则和下载已清；79006同包Reader7/生产Forum回归完成以session/报告为准。MuMu在线，无运行下载/翻译，图片切片待commit/lint。其余上传持久队列/全编辑器/角色/性能矩阵/R8升级未完成，不提前发布。
+5. d00dde14图片/管理/真实4导出/Reader7/生产Forum全部通过，42570管理+图片lint已成功5m3s。MuMu已shutdown，无运行下载/翻译/Gradle残留（当前85497除外），临时公共规则与下载均清。
+6. 持久草稿各轮红→绿，80603最终全量1129/build/lint过8m29s；bb1b1eec已安装，86986草稿恢复/表单/管理UI三项过。MuMu在线，无运行下载/翻译，待保存本切片。下一真正force-stop后两阶段验证，当前已有仅组件重建证据不可混称进程回收通过。
+7. 上传组件重建已测，不等真正进程kill后的生产恢复。完整上传批次协调器/大JSON创建后续批恢复、全编辑器/角色/性能矩阵/R8仍未完成。仍无真实上传/admin危险写入/待清测试规则，严禁提前发布。
 
 ## 最新社区增量
 

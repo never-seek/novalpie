@@ -35,6 +35,8 @@ internal class AppContainer(context: Context) {
     private val application = context.applicationContext
     val environment = RequestEnvironment(AuthSessionStore(application), NetworkConfigStore(application))
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    val uploadDrafts by lazy { com.novalpie.nativeapp.feature.upload.StoredUploadDrafts(
+        com.novalpie.nativeapp.feature.upload.UploadDraftStore(File(application.noBackupFilesDir, "upload-drafts")), applicationScope) }
     val speechEngine by lazy { AndroidSpeechEngine(application,applicationScope) }
     val readingProgressSync by lazy {
         com.novalpie.nativeapp.feature.reader.progress.ReadingProgressSynchronizer(applicationScope, {environment.revision}) { bookId, chapterId ->
