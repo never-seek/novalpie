@@ -20,6 +20,43 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeEpubArchiveWriterTest {
+    @Test fun epubReplacementCannotInjectEmphasisOrImageTagsIntoRenderedText() = runBlocking {
+        val output = ByteArrayOutputStream()
+        NativeEpubArchiveWriter.write(output, NativeEpubMetadata("排版测试", "作者"),
+            StringReader("第1章 标题\n原有 **Alice** 文字"), openAsset = { error("replacement must not fetch images") },
+            transformChapter = { _, title, body -> NativeDownloadChapterText(title, body, originalBody = body,
+                transformTextNode = { it.replace("Alice", "**Bob** <img src='fake'>") }) })
+        var body = ""
+        ZipInputStream(output.toByteArray().inputStream()).use { zip ->
+            while (true) { val entry = zip.nextEntry ?: break; if (entry.name == "OEBPS/chapter-1.xhtml") body = zip.readBytes().toString(Charsets.UTF_8) }
+        }
+        assertTrue(body.contains("<strong>**Bob** &lt;img src=&apos;fake&apos;&gt;</strong>"))
+        assertFalse(body.contains("<img src='fake'>"))
+    }
+    @Test fun emphasisAcrossBlankLinesStillProducesWellFormedXhtml() = runBlocking {
+        val output = ByteArrayOutputStream()
+        NativeEpubArchiveWriter.write(output, NativeEpubMetadata("跨段测试", "作者"),
+            StringReader("第1章 标题\n**上段\n\n下段**"), openAsset = { error("no image") })
+        var body = byteArrayOf()
+        ZipInputStream(output.toByteArray().inputStream()).use { zip ->
+            while (true) { val entry = zip.nextEntry ?: break; if (entry.name == "OEBPS/chapter-1.xhtml") body = zip.readBytes() }
+        }
+        val document = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(body.inputStream())
+        assertEquals(2, document.getElementsByTagName("strong").length)
+    }
+    @Test fun epubPreservesSourceEmphasisInsteadOfLeakingMarkdownMarkers() = runBlocking {
+        val output = ByteArrayOutputStream()
+        NativeEpubArchiveWriter.write(output, NativeEpubMetadata("排版测试", "作者"),
+            StringReader("第1章 标题\n前 **加粗** 和 *斜体* 及 ~~删除~~ 后"), openAsset = { error("no image") })
+        var body = ""
+        ZipInputStream(output.toByteArray().inputStream()).use { zip ->
+            while (true) { val entry = zip.nextEntry ?: break; if (entry.name == "OEBPS/chapter-1.xhtml") body = zip.readBytes().toString(Charsets.UTF_8) }
+        }
+        assertTrue("导出应保留加粗而非双星代码", Regex("<(strong|b)>加粗</(strong|b)>").containsMatchIn(body))
+        assertTrue(Regex("<(em|i)>斜体</(em|i)>").containsMatchIn(body))
+        assertTrue(Regex("<(del|s)>删除</(del|s)>").containsMatchIn(body))
+        assertFalse(body.contains("**加粗**"))
+    }
     @Test fun actualImageSignatureWinsOverAnIncorrectDeclaredImageType() = runBlocking {
         val png = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 13, 10, 26, 10) + ByteArray(24)
         val file = File.createTempFile("novalpie-mime-test-", ".asset").apply { delete() }

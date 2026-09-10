@@ -362,7 +362,7 @@ private fun addReaderFormattedParagraph(
  * `<strong>` spans but deliberately leaves `**strong**` and `__strong__` untouched, so normalize
  * the latter after HTML span extraction and remap the existing offsets as delimiters disappear.
  */
-private fun applyMarkdownRanges(paragraph: ReaderFormattedParagraph): ReaderFormattedParagraph {
+internal fun applyMarkdownRanges(paragraph: ReaderFormattedParagraph): ReaderFormattedParagraph {
     val source = paragraph.text
     if (!source.contains("**") && !source.contains("__") && !source.contains('*') && !source.contains('_') && !source.contains("~~")) return paragraph
 

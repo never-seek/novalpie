@@ -705,7 +705,7 @@ object NativeEpubArchiveWriter {
         onImageResult: (url: String, succeeded: Boolean) -> Unit,
     ): String {
         val matches = imageMatches(rawBody)
-        if (matches.isEmpty()) return paragraphs(escapeXml(transformTextNode(rawBody)))
+        if (matches.isEmpty()) return paragraphs(renderStyledText(rawBody, transformTextNode))
 
         // Fetch assets concurrently, but keep ZIP writes below in source order. This mirrors the
         // website's six-worker image phase without allowing completion order to change chapter
@@ -723,7 +723,7 @@ object NativeEpubArchiveWriter {
         var cursor = 0
         for (match in matches) {
             awaitIfPaused()
-            rendered.append(escapeXml(transformTextNode(rawBody.substring(cursor, match.range.first))))
+            rendered.append(renderStyledText(rawBody.substring(cursor, match.range.first), transformTextNode))
             val url = match.url
             // A failed first staging attempt must be retried for this occurrence, just as the
             // website retries each descriptor independently. Successful staged bytes are shared.
@@ -750,7 +750,7 @@ object NativeEpubArchiveWriter {
             rendered.append(token)
             cursor = match.range.last + 1
         }
-        rendered.append(escapeXml(transformTextNode(rawBody.substring(cursor))))
+        rendered.append(renderStyledText(rawBody.substring(cursor), transformTextNode))
 
         val tokenPattern = Regex("${Regex.escape(IMAGE_TOKEN_PREFIX)}(\\d+)${Regex.escape(IMAGE_TOKEN_SUFFIX)}")
         val withImages = tokenPattern.replace(rendered.toString()) { result ->
@@ -763,6 +763,33 @@ object NativeEpubArchiveWriter {
             }
         }
         return paragraphs(withImages)
+    }
+
+    /** Parse authored emphasis before replacement; replacement output can only become XML text. */
+    private fun renderStyledText(source: String, transform: (String) -> String): String {
+        val formatted = com.novalpie.nativeapp.ui.applyMarkdownRanges(com.novalpie.nativeapp.ui.ReaderFormattedParagraph(source))
+        val boundaries = (listOf(0, formatted.text.length) + formatted.spanStyles.flatMap { listOf(it.start, it.end) }).distinct().sorted()
+        return buildString {
+            boundaries.zipWithNext().forEach { (start, end) ->
+                val styles = formatted.spanStyles.filter { it.start <= start && it.end >= end }.map { it.item }
+                val bold = styles.any { (it.fontWeight?.weight ?: 0) >= 600 }
+                val italic = styles.any { it.fontStyle == androidx.compose.ui.text.font.FontStyle.Italic }
+                val strike = styles.any { it.textDecoration?.contains(androidx.compose.ui.text.style.TextDecoration.LineThrough) == true }
+                val text = escapeXml(transform(formatted.text.substring(start, end))).replace("\r", "")
+                text.split(Regex("\n\\s*\n")).forEachIndexed { index, part ->
+                    if (index > 0) append("\n\n")
+                    if (part.isNotEmpty()) {
+                        if (bold) append("<strong>")
+                        if (italic) append("<em>")
+                        if (strike) append("<del>")
+                        append(part)
+                        if (strike) append("</del>")
+                        if (italic) append("</em>")
+                        if (bold) append("</strong>")
+                    }
+                }
+            }
+        }
     }
 
     private fun isStagedAssetIntact(staged: StagedAsset): Boolean =
