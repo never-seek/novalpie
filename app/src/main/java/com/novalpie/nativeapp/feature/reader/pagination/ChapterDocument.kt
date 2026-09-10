@@ -99,6 +99,7 @@ internal fun measureChapterDocument(
                         MeasuredTextLine(layout.getLineStart(line), layout.getLineEnd(line), layout.getLineTop(line), layout.getLineBottom(line))
                     },
                     spaceAfterPx = if (block.heading) headingSpacingPx else paragraphSpacingPx,
+                    heading = block.heading,
                 )
             }
             is ChapterDocumentBlock.Image -> {

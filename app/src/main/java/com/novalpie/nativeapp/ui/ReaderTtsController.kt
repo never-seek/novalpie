@@ -95,6 +95,9 @@ internal fun readerTtsSegments(
 }
 
 internal const val DEFAULT_TTS_SEGMENT_LENGTH = 3500
+// Cold engine binding on the optimized build can exceed ten seconds. Keep a bounded,
+// cancellable budget rather than discarding a valid first playback request at five seconds.
+internal const val READER_TTS_INITIALIZATION_TIMEOUT_MS = 20_000L
 
 private fun splitReaderTtsSentences(value: String): List<String> {
     val result = mutableListOf<String>()
@@ -118,6 +121,7 @@ internal class ReaderTtsController(
 ) : TextToSpeech.OnInitListener {
     private val handler = Handler(Looper.getMainLooper())
     private var initialized = false
+    private var closed = false
     private var initStatusBeforeEngineAssignment: Int? = null
     private var pendingSegments: List<String>? = null
     private var pendingSettings: ReaderTtsSettings? = null
@@ -160,6 +164,7 @@ internal class ReaderTtsController(
     }
 
     override fun onInit(status: Int) {
+        if (closed) return
         if (!::engine.isInitialized) {
             initStatusBeforeEngineAssignment = status
             return
@@ -246,6 +251,7 @@ internal class ReaderTtsController(
         onSegmentChanged: ((Int, String) -> Unit)? = null,
         onFinished: (() -> Unit)? = null,
     ) {
+        if (closed) return
         voiceFallback = null
         val normalized = readerTtsSegments(segments)
         if (normalized.isEmpty()) {
@@ -365,8 +371,11 @@ internal class ReaderTtsController(
     }
 
     fun shutdown() {
+        if (closed) return
         stop()
-        if (initialized) engine.shutdown()
+        closed = true
+        // Binding itself owns a connection even before OnInit succeeds.
+        engine.shutdown()
         initialized = false
     }
 
@@ -529,7 +538,7 @@ internal class ReaderTtsController(
             fail("系统听书引擎启动超时，请在系统设置中启用文字转语音后重试")
         }
         initializationTimeout = timeout
-        handler.postDelayed(timeout, TTS_INITIALIZATION_TIMEOUT_MS)
+        handler.postDelayed(timeout, READER_TTS_INITIALIZATION_TIMEOUT_MS)
     }
 
     private fun clearInitializationTimeout() {
@@ -554,7 +563,6 @@ internal class ReaderTtsController(
 
     private companion object {
         const val UTTERANCE_PREFIX = "novalpie-reader-utterance"
-        const val TTS_INITIALIZATION_TIMEOUT_MS = 5_000L
         const val PAUSE_SUFFIX = ":pause"
         val UTTERANCE_ID_PATTERN = Regex(
             "^${Regex.escape(UTTERANCE_PREFIX)}:(\\d+):(\\d+)(${Regex.escape(PAUSE_SUFFIX)})?$",

@@ -129,7 +129,9 @@ internal fun NativePagedReader(
             latestBoundary(direction)
         }
     }
-    val latestMove by rememberUpdatedState<(Int)->Unit>(::move)
+    // Local function references compare equal even when their captured catalogue flags change.
+    // A lambda refreshes the callback after the asynchronous catalogue arrives.
+    val latestMove by rememberUpdatedState<(Int)->Unit>({ direction -> move(direction) })
     LaunchedEffect(options.showComments){if(!options.showComments)showComments=false}
     LaunchedEffect(pageIndex) {
         if(turnBusy)kotlinx.coroutines.delay(if(options.pageTurnEffect=="simulated")240 else 180)

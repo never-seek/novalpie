@@ -4,6 +4,32 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PagePlannerTest {
+    @Test fun chapterTitleCannotStrandAnOtherwiseReadableFirstPage() {
+        val plan = planChapterPages(key(), listOf(paragraph("title", 1, gap = 5f).copy(heading = true), paragraph("body", 5)))
+        assertEquals(2, plan.pages.size)
+        assertEquals(listOf("title", "body"), plan.pages.first().fragments.map { it.blockId })
+        val body = plan.pages.flatMap { it.fragments }.filterIsInstance<PageFragment.Text>().filter { it.blockId == "body" }
+        assertEquals(0, body.first().startOffset)
+        assertEquals(25, body.last().endOffset)
+        assertEquals(body.first().endOffset, body.last().startOffset)
+    }
+    @Test fun headingWithNoRoomForOneBodyLineStillAdvancesWithoutClipping() {
+        val plan = planChapterPages(key(), listOf(paragraph("title", 4, gap = 5f).copy(heading = true), paragraph("body", 5)))
+        assertEquals(listOf("title"), plan.pages.first().fragments.map { it.blockId })
+        assertEquals(2, plan.pages.size)
+        assertTrue(plan.pages.flatMap { it.fragments }.all { it.yPx + it.heightPx <= 100f })
+    }
+
+    @Test fun headingBodySplitRestoresEachOffsetToTheSamePageInEitherDirection() {
+        val plan = planChapterPages(key(), listOf(paragraph("title", 1, gap = 5f).copy(heading = true), paragraph("body", 5)))
+        for (offset in 0 until 25) {
+            assertEquals(if (offset < 15) 0 else 1, plan.pageForAnchor(ReaderAnchor(10, 20, "body", offset)))
+        }
+        val navigator = ReaderPageNavigator(plan)
+        assertEquals(PageMove.Page(1), navigator.next())
+        assertEquals(PageMove.Page(0), navigator.previous())
+    }
+
     private fun key(height: Int = 100, revision: String = "source:rules:1") = PageLayoutKey(
         bookId = 10, chapterId = 20, documentRevision = revision,
         widthPx = 200, heightPx = height, typographyRevision = "test-font-20", imageRevision = "images:0",

@@ -35,6 +35,7 @@ internal sealed interface MeasuredChapterBlock {
         val textLength: Int,
         val lines: List<MeasuredTextLine>,
         override val spaceAfterPx: Float = 0f,
+        val heading: Boolean = false,
     ) : MeasuredChapterBlock
 
     data class Image(
@@ -118,6 +119,7 @@ internal fun planChapterPages(key: PageLayoutKey, blocks: List<MeasuredChapterBl
     val height = key.heightPx.toFloat()
     val pages = mutableListOf<ReaderPage>()
     val fragments = mutableListOf<PageFragment>()
+    val headingIds = blocks.filterIsInstance<MeasuredChapterBlock.Paragraph>().filter { it.heading }.map { it.id }.toSet()
     var used = 0f
     var pendingGap = 0f
 
@@ -154,7 +156,8 @@ internal fun planChapterPages(key: PageLayoutKey, blocks: List<MeasuredChapterBl
                 }
                 val fullHeight = block.lines.last().bottomPx - block.lines.first().topPx
                 // Prefer whole paragraphs when possible, but never prevent a long paragraph from splitting.
-                if (fragments.isNotEmpty() && fullHeight <= height && used + pendingGap + fullHeight > height) finishPage()
+                val onlyHeadings = fragments.isNotEmpty() && fragments.all { it.blockId in headingIds }
+                if (fragments.isNotEmpty() && !onlyHeadings && fullHeight <= height && used + pendingGap + fullHeight > height) finishPage()
                 var firstLine = 0
                 while (firstLine < block.lines.size) {
                     val top = block.lines[firstLine].topPx
