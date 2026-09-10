@@ -456,6 +456,7 @@ data class UploadBookState(
     val submissionUncertain: Boolean = false,
     val restoringDraft: Boolean = false,
     val draftStorageError: String? = null,
+    val batchCheckpoint: com.novalpie.nativeapp.model.UploadBatchCheckpoint? = null,
 )
 
 data class UploadEditorState(

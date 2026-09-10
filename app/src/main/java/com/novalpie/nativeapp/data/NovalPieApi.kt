@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.util.Base64
 import com.novalpie.nativeapp.model.Chapter
+import com.novalpie.nativeapp.model.UploadBatchCheckpoint
 import com.novalpie.nativeapp.model.ChapterComment
 import com.novalpie.nativeapp.model.ChapterIllustration
 import com.novalpie.nativeapp.model.ChapterIllustrationMutationResult
@@ -2527,14 +2528,17 @@ class NovalPieApi(
         submitType: String,
         chapters: List<UploadChapter>,
         epubFilePath: String? = null,
-        epubFile: UploadFileSource? = null
+        epubFile: UploadFileSource? = null,
+        resume: UploadBatchCheckpoint? = null,
+        checkpoint: suspend (UploadBatchCheckpoint) -> Unit = {},
     ): UploadActionResult = withContext(Dispatchers.IO) {
         require(bookId > 0 && chapters.isNotEmpty()) { "book and chapters are required" }
         require(submitType in setOf("chinese", "personal", "shared")) { "submit type is invalid" }
         val shouldChunk = chapters.size > 50 || chapters.sumOf { it.title.length.toLong() + it.content.length.toLong() } > 2_500_000L
         val chunks = if (shouldChunk) chapters.chunked(50) else listOf(chapters)
-        var lastResult = UploadActionResult(success = true, novelId = bookId)
-        chunks.forEachIndexed { index, chunk ->
+        val signature = md5Hex("$bookId:$submitType:$epubFilePath:" + chunks.joinToString(":") { md5Hex(uploadChaptersJson(it).toString()) })
+        runUploadBatches(signature, chunks.size, bookId, resume, checkpoint) { index, _ ->
+            val chunk = chunks[index]
             val chaptersJson = uploadChaptersJson(chunk).toString()
             val multipart = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
@@ -2553,11 +2557,8 @@ class NovalPieApi(
             val result = normalizeUploadResult(
                 requestBody("/api/users/me/chapters/append", "POST", multipart.build())
             )
-            if (!result.success) throw IOException(result.message ?: "append chapters failed")
-            if (result.novelId != null && result.novelId != bookId) throw IOException("追加回执的书籍身份不符，请先核对目录；未继续下一批")
-            lastResult = result.copy(novelId = result.novelId ?: bookId)
+            result
         }
-        lastResult
     }
 
     suspend fun bookComments(bookId: Long, page: Int = 1, limit: Int = 30): List<ChapterComment> = withContext(Dispatchers.IO) {
@@ -2593,11 +2594,21 @@ class NovalPieApi(
     suspend fun uploadBook(
         upload: UploadBookRequest,
         epubFile: UploadFileSource? = null,
-        coverFile: UploadFileSource? = null
+        coverFile: UploadFileSource? = null,
+        resume: UploadBatchCheckpoint? = null,
+        checkpoint: suspend (UploadBatchCheckpoint) -> Unit = {},
     ): UploadActionResult = withContext(Dispatchers.IO) {
-        val chaptersJson = uploadChaptersJson(upload.chapters).toString()
-        val multipart = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
+        require(upload.chapters.isNotEmpty()) { "请先选择并解析 EPUB 文件" }
+        val chapterBytes = upload.chapters.sumOf { uploadChaptersJson(listOf(it)).toString().toByteArray(Charsets.UTF_8).size.toLong() } - upload.chapters.size + 1
+        val chunks = if (chapterBytes > 5L * 1024 * 1024) upload.chapters.chunked(50) else listOf(upload.chapters)
+        val fingerprint = java.security.MessageDigest.getInstance("SHA-256")
+        fingerprint.update(upload.copy(chapters = emptyList()).toString().toByteArray(Charsets.UTF_8))
+        chunks.forEach { fingerprint.update(md5Hex(uploadChaptersJson(it).toString()).toByteArray(Charsets.US_ASCII)) }
+        val signature = fingerprint.digest().joinToString("") { "%02x".format(it) }
+        runUploadBatches(signature, chunks.size, null, resume, checkpoint) { index, novelId ->
+        val chaptersJson = uploadChaptersJson(chunks[index]).toString()
+        val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
+        if (index == 0) multipart
             .addFormDataPart("title", upload.title.trim())
             .addFormDataPart("title_translation", upload.titleTranslation.trim())
             .addFormDataPart("author_name", upload.authorName.trim())
@@ -2608,14 +2619,19 @@ class NovalPieApi(
             .addFormDataPart("source", upload.source.trim())
             .addFormDataPart("source_url", upload.sourceUrl.trim())
             .addFormDataPart("tags", upload.tags.joinToString(","))
+        else multipart.addFormDataPart("existing_novel_id", requireNotNull(novelId).toString())
+        multipart
             .addFormDataPart("submit_type", upload.submitType)
             .addFormDataPart("chapters", chaptersJson)
             .addFormDataPart("chapters_md5", md5Hex(chaptersJson))
         upload.epubFilePath?.takeIf { it.isNotBlank() }?.let { multipart.addFormDataPart("epub_file_path", it) }
         upload.coverUrl?.takeIf { it.isNotBlank() }?.let { multipart.addFormDataPart("cover_url", it) }
         epubFile?.let { multipart.addFormDataPart("epub_file", it.fileName, UploadStreamRequestBody(it)) }
-        coverFile?.let { multipart.addFormDataPart("cover", it.fileName, UploadStreamRequestBody(it)) }
-        normalizeUploadResult(requestBody("/api/uploads/books", "POST", multipart.build()))
+        if (index == 0) coverFile?.let { multipart.addFormDataPart("cover", it.fileName, UploadStreamRequestBody(it)) }
+        if (chunks.size > 1) multipart.addFormDataPart("chunk_index", index.toString())
+            .addFormDataPart("total_chunks", chunks.size.toString()).addFormDataPart("is_chunked", "1")
+        normalizeUploadResult(requestBody(if (index == 0) "/api/uploads/books" else "/api/users/me/chapters/append", "POST", multipart.build()))
+        }
     }
 
     suspend fun uploadFileInChunks(

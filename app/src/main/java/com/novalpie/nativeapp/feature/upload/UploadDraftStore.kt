@@ -61,6 +61,8 @@ internal class UploadDraftStore(rootDirectory: File) {
             .put("status", status).put("resultBook", success?.novelId ?: JSONObject.NULL).put("message", state.actionMessage ?: JSONObject.NULL)
             .put("wasParsing", state.processing && state.submitResult != LoadResult.Loading)
             .put("chapterFile", content?.file ?: JSONObject.NULL).put("chapterBytes", content?.bytes ?: 0).put("chapterSha", content?.sha ?: "")
+        state.batchCheckpoint?.let { batch -> data.put("batch", JSONObject().put("signature", batch.signature)
+            .put("novelId", batch.novelId ?: JSONObject.NULL).put("next", batch.nextBatch).put("total", batch.totalBatches).put("inFlight", batch.inFlight)) }
         val atomic = AtomicFile(File(dir, "draft.json")); val bytes = data.toString().toByteArray(Charsets.UTF_8)
         val output = atomic.startWrite()
         try { output.write(bytes); atomic.finishWrite(output) } catch (failure: Exception) { atomic.failWrite(output); throw failure }
@@ -82,8 +84,11 @@ internal class UploadDraftStore(rootDirectory: File) {
             f.getString("language"), f.getString("spans"), f.getBoolean("adult"), f.getString("source"), f.getString("sourceUrl"),
             f.getString("tags"), f.getString("submitType"), f.getString("cover"), chapters?.size ?: 0)
         val document = data.optJSONObject("document")?.let { UploadDocument(it.getString("uri"), it.getString("name"), it.getLong("size"), it.text("mime")) }
-        val uncertain = data.getString("status") == "Uncertain"
+        val batch = data.optJSONObject("batch")?.let { UploadBatchCheckpoint(it.getString("signature"), it.optLong("novelId").takeIf { id -> id > 0 },
+            it.getInt("next"), it.getInt("total"), it.getBoolean("inFlight")) }
+        val uncertain = batch?.inFlight ?: (data.getString("status") == "Uncertain")
         val message = when {
+            batch != null && data.getString("status") != "Completed" -> "书籍 ${batch.novelId ?: "尚未确认"}：已确认 ${batch.nextBatch}/${batch.totalBatches} 批；" + if (batch.inFlight) "当前批结果未知，请核对目录，没有自动重发" else "可从已确认批次继续上传"
             uncertain -> "已恢复上传草稿；上次提交结果未确认，请先核对作品和目录，没有自动重发"
             data.getString("status") == "Completed" -> "上次上传已完成；请选择新文件或清空草稿后再创建新的上传"
             data.optBoolean("wasParsing") -> "已恢复填写内容；上次文件解析未完成，请重新选择原 EPUB"
@@ -95,7 +100,7 @@ internal class UploadDraftStore(rootDirectory: File) {
             else -> LoadResult.Idle
         }
         return UploadBookState(book, draft, document, chapters?.let { LoadResult.Success(it) } ?: LoadResult.Idle,
-            data.text("serverFile"), submitResult = result, actionMessage = message, submissionUncertain = uncertain)
+            data.text("serverFile"), submitResult = result, actionMessage = message, submissionUncertain = uncertain, batchCheckpoint = batch)
     }
     @Synchronized fun discard(account: Long, book: Long?) {
         val dir = directory(account, book)

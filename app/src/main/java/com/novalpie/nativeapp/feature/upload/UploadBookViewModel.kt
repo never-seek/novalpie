@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.novalpie.nativeapp.model.*
+import com.novalpie.nativeapp.data.UploadBatchFailure
 import com.novalpie.nativeapp.ui.*
 import kotlinx.coroutines.*
 
@@ -70,7 +71,7 @@ internal class UploadBookViewModel(private val repository: UploadRepository, sco
     }
     fun adopt(prepared: UploadBookState): Boolean {
         enter(prepared.existingNovelId)
-        if (state.processing || state.restoringDraft || current.storageBlocked || state.submissionUncertain) return false
+        if (state.processing || state.restoringDraft || current.storageBlocked || state.submissionUncertain || hasPendingBatch(state)) return false
         current.serial++
         current.job?.cancel()
         update(current) { prepared }
@@ -85,10 +86,10 @@ internal class UploadBookViewModel(private val repository: UploadRepository, sco
     }
     fun draft(value: UploadBookDraft) {
         restore(current)
-        if (state.restoringDraft) return
+        if (state.restoringDraft || state.submitResult == LoadResult.Loading || state.batchCheckpoint?.let { it.inFlight || it.nextBatch < it.totalBatches } == true) return
         update(current) {
         // A form edit must not erase an in-flight or unconfirmed server operation.
-        it.copy(draft = value.copy(chapterCount = (it.chapters as? LoadResult.Success)?.value?.size ?: 0),
+        it.copy(draft = value.copy(chapterCount = (it.chapters as? LoadResult.Success)?.value?.size ?: 0), batchCheckpoint = null,
             submitResult = if (it.processing || it.submissionUncertain) it.submitResult else LoadResult.Idle,
             actionMessage = if (it.processing || it.submissionUncertain) it.actionMessage else null)
         }
@@ -116,10 +117,10 @@ internal class UploadBookViewModel(private val repository: UploadRepository, sco
     fun select(uri: String) {
         val entry = current
         restore(entry)
-        if (entry.state.processing || entry.state.submissionUncertain || entry.state.restoringDraft || entry.storageBlocked) return
+        if (entry.state.processing || entry.state.submissionUncertain || entry.state.restoringDraft || entry.storageBlocked || hasPendingBatch(entry.state)) return
         val serial = ++entry.serial; val account = environment
         update(entry) { it.copy(processing = true, progressLabel = "正在读取 EPUB 文件…", chapters = LoadResult.Loading,
-            selectedFile = null, serverFilePath = null, submitResult = LoadResult.Idle, actionMessage = null) }
+            selectedFile = null, serverFilePath = null, submitResult = LoadResult.Idle, actionMessage = null, batchCheckpoint = null) }
         entry.job = work.launch {
             try {
                 val document = repository.document(uri)
@@ -149,7 +150,7 @@ internal class UploadBookViewModel(private val repository: UploadRepository, sco
         val entry = current; val snapshot = entry.state
         if (snapshot.processing || snapshot.restoringDraft || entry.storageBlocked) return
         if (snapshot.submitResult is LoadResult.Success) return
-        if (snapshot.submissionUncertain && !confirmUncertainRetry) {
+        if (snapshot.batchCheckpoint?.inFlight == true || (snapshot.submissionUncertain && !confirmUncertainRetry)) {
             update(entry) { it.copy(actionMessage = "上次提交结果未确认，请先核对作品与目录；没有重复提交") }
             return
         }
@@ -178,7 +179,16 @@ internal class UploadBookViewModel(private val repository: UploadRepository, sco
                 currentCoroutineContext().ensureActive()
                 if (!fresh(entry, serial, account) || (entry.owner != null && entry.owner != accountId())) return@launch
                 requested = true
-                val result = repository.submit(submission)
+                val callbackContext = currentCoroutineContext().minusKey(Job)
+                val result = repository.submitTracked(submission, snapshot.batchCheckpoint) { progress ->
+                    withContext(callbackContext) {
+                    currentCoroutineContext().ensureActive()
+                    check(fresh(entry, serial, account) && (entry.owner == null || entry.owner == accountId())) { "上传账号已变化" }
+                    val next = entry.state.copy(batchCheckpoint = progress, progressLabel = "已确认 ${progress.nextBatch}/${progress.totalBatches} 批")
+                    entry.owner?.let { drafts?.checkpoint(it, next) }
+                    update(entry, persist = false) { next }
+                    }
+                }
                 if (!fresh(entry, serial, account)) return@launch
                 if (!result.success) {
                     update(entry) { it.copy(processing = false, progressLabel = null, submitResult = LoadResult.Error(result.message ?: "服务器拒绝上传"), actionMessage = result.message ?: "服务器拒绝上传") }
@@ -190,14 +200,17 @@ internal class UploadBookViewModel(private val repository: UploadRepository, sco
                     actionMessage = result.message ?: if (entry.bookId == null) "上传成功" else "章节追加成功") }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
+                val batch = (failure as? UploadBatchFailure)?.checkpoint
                 if (fresh(entry, serial, account)) update(entry) { it.copy(processing = false, progressLabel = null,
-                    submitResult = LoadResult.Error(apiFailureMessage("上传书籍", failure)), submissionUncertain = requested,
-                    actionMessage = if (requested) "提交中断或回执未确认，可能已有部分章节写入。请先核对作品和目录，勿直接重复上传；草稿已保留。"
+                    submitResult = LoadResult.Error(apiFailureMessage("上传书籍", failure)), submissionUncertain = batch?.inFlight ?: requested,
+                    batchCheckpoint = batch ?: it.batchCheckpoint,
+                    actionMessage = if (batch != null) failure.message else if (requested) "提交中断或回执未确认，可能已有部分章节写入。请先核对作品和目录，勿直接重复上传；草稿已保留。"
                         else "上传检查点未能保存，本次未发出上传请求；请检查本机空间后重试") }
             }
         }
     }
     private fun fresh(entry: Entry, serial: Long, account: Long) = account == environment && serial == entry.serial
+    private fun hasPendingBatch(value: UploadBookState) = value.batchCheckpoint?.let { it.inFlight || it.nextBatch < it.totalBatches } == true
     fun environmentChanged() {
         environment++
         entries.values.forEach { it.job?.cancel() }

@@ -75,6 +75,8 @@ fun UploadBookScreen(
     val chapters = (state.chapters as? LoadResult.Success)?.value.orEmpty()
     val appendMode = state.existingNovelId != null
     val busy = state.processing || state.restoringDraft
+    val batch = state.batchCheckpoint
+    val frozenBatch = batch?.let { it.inFlight || it.nextBatch < it.totalBatches } == true
     var confirmRetry by remember(state.existingNovelId) { mutableStateOf(false) }
     if (confirmRetry) AlertDialog(
         onDismissRequest = { confirmRetry = false },
@@ -134,6 +136,7 @@ fun UploadBookScreen(
             UploadFileCard(
                 document = state.selectedFile,
                 processing = busy,
+                canPick = !frozenBatch && !state.submissionUncertain,
                 onPick = { picker.launch(arrayOf("application/epub+zip", "application/octet-stream", "*/*")) },
                 onClear = onClear
             )
@@ -159,6 +162,11 @@ fun UploadBookScreen(
         state.actionMessage?.let { message ->
             item { UploadNotice(message, state.submitResult is LoadResult.Error || state.chapters is LoadResult.Error) }
         }
+        if (frozenBatch) item {
+            UploadNotice("当前上传的文件与信息已固定，已确认 ${batch!!.nextBatch}/${batch.totalBatches} 批。" +
+                if (batch.inFlight) "请先核对目录；结果未知的批次不会重复发送。" else "继续时只上传尚未确认的后续批次。", batch.inFlight)
+            batch.novelId?.let { id -> TextButton(onClick = { onOpenBook(id) }) { Text("查看书籍 #$id 与目录") } }
+        }
         if (state.restoringDraft) item { UploadNotice("正在恢复本账号的上传草稿…", false) }
         state.draftStorageError?.let { message -> item {
             UploadNotice(message, true)
@@ -166,11 +174,11 @@ fun UploadBookScreen(
         } }
 
         if (!appendMode) {
-            item { UploadMetadataCard(state.draft, busy, onDraftChange) }
+            item { UploadMetadataCard(state.draft, busy || frozenBatch, onDraftChange) }
         }
 
         item {
-            UploadSubmissionCard(state.draft, busy, onDraftChange)
+            UploadSubmissionCard(state.draft, busy || frozenBatch, onDraftChange)
         }
 
         item {
@@ -185,12 +193,12 @@ fun UploadBookScreen(
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
                     onClick = { if (state.submissionUncertain) confirmRetry = true else onSubmit() },
-                    enabled = !busy && hasAuthToken && chapters.isNotEmpty() && state.submitResult !is LoadResult.Success,
+                    enabled = !busy && batch?.inFlight != true && hasAuthToken && chapters.isNotEmpty() && state.submitResult !is LoadResult.Success,
                     modifier = Modifier.fillMaxWidth().height(54.dp)
                 ) {
                     Icon(Icons.Filled.UploadFile, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text(if (busy) "处理中…" else if (state.submitResult is LoadResult.Success) "已上传" else if (state.submissionUncertain) "核对后重试" else if (appendMode) "确认追加 ${chapters.size} 章" else "确认上传 ${chapters.size} 章")
+                    Text(if (busy) "处理中…" else if (batch?.inFlight == true) "当前批结果待核对" else if (state.submitResult is LoadResult.Success) "已上传" else if (frozenBatch) "继续第 ${batch!!.nextBatch + 1}/${batch.totalBatches} 批" else if (state.submissionUncertain) "核对后重试" else if (appendMode) "确认追加 ${chapters.size} 章" else "确认上传 ${chapters.size} 章")
                 }
                 Text(
                     if (appendMode) "追加会写入现有书籍。提交前请确认章节顺序与翻译类型。" else "上传会写入 novalpie.cc。提交前请确认书名、作者、标签、成人内容标记与翻译类型。",
@@ -242,6 +250,7 @@ private fun UploadHero(chapterCount: Int, processing: Boolean, appendMode: Boole
 private fun UploadFileCard(
     document: UploadDocument?,
     processing: Boolean,
+    canPick: Boolean,
     onPick: () -> Unit,
     onClear: () -> Unit
 ) {
@@ -270,7 +279,7 @@ private fun UploadFileCard(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = onPick, enabled = !processing, modifier = Modifier.weight(1f)) {
+                Button(onClick = onPick, enabled = !processing && canPick, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Filled.UploadFile, null)
                     Spacer(Modifier.width(6.dp))
                     Text(if (document == null) "选择 EPUB" else "更换文件")

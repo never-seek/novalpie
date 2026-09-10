@@ -18,6 +18,16 @@ import kotlinx.coroutines.test.TestCoroutineScheduler
 @Config(sdk = [28])
 class UploadDraftStoreTest {
     @get:Rule val temp = TemporaryFolder()
+    @Test fun batchBoundariesSurviveRecreationWithoutTurningConfirmedPauseIntoUnknownWrite() {
+        val root = temp.newFolder()
+        val checkpoint = UploadBatchCheckpoint("frozen", 42, 1, 3, false)
+        UploadDraftStore(root).save(1, state(null).copy(submitResult = LoadResult.Loading, processing = true, batchCheckpoint = checkpoint))
+        val restored = UploadDraftStore(root).load(1, null)!!
+        assertEquals(checkpoint, restored.batchCheckpoint); assertFalse(restored.submissionUncertain)
+        assertTrue(restored.actionMessage.orEmpty().contains("42"))
+        UploadDraftStore(root).save(1, restored.copy(batchCheckpoint = checkpoint.copy(inFlight = true)))
+        assertTrue(UploadDraftStore(root).load(1, null)!!.submissionUncertain)
+    }
     private fun state(book: Long? = 2) = UploadBookState(book, UploadBookDraft(title = "全部信息", titleTranslation = "Original", author = "作者", description = "简介",
         language = "ko", spans = "已完结", isAdult = true, source = "upload", sourceUrl = "https://fixture.invalid/source", tagsText = "甲,乙", coverUrl = "https://fixture.invalid/cover.file", chapterCount = 1),
         selectedFile = UploadDocument("content://fixture/book.epub", "书.epub", 80), serverFilePath = "owned.epub",

@@ -7,6 +7,29 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class UploadBookViewModelTest {
+    @Test fun selectingANewFileAfterCompletionMustDiscardThePreviousBatchIdentity() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val model = UploadBookViewModel(Repository(), scope)
+        try {
+            model.select("first")
+            model.adopt(model.state.copy(batchCheckpoint = UploadBatchCheckpoint("old", 99, 3, 3, false), submitResult = LoadResult.Success(UploadActionResult(true, novelId = 99))))
+            model.select("second")
+            assertNull(model.state.batchCheckpoint)
+            assertEquals("owned/second", model.state.serverFilePath)
+        } finally { model.close(); scope.cancel() }
+    }
+    @Test fun pausedBatchCannotChangeItsFrozenFileOrMetadataThroughAnotherEditor() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val model = UploadBookViewModel(Repository(), scope)
+        try {
+            model.select("first")
+            model.adopt(model.state.copy(batchCheckpoint = UploadBatchCheckpoint("old", 99, 1, 3, false)))
+            val frozen = model.state
+            model.draft(frozen.draft.copy(title = "错误新名")); model.select("second")
+            assertFalse(model.adopt(frozen.copy(serverFilePath = "wrong")))
+            assertEquals(frozen, model.state)
+        } finally { model.close(); scope.cancel() }
+    }
     @Test fun repeatedClickAfterAConfirmedCompletionCannotAppendTheSameChaptersTwice() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val repository = Repository(); val model = UploadBookViewModel(repository, scope)

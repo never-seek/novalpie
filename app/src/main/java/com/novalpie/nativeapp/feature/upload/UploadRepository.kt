@@ -15,6 +15,7 @@ internal interface UploadRepository {
     suspend fun document(uri: String): UploadDocument
     suspend fun parse(document: UploadDocument): ParsedEpub
     suspend fun submit(submission: UploadSubmission): UploadActionResult
+    suspend fun submitTracked(submission: UploadSubmission, resume: UploadBatchCheckpoint?, checkpoint: suspend (UploadBatchCheckpoint) -> Unit): UploadActionResult = submit(submission)
 }
 
 internal class WebsiteUploadRepository(
@@ -31,10 +32,13 @@ internal class WebsiteUploadRepository(
         } else withContext(Dispatchers.IO) { EpubParser.parse(input) }
     }
     override suspend fun submit(submission: UploadSubmission): UploadActionResult {
+        return submitTracked(submission, null) {}
+    }
+    override suspend fun submitTracked(submission: UploadSubmission, resume: UploadBatchCheckpoint?, checkpoint: suspend (UploadBatchCheckpoint) -> Unit): UploadActionResult {
         val request = submission.request
         val file = if (request.epubFilePath == null) source(submission.document) else null
         return submission.existingBookId?.let { id ->
-            api.appendManagedChapters(id, request.submitType, request.chapters, request.epubFilePath, file)
-        } ?: api.uploadBook(request, epubFile = file)
+            api.appendManagedChapters(id, request.submitType, request.chapters, request.epubFilePath, file, resume, checkpoint)
+        } ?: api.uploadBook(request, epubFile = file, resume = resume, checkpoint = checkpoint)
     }
 }
