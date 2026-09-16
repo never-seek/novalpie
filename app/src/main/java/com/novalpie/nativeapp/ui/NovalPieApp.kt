@@ -6367,10 +6367,11 @@ internal fun ReaderScreen(
     val latestReaderBodyLayout by rememberUpdatedState(readerBodyLayout)
     // The route remains anchored to the opening chapter during continuous scroll, while the
     // footer follows the article that actually occupies the viewport.
-    var visibleReaderChapterId by remember(state.bookId, state.chapterId) {
+    var visibleReaderChapterId by remember(state.bookId) {
         mutableStateOf<Long?>(state.chapterId.takeIf { it > 0L })
     }
-    val visibleProgress = remember(state.bookId, state.chapterId) { mutableStateOf(state.chapterId to 0f) }
+    val visibleProgress = remember(state.bookId) { mutableStateOf(state.chapterId to 0f) }
+    val activeChapterId = visibleReaderChapterId ?: state.visibleChapterId ?: state.chapterId
     val progressBounds = remember(readerBodyLayout) {
         readerBodyLayout.chapters.associate { chapter ->
             val id = chapter.chapter.chapterId
@@ -6392,7 +6393,7 @@ internal fun ReaderScreen(
     // Do not make the next append depend on one visibility transition. A catalog refresh or an
     // in-flight append can replace the observer at exactly the chapter boundary. A newly appended
     // chapter gets a new sentinel key and therefore a fresh boundary flag.
-    val continuousBoundaryReached = remember(readerEndSentinelKey) { mutableStateOf(false) }
+    val continuousBoundaryReached = remember { mutableStateOf(false) }
     val readerScope = rememberCoroutineScope()
     val context = LocalContext.current
     val readerView = LocalView.current
@@ -6544,6 +6545,7 @@ internal fun ReaderScreen(
         lastReaderChromeTapYFraction = -1f
         continuousBoundaryReached.value = false
         visibleReaderChapterId = state.chapterId.takeIf { it > 0L }
+        visibleProgress.value = state.chapterId to 0f
         pendingChapterEntryPosition = state.entryPosition
         listState.scrollToItem(0)
     }
@@ -6600,18 +6602,19 @@ internal fun ReaderScreen(
 
     // Infinite scrolling appends bodies without replacing the route. Update the visible chapter
     // immediately for the footer/progress model, but avoid disk work unless that chapter changes.
-    LaunchedEffect(listState,pageTurnEnabled) {
+    LaunchedEffect(listState, pageTurnEnabled, state.bookId, state.chapterId) {
         if (pageTurnEnabled) return@LaunchedEffect
         snapshotFlow {
-            listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key
-        }.collect { visibleKey ->
-            val bodyLayout = latestReaderBodyLayout
-            val visibleChapterId = readerViewportAnchorForBodyKey(bodyLayout, visibleKey, 0)?.chapterId
+            val visibleItems = listState.layoutInfo.visibleItemsInfo
+            val firstKey = visibleItems.firstOrNull()?.key
+            readerFirstVisibleChapterId(visibleItems.map { it.key })
+                ?: readerViewportAnchorForBodyKey(latestReaderBodyLayout, firstKey, 0)?.chapterId
+        }.collect { visibleChapterId ->
             if (visibleChapterId != null && visibleReaderChapterId != visibleChapterId) {
                 visibleReaderChapterId = visibleChapterId
                 latestVisibleChapterChanged(
                     visibleChapterId,
-                    bodyLayout.chapters.firstOrNull { it.chapter.chapterId == visibleChapterId }
+                    latestReaderBodyLayout.chapters.firstOrNull { it.chapter.chapterId == visibleChapterId }
                         ?.chapter
                         ?.title,
                 )
@@ -6619,11 +6622,13 @@ internal fun ReaderScreen(
         }
     }
 
-    LaunchedEffect(listState, pageTurnEnabled) {
+    LaunchedEffect(listState, pageTurnEnabled, state.bookId, state.chapterId) {
         if (pageTurnEnabled) return@LaunchedEffect
         snapshotFlow {
             if (listState.isScrollInProgress) null else {
-                val item = listState.layoutInfo.visibleItemsInfo.firstOrNull()
+                val item = listState.layoutInfo.visibleItemsInfo.firstOrNull { item ->
+                    latestReaderBodyLayout.locationsByKey.containsKey(item.key.toString())
+                }
                 val location = item?.key?.let { latestReaderBodyLayout.locationsByKey[it.toString()] }
                 val bounds = location?.let { latestProgressBounds[it.chapterId] }
                 if (item == null || location == null || bounds == null) null else {
@@ -6643,8 +6648,8 @@ internal fun ReaderScreen(
     // The first optimization removed HTML/Markdown parsing from the scroll hot path. Persist the
     // local paragraph anchor only once touch/fling activity settles so SharedPreferences and the
     // root ViewModel do not recompose the reader during every 24px of a high-refresh drag.
-    LaunchedEffect(listState,pageTurnEnabled) {
-        if(pageTurnEnabled)return@LaunchedEffect
+    LaunchedEffect(listState, pageTurnEnabled, state.bookId, state.chapterId) {
+        if (pageTurnEnabled) return@LaunchedEffect
         snapshotFlow {
             if (listState.isScrollInProgress) null else
                 listState.layoutInfo.visibleItemsInfo.firstOrNull()?.key?.let { it to listState.firstVisibleItemScrollOffset }
@@ -6664,6 +6669,8 @@ internal fun ReaderScreen(
         chapters,
         state.chapterId,
         hasReadableBody,
+        preparingBody,
+        readerEndSentinelKey,
         chapterContents.size,
         state.chapters,
         state.loadingNextChapter,
@@ -6675,29 +6682,32 @@ internal fun ReaderScreen(
         // boundary, so it must never cause an adjacent chapter request before the current body is
         // readable.
         if (!readerContinuousScrollCanTrigger(continuousScrollEnabled, hasReadableBody)) {
+            continuousBoundaryReached.value = false
             return@LaunchedEffect
         }
         snapshotFlow {
-            val visibleItems = listState.layoutInfo.visibleItemsInfo
-            val bodyEndVisible = visibleItems.any { item -> item.key == readerEndSentinelKey }
-            val lastVisibleItemIndex = visibleItems.maxOfOrNull { it.index } ?: -1
-            val prefetchStartIndex = readerNextChapterPrefetchStartIndex(
-                totalItemCount = listState.layoutInfo.totalItemsCount,
-                // Every chapter's comments are now part of its own body group, before the
-                // sentinel. The next chapter therefore follows body -> comments -> body.
-                itemsAfterSentinel = 0,
-            )
-            // Begin the idempotent read shortly before the marker. This hides normal network
-            // latency while retaining the marker as a fallback for very short chapters.
-            bodyEndVisible || readerShouldPrefetchNextChapter(
-                lastVisibleItemIndex = lastVisibleItemIndex,
-                prefetchStartIndex = prefetchStartIndex,
-            )
+            if (!hasReadableBody || preparingBody) false else {
+                val visibleItems = listState.layoutInfo.visibleItemsInfo
+                val bodyEndVisible = visibleItems.any { item -> item.key == readerEndSentinelKey }
+                val lastVisibleItemIndex = visibleItems.maxOfOrNull { it.index } ?: -1
+                val prefetchStartIndex = readerNextChapterPrefetchStartIndex(
+                    totalItemCount = listState.layoutInfo.totalItemsCount,
+                    // Every chapter's comments are now part of its own body group, before the
+                    // sentinel. The next chapter therefore follows body -> comments -> body.
+                    itemsAfterSentinel = 0,
+                )
+                // Begin the idempotent read shortly before the marker. This hides normal network
+                // latency while retaining the marker as a fallback for very short chapters.
+                bodyEndVisible || readerShouldPrefetchNextChapter(
+                    lastVisibleItemIndex = lastVisibleItemIndex,
+                    prefetchStartIndex = prefetchStartIndex,
+                )
+            }
         }.collect { nextBoundaryReached ->
             // The sentinel is immediately after the article body and before the potentially
             // very large comments block. Watching LazyColumn's last item made comments block
             // continuous reading until their entire section had been traversed.
-            if (nextBoundaryReached) continuousBoundaryReached.value = true
+            continuousBoundaryReached.value = nextBoundaryReached
         }
     }
 
@@ -6784,7 +6794,7 @@ internal fun ReaderScreen(
     }
 
     fun openReaderPageBoundary(target: ReaderPageBoundaryTarget) {
-        val request = readerAdjacentBoundaryRequest(state.chapterId, chapters, target)
+        val request = readerAdjacentBoundaryRequest(activeChapterId, chapters, target)
         request?.let {
             onOpenReaderAtPosition(
                 state.bookId,
@@ -6800,7 +6810,7 @@ internal fun ReaderScreen(
             return
         }
         if (pageTurnInProgress) return
-        val adjacent = adjacentReaderChapters(state.chapterId, chapters)
+        val adjacent = adjacentReaderChapters(activeChapterId, chapters)
         val viewportInfo = listState.layoutInfo
         val currentPageStartIndex = listState.firstVisibleItemIndex
         val pageTargetIndex = readerPageScrollTargetIndex(
@@ -7397,6 +7407,7 @@ internal fun ReaderScreen(
             ReaderCatalogPanel(
                 state = state,
                 chapters = state.chapters,
+                currentChapterId = activeChapterId,
                 options = options,
                 catalogQuery = catalogQuery,
                 onCatalogQueryChange = onCatalogQueryChange,
@@ -7453,7 +7464,7 @@ internal fun ReaderScreen(
                     ttsVoiceOptions = appDependencies.speechEngine.voiceOptions,
                 onTtsSettingsChange = onReaderTtsSettingsChange,
                 replacementState = replacementState,
-                currentChapterOrder = readerChapterOrderForId(state.chapterId, chapters),
+                currentChapterOrder = readerChapterOrderForId(activeChapterId, chapters),
                 replacementPrefillSource = null,
                 onReplacementSourceChange = onReaderReplacementSourceChange,
                 onSaveReplacementRule = onSaveReaderReplacementRule,
@@ -7481,6 +7492,7 @@ internal fun ReaderScreen(
             ReaderActionRailV2(
                 state = state,
                 chapters = chapters,
+                currentChapterId = activeChapterId,
                 options = options,
                 selectedAction = when {
                     readerHelpVisible.value -> ReaderRailActionId.Help
@@ -7500,12 +7512,12 @@ internal fun ReaderScreen(
                 onOpenSettings = { openReaderSettings(null) },
                 onOpenTheme = { openReaderSettings(ReaderSettingsCategory.Theme) },
                 onPrevious = {
-                    adjacentReaderChapters(state.chapterId, chapters).previous?.let {
+                    adjacentReaderChapters(activeChapterId, chapters).previous?.let {
                         onOpenReader(state.bookId, it.id)
                     }
                 },
                 onNext = {
-                    adjacentReaderChapters(state.chapterId, chapters).next?.let {
+                    adjacentReaderChapters(activeChapterId, chapters).next?.let {
                         onOpenReader(state.bookId, it.id)
                     }
                 },
@@ -7626,6 +7638,7 @@ private fun ReaderCatalogPanel(
     onRetry: () -> Unit,
     onDismiss: () -> Unit,
     onOpenReader: (Long) -> Unit,
+    currentChapterId: Long = state.chapterId,
     modifier: Modifier = Modifier
 ) {
     val palette = readerPalette(options).sidebarPalette()
@@ -7647,9 +7660,9 @@ private fun ReaderCatalogPanel(
             )
             is LoadResult.Success -> {
                 val visible = filterChapters(chapters.value, catalogQuery)
-                LaunchedEffect(chapters.value, state.chapterId, catalogQuery) {
+                LaunchedEffect(chapters.value, currentChapterId, catalogQuery) {
                     if (catalogQuery.isBlank()) {
-                        readerCatalogCurrentChapterIndex(chapters.value, state.chapterId)?.let { index ->
+                        readerCatalogCurrentChapterIndex(chapters.value, currentChapterId)?.let { index ->
                             catalogListState.scrollToItem(index)
                         }
                     }
@@ -7676,7 +7689,7 @@ private fun ReaderCatalogPanel(
                         items(visible, key = { it.id }) { chapter ->
                             ReaderCatalogChapterCard(
                                 chapter = chapter,
-                                selected = chapter.id == state.chapterId,
+                                selected = chapter.id == currentChapterId,
                                 cacheState = state.chapterCacheStates[chapter.id] ?: ReaderChapterCacheState.Missing,
                                 palette = palette,
                                 onClick = { onOpenReader(chapter.id) }
@@ -8155,9 +8168,10 @@ private fun ReaderActionRailLegacy(
     ttsState: ReaderTtsState,
     onToggleFullscreen: () -> Unit,
     onOpenNavigation: () -> Unit,
+    currentChapterId: Long = state.chapterId,
     modifier: Modifier = Modifier
 ) {
-    val adjacent = adjacentReaderChapters(state.chapterId, chapters)
+    val adjacent = adjacentReaderChapters(currentChapterId, chapters)
     val labels = readerActionRailLabels()
     val palette = readerPalette(options)
     Surface(
@@ -8280,9 +8294,10 @@ private fun ReaderActionRailV2(
     ttsState: ReaderTtsState,
     onToggleFullscreen: () -> Unit,
     onOpenNavigation: () -> Unit,
+    currentChapterId: Long = state.chapterId,
     modifier: Modifier = Modifier,
 ) {
-    val adjacent = adjacentReaderChapters(state.chapterId, chapters)
+    val adjacent = adjacentReaderChapters(currentChapterId, chapters)
     val palette = readerPalette(options)
     val scrollState = androidx.compose.foundation.rememberScrollState()
     Surface(
@@ -11715,7 +11730,8 @@ private fun ReaderInfiniteScrollEnd(
     onRetryNextChapter: () -> Unit,
 ) {
     val loadedIds = chapterContents.map { it.chapterId }.toSet().ifEmpty { setOf(state.chapterId) }
-    val next = nextReaderChapterForInfiniteScroll(state.chapterId, chapters, loadedIds)
+    val edgeId = chapterContents.lastOrNull()?.chapterId ?: state.chapterId
+    val next = nextReaderChapterForInfiniteScroll(edgeId, chapters, loadedIds)
     when {
         state.loadingNextChapter -> LoadingBlock("正在加载下一章")
         state.nextChapterError != null -> ErrorBlock(
