@@ -13,9 +13,12 @@ import com.novalpie.nativeapp.model.UserInventory
 import com.novalpie.nativeapp.model.UserInventoryItem
 import com.novalpie.nativeapp.model.UserBadge
 import com.novalpie.nativeapp.model.UserQuizRewardStatus
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import java.io.IOException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -419,6 +422,140 @@ class ProfilePresentationTest {
                 display = ProfileBadgeDisplay.Hero,
             ),
         )
+    }
+
+    @Test
+    fun badgeArtworkUsesCssAssetFirstAndImageUrlAsUncroppedFallback() {
+        val cssBadge = UserBadge(
+            id = 1,
+            name = "CSS badge",
+            imageUrl = "https://cdn.example.test/fallback.webp",
+            badgeCss = "background: url('https://cdn.example.test/source.webp') center / contain no-repeat;",
+        )
+        assertEquals("https://cdn.example.test/source.webp", profileBadgeArtworkUrl(cssBadge))
+        assertEquals(ContentScale.Fit, profileBadgeArtworkContentScale(cssBadge))
+
+        val imageBadge = UserBadge(
+            id = 2,
+            name = "WebP badge",
+            imageUrl = "https://cdn.example.test/webp-badge.webp",
+        )
+        assertEquals("https://cdn.example.test/webp-badge.webp", profileBadgeArtworkUrl(imageBadge))
+        assertEquals(ContentScale.Fit, profileBadgeArtworkContentScale(imageBadge))
+
+        val cssWithFallbackImage = imageBadge.copy(
+            badgeCss = ".badge { background: linear-gradient(135deg, #050505, #150520); clip-path: polygon(15px 0%, 85% 0%, 100% 50%); }",
+        )
+        assertEquals(null, profileBadgeArtworkUrl(cssWithFallbackImage))
+    }
+
+    @Test
+    fun discussionBadgeKeepsTheWebsiteNameplateGeometryAndPseudoDecorations() {
+        val css = """
+            .badge {
+                padding: 6px 42px;
+                min-width: 100px;
+                clip-path: polygon(15px 0%, calc(100% - 15px) 0%, 100% 50%);
+                font-size: 14px;
+                letter-spacing: 2px;
+            }
+            .badge::before { content: "✷"; color: #e9d5ff; }
+            .badge::after { content: "⚜"; color: #ff3333; }
+        """.trimIndent()
+
+        val metrics = profileBadgeRenderMetrics(css, ProfileBadgeDisplay.Inline)
+        assertEquals(100, metrics.minWidthDp)
+        assertEquals(26, metrics.heightDp)
+        assertEquals(42, metrics.startPaddingDp)
+        assertEquals(42, metrics.endPaddingDp)
+        assertEquals(14, metrics.fontSizeSp)
+        assertEquals(2f, metrics.letterSpacingSp)
+        assertEquals("✷", metrics.beforeContent)
+        assertEquals("⚜", metrics.afterContent)
+        assertNotNull(metrics.beforeColor)
+        assertNotNull(metrics.afterColor)
+        assertTrue(metrics.usesHexagonShape)
+    }
+
+    @Test
+    fun discussionBadgeWithoutSourceCssFallsBackWithoutNameSpecificGeometry() {
+        val metrics = profileBadgeRenderMetrics(
+            css = null,
+            display = ProfileBadgeDisplay.Inline,
+            badgeName = "隐性知识研究会",
+        )
+
+        assertEquals(null, metrics.minWidthDp)
+        assertEquals(18, metrics.heightDp)
+        assertEquals(7, metrics.startPaddingDp)
+        assertEquals(7, metrics.endPaddingDp)
+        assertEquals(null, metrics.beforeContent)
+        assertEquals(null, metrics.afterContent)
+        assertFalse(metrics.usesOrnateNameplate)
+        assertFalse(metrics.usesHexagonShape)
+        assertEquals(2, adminShopBadgePreviewColors(null, "隐性知识研究会", null).size)
+    }
+
+    @Test
+    fun currentWebsiteThornBadgeIsRecognizedWithoutExecutingDataSvg() {
+        val css = """
+            .badge { min-width: 288px; height: 56px; background: url(\"data:image/svg+xml,%3Csvg%3E\"); }
+            .badge::before { mask-image: url(\"data:image/svg+xml,...\"); }
+        """.trimIndent()
+        assertTrue(profileBadgeCssUsesOrnateNameplate(css))
+    }
+
+    @Test fun imageBadgeKeepsTheSourceLabelInsetIncludingUnitlessZero() {
+        val metrics = profileBadgeRenderMetrics(
+            ".badge { width:160px; height:60px; padding:19px 22px 0; background:url('https://example.test/badge.webp') center / contain no-repeat transparent; }",
+            ProfileBadgeDisplay.Hero,
+        )
+        assertEquals(160, metrics.widthDp)
+        assertEquals(60, metrics.heightDp)
+        assertEquals(19, metrics.topPaddingDp)
+        assertEquals(0, metrics.bottomPaddingDp)
+        assertEquals(22, metrics.startPaddingDp)
+        assertEquals(22, metrics.endPaddingDp)
+    }
+
+    @Test fun imageBadgeHonorsTheWebsiteHiddenTextRule() {
+        assertTrue(profileBadgeCssHidesText(".badge { color:#0000; } .badge .badge__text { display:none; }"))
+        assertTrue(profileBadgeCssHidesText(".badge { color: transparent; }"))
+        assertTrue(!profileBadgeCssHidesText(".badge { color:#e8edf3; }"))
+    }
+
+    @Test
+    fun wideBadgeScalesItsArtworkAsWellAsItsContainer() {
+        assertEquals(0.75f, profileBadgeWebScale(288, 216f))
+        assertEquals(1f, profileBadgeWebScale(288, 412f))
+        val document = profileBadgeWebDocument(
+            css = ".badge { min-width:288px; height:56px; }",
+            label = "A < B",
+            widthDp = 288,
+            heightDp = 56,
+            scale = 0.75f,
+        )
+        assertTrue(document.contains("width=device-width"))
+        assertTrue(document.contains("transform:scale(0.75)"))
+        assertTrue(document.contains("width:216.0px; height:42.0px"))
+        assertTrue(document.contains("margin:0!important"))
+        assertTrue(document.contains("A &lt; B"))
+    }
+
+    @Test
+    fun badgeStyleDocumentCannotIntroduceActiveMarkupOrExternalResources() {
+        val document = profileBadgeWebDocument(
+            css = "@import url('https://example.test/theme.css'); .badge { background:url(https://example.test/image); } </style><script>alert(1)</script>",
+            label = "<img src=x onerror=alert(1)>",
+            widthDp = 288,
+            heightDp = 56,
+            scale = 1f,
+        )
+        assertFalse(document.contains("<script>"))
+        assertFalse(document.contains("<img"))
+        assertFalse(document.contains("https://example.test"))
+        assertTrue(document.contains("default-src 'none'"))
+        assertTrue(document.contains("img-src data:"))
     }
 
     @Test

@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -43,6 +44,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
@@ -60,9 +62,15 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.text.KeyboardOptions
@@ -98,6 +106,12 @@ internal fun ProfileScreen(
     onBookGridColumnsChange: (Int) -> Unit,
     downloadImageConcurrency: Int,
     onDownloadImageConcurrencyChange: (Int) -> Unit,
+    downloadCompressImages: Boolean = false,
+    onDownloadCompressImagesChange: (Boolean) -> Unit = {},
+    downloadImageQuality: Int = com.novalpie.nativeapp.data.DEFAULT_DOWNLOAD_IMAGE_QUALITY,
+    onDownloadImageQualityChange: (Int) -> Unit = {},
+    downloadZipCompressionLevel: Int = com.novalpie.nativeapp.data.DEFAULT_DOWNLOAD_ZIP_COMPRESSION_LEVEL,
+    onDownloadZipCompressionLevelChange: (Int) -> Unit = {},
     onNameChange: (String) -> Unit,
     onBioChange: (String) -> Unit,
     onShowCheckinChange: (Boolean) -> Unit,
@@ -234,7 +248,13 @@ internal fun ProfileScreen(
                         item {
                             ProfileDownloadSettingsCard(
                                 imageConcurrency = downloadImageConcurrency,
+                                compressImages = downloadCompressImages,
+                                imageQuality = downloadImageQuality,
+                                zipCompressionLevel = downloadZipCompressionLevel,
                                 onImageConcurrencyChange = onDownloadImageConcurrencyChange,
+                                onCompressImagesChange = onDownloadCompressImagesChange,
+                                onImageQualityChange = onDownloadImageQualityChange,
+                                onZipCompressionLevelChange = onDownloadZipCompressionLevelChange,
                             )
                         }
                         item {
@@ -490,9 +510,6 @@ private fun OwnProfileHero(
                         overflow = TextOverflow.Ellipsis
                     )
                     if (profile.badges.isNotEmpty()) {
-                        // The live profile places its `UserBadges size=md max=6` directly under
-                        // the username. Keep the equipped cosmetics in the identity block rather
-                        // than hiding them below the bio and account metrics.
                         ProfileBadgeRow(
                             badges = profile.badges,
                             display = ProfileBadgeDisplay.Hero,
@@ -1074,12 +1091,10 @@ private fun ProfileShopPreview(item: ShopItem, profile: UserProfile) {
 
 @Composable
 private fun ProfileBadgePreview(badge: UserBadge) {
-    // Match the source backpack's `w-24 h-24` stage. The badge itself remains inline-sized;
-    // stretching custom CSS across the stage creates empty banner-like pills that do not exist
-    // on the website.
     Box(
         modifier = Modifier
-            .size(96.dp)
+            .fillMaxWidth()
+            .height(64.dp)
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f), RoundedCornerShape(12.dp)),
         contentAlignment = Alignment.Center,
     ) {
@@ -1088,6 +1103,124 @@ private fun ProfileBadgePreview(badge: UserBadge) {
             display = ProfileBadgeDisplay.Showcase,
         )
     }
+}
+
+@Composable
+private fun ProfileArtworkBadge(
+    badge: UserBadge,
+    display: ProfileBadgeDisplay,
+    artworkUrl: String,
+    modifier: Modifier = Modifier,
+) {
+    val metrics = remember(badge.badgeCss, badge.name, badge.imageUrl, display) {
+        profileBadgeRenderMetrics(badge.badgeCss, display, badge.name, badge.imageUrl)
+    }
+    val label = remember(badge.badgeHtml, badge.name, badge.description, badge.id) {
+        adminShopBadgePreviewForeground(
+            html = badge.badgeHtml,
+            fallback = badge.name,
+            description = badge.description,
+            id = badge.id,
+        ) ?: adminShopBadgePreviewText(badge.badgeHtml, badge.name)
+    }
+    val context = LocalContext.current
+    val imageModel: Any = remember(artworkUrl, display, context) {
+        if (display == ProfileBadgeDisplay.Inline) {
+            novalPieStaticImageRequest(context, artworkUrl, widthPx = 320, heightPx = 120)
+        } else {
+            artworkUrl
+        }
+    }
+    BoxWithConstraints(modifier = modifier.semantics { contentDescription = label }) {
+        val naturalWidth = (metrics.widthDp ?: metrics.minWidthDp ?: 160).coerceIn(1, 480)
+        val naturalHeight = metrics.heightDp.coerceIn(1, 96)
+        val availableWidth = maxWidth.value.takeIf { it.isFinite() && it > 0f } ?: naturalWidth.toFloat()
+        val scale = profileBadgeWebScale(naturalWidth, availableWidth)
+        val renderedWidth = (naturalWidth * scale).coerceAtLeast(1f).dp
+        val renderedHeight = (naturalHeight * scale).coerceAtLeast(1f).dp
+        val visualSpec = profileBadgeVisualSpec(display)
+        val cornerRadius = remember(badge.badgeCss, visualSpec.maxRadiusDp) {
+            adminShopBadgePreviewCornerRadius(badge.badgeCss, visualSpec.maxRadiusDp)
+        }
+        val shape = RoundedCornerShape((cornerRadius * scale).dp)
+        Box(
+            modifier = Modifier
+                .width(renderedWidth)
+                .height(renderedHeight)
+                .clip(shape),
+            contentAlignment = Alignment.Center,
+        ) {
+            SubcomposeAsyncImage(
+                model = imageModel,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = profileBadgeArtworkContentScale(badge),
+                loading = {},
+                error = {},
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(
+                        start = (metrics.startPaddingDp * scale).dp,
+                        end = (metrics.endPaddingDp * scale).dp,
+                        top = (metrics.topPaddingDp * scale).dp,
+                        bottom = (metrics.bottomPaddingDp * scale).dp,
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                val fontScale = LocalDensity.current.fontScale.coerceAtLeast(1f)
+                if (!profileBadgeCssHidesText(badge.badgeCss)) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            shadow = Shadow(
+                                color = Color(0xFF10141C),
+                                offset = Offset(0f, 1f * scale),
+                                blurRadius = 2f * scale,
+                            ),
+                        ),
+                        fontSize = (metrics.fontSizeSp * scale / fontScale).coerceAtLeast(8f).sp,
+                        letterSpacing = (metrics.letterSpacingSp * scale).sp,
+                        fontWeight = FontWeight.Bold,
+                        color = adminShopBadgePreviewTextColor(badge.badgeCss),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The source can store artwork in either the badge CSS (usually a background-image) or the
+ * inventory's image_url field. CSS artwork wins because it is the exact asset selected by the
+ * badge style; image_url is the fallback used by the backpack when CSS has no artwork.
+ */
+internal fun profileBadgeArtworkUrl(badge: UserBadge): String? =
+    adminShopBadgePreviewBackgroundImageUrl(badge.badgeCss)
+        ?: badge.imageUrl?.takeIf {
+            // When a forum record includes both an image_url and authored CSS, the website uses
+            // the CSS nameplate. Falling back to the bitmap would hide the CSS silhouette, paint,
+            // and pseudo decorations. image_url remains the source for artwork-only badges.
+            badge.badgeCss.isNullOrBlank() || !adminShopBadgeCssDeclaresVisualGeometry(badge.badgeCss)
+        }
+
+internal fun profileBadgeArtworkContentScale(badge: UserBadge): ContentScale =
+    if (adminShopBadgePreviewBackgroundImageUrl(badge.badgeCss) != null) {
+        adminShopBadgePreviewContentScale(badge.badgeCss)
+    } else {
+        // image_url is an independently authored badge asset, not a banner to be cropped.
+        ContentScale.Fit
+    }
+
+private fun adminShopBadgeCssDeclaresVisualGeometry(css: String?): Boolean {
+    val source = adminShopBadgePreviewResolvedCss(css)
+    return Regex(
+        """(?:background(?:-color|-image)?|border(?:-radius|-color)?|clip-path|padding|min-width|width|height)\s*:""",
+        RegexOption.IGNORE_CASE,
+    ).containsMatchIn(source)
 }
 
 internal enum class ProfileBadgeDisplay {
@@ -1142,34 +1275,78 @@ internal data class ProfileBadgeRenderMetrics(
     val startPaddingDp: Int,
     val endPaddingDp: Int,
     val fontSizeSp: Int,
+    val topPaddingDp: Int = 0,
+    val bottomPaddingDp: Int = 0,
+    val minWidthDp: Int? = null,
+    val letterSpacingSp: Float = 0f,
+    val beforeContent: String? = null,
+    val afterContent: String? = null,
+    val beforeColor: Color? = null,
+    val afterColor: Color? = null,
+    val usesHexagonShape: Boolean = false,
+    val usesOrnateNameplate: Boolean = false,
 )
 
 internal fun profileBadgeRenderMetrics(
     css: String?,
     display: ProfileBadgeDisplay,
+    badgeName: String? = null,
+    imageUrl: String? = null,
 ): ProfileBadgeRenderMetrics {
     val default = profileBadgeVisualSpec(display)
     val resolvedCss = adminShopBadgePreviewResolvedCss(css)
-    val maxWidth = when (display) {
+    val isOrnateNameplate = profileBadgeCssUsesOrnateNameplate(resolvedCss)
+    val hasCssArtwork = adminShopBadgePreviewBackgroundImageUrl(resolvedCss) != null
+    val hasArtwork = isOrnateNameplate || hasCssArtwork || !imageUrl.isNullOrBlank()
+    val maxWidth = if (hasArtwork) 480 else when (display) {
         ProfileBadgeDisplay.Inline -> 144
         ProfileBadgeDisplay.Hero -> 172
         ProfileBadgeDisplay.Showcase -> 180
     }
-    val maxHeight = when (display) {
+    val maxHeight = if (hasArtwork) 96 else when (display) {
         ProfileBadgeDisplay.Inline -> 34
         ProfileBadgeDisplay.Hero -> 38
         ProfileBadgeDisplay.Showcase -> 42
     }
+    val fontSizeSp = profileBadgeCssPixels(resolvedCss, "font-size")?.coerceIn(10, 18)
+        ?: default.fontSizeSp
+    val horizontalPadding = profileBadgeCssPaddingPixels(resolvedCss, horizontal = true)
+    val verticalPadding = profileBadgeCssPaddingPixels(resolvedCss, horizontal = false)
+    val topPadding = profileBadgeCssPaddingEdgePixels(resolvedCss, top = true)
+    val bottomPadding = profileBadgeCssPaddingEdgePixels(resolvedCss, top = false)
+    val lineHeight = profileBadgeCssPixels(resolvedCss, "line-height")
+        ?: when (display) {
+            ProfileBadgeDisplay.Inline -> 14
+            ProfileBadgeDisplay.Hero -> 16
+            ProfileBadgeDisplay.Showcase -> 20
+        }
+    val cssHeight = profileBadgeCssPixels(resolvedCss, "height")
+    val measuredHeight = cssHeight
+        ?: verticalPadding?.let { (lineHeight + it * 2).coerceIn(default.heightDp, maxHeight) }
+        ?: if (hasArtwork) 60 else default.heightDp
     return ProfileBadgeRenderMetrics(
-        widthDp = profileBadgeCssPixels(resolvedCss, "width")?.coerceIn(38, maxWidth),
-        heightDp = profileBadgeCssPixels(resolvedCss, "height")?.coerceIn(16, maxHeight)
-            ?: default.heightDp,
-        startPaddingDp = profileBadgeCssPixels(resolvedCss, "padding-left")?.coerceIn(0, 24)
-            ?: default.horizontalPaddingDp,
-        endPaddingDp = profileBadgeCssPixels(resolvedCss, "padding-right")?.coerceIn(0, 24)
-            ?: default.horizontalPaddingDp,
-        fontSizeSp = profileBadgeCssPixels(resolvedCss, "font-size")?.coerceIn(10, 16)
-            ?: default.fontSizeSp,
+        widthDp = (profileBadgeCssPixels(resolvedCss, "width")
+            ?: if (imageUrl.isNullOrBlank()) null else 160)?.coerceIn(38, maxWidth),
+        heightDp = measuredHeight.coerceIn(16, maxHeight),
+        startPaddingDp = (profileBadgeCssPixels(resolvedCss, "padding-left")
+            ?: horizontalPadding
+            ?: default.horizontalPaddingDp).coerceIn(0, 64),
+        endPaddingDp = (profileBadgeCssPixels(resolvedCss, "padding-right")
+            ?: horizontalPadding
+            ?: default.horizontalPaddingDp).coerceIn(0, 64),
+        topPaddingDp = (topPadding ?: 0).coerceIn(0, 64),
+        bottomPaddingDp = (bottomPadding ?: 0).coerceIn(0, 64),
+        fontSizeSp = fontSizeSp,
+        minWidthDp = profileBadgeCssPixels(resolvedCss, "min-width")?.coerceIn(38, 320)
+            ?: null,
+        letterSpacingSp = profileBadgeCssPixels(resolvedCss, "letter-spacing")?.coerceIn(0, 8)?.toFloat()
+            ?: 0f,
+        beforeContent = profileBadgeCssPseudoContent(resolvedCss, "before"),
+        afterContent = profileBadgeCssPseudoContent(resolvedCss, "after"),
+        beforeColor = profileBadgeCssPseudoColor(resolvedCss, "before"),
+        afterColor = profileBadgeCssPseudoColor(resolvedCss, "after"),
+        usesHexagonShape = profileBadgeCssUsesHexagon(resolvedCss) && !isOrnateNameplate,
+        usesOrnateNameplate = isOrnateNameplate,
     )
 }
 
@@ -1184,6 +1361,74 @@ private fun profileBadgeCssPixels(css: String, property: String): Int? =
         ?.toFloatOrNull()
         ?.toInt()
 
+private fun profileBadgeCssPaddingPixels(css: String, horizontal: Boolean): Int? {
+    val values = profileBadgeCssPaddingValues(css) ?: return null
+    if (values.isEmpty()) return null
+    return when {
+        values.size == 1 -> values[0]
+        values.size == 2 -> if (horizontal) values[1] else values[0]
+        values.size == 3 -> if (horizontal) values[1] else values[0]
+        else -> if (horizontal) values[1] else values[0]
+    }
+}
+
+private fun profileBadgeCssPaddingEdgePixels(css: String, top: Boolean): Int? {
+    val values = profileBadgeCssPaddingValues(css) ?: return null
+    if (values.isEmpty()) return null
+    return when {
+        values.size == 1 -> values[0]
+        values.size == 2 -> if (top) values[0] else values[0]
+        values.size == 3 -> if (top) values[0] else values[2]
+        else -> if (top) values[0] else values[2]
+    }
+}
+
+/** Parses the source shorthand while retaining unitless zero (e.g. `padding: 19px 22px 0`). */
+private fun profileBadgeCssPaddingValues(css: String): List<Int>? {
+    val shorthand = Regex(
+        """(?:^|[;{}])\s*padding\s*:\s*([^;{}]+)""",
+        RegexOption.IGNORE_CASE,
+    ).find(css)?.groupValues?.getOrNull(1) ?: return null
+    return shorthand.trim().split(Regex("\\s+")).mapNotNull { token ->
+        Regex("""(\d+(?:\.\d+)?)(?:px)?\b""", RegexOption.IGNORE_CASE)
+            .matchEntire(token)?.groupValues?.getOrNull(1)?.toFloatOrNull()?.toInt()
+    }.takeIf { it.isNotEmpty() }
+}
+
+private fun profileBadgeCssPseudoRule(css: String, pseudo: String): String? =
+    Regex(
+        """\.badge\s*::${Regex.escape(pseudo)}\s*\{([^}]*)\}""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+    ).find(css)?.groupValues?.getOrNull(1)
+
+internal fun profileBadgeCssPseudoContent(css: String?, pseudo: String): String? {
+    val rule = profileBadgeCssPseudoRule(adminShopBadgePreviewResolvedCss(css), pseudo) ?: return null
+    val raw = Regex("""content\s*:\s*(['\"])(.*?)\1""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        .find(rule)?.groupValues?.getOrNull(2)
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: return null
+    return raw.replace("\\\\\"", "\"").replace("\\\\'", "'")
+}
+
+internal fun profileBadgeCssPseudoColor(css: String?, pseudo: String): Color? {
+    val rule = profileBadgeCssPseudoRule(adminShopBadgePreviewResolvedCss(css), pseudo) ?: return null
+    val token = Regex("""(?:^|[;{}\s])color\s*:\s*(#[0-9a-f]{3,6}|rgba?\([^)]*\))""", RegexOption.IGNORE_CASE)
+        .find(rule)?.groupValues?.getOrNull(1) ?: return null
+    return adminShopBadgePreviewColors("background: $token;").firstOrNull()
+}
+
+internal fun profileBadgeCssUsesHexagon(css: String?): Boolean =
+    Regex("""clip-path\s*:\s*polygon\s*\(""", RegexOption.IGNORE_CASE)
+        .containsMatchIn(adminShopBadgePreviewResolvedCss(css))
+
+/** Current discussion nameplates use a data-SVG background and masked thorn pseudo-elements. */
+internal fun profileBadgeCssUsesOrnateNameplate(css: String?): Boolean {
+    val source = adminShopBadgePreviewResolvedCss(css)
+    return source.contains("data:image/svg+xml", ignoreCase = true) &&
+        source.contains("mask-image", ignoreCase = true)
+}
+
 internal const val PROFILE_HEADER_BADGE_MAX = 6
 
 /** Source-compatible UserBadge renderer shared by the profile, forum, and comment surfaces. */
@@ -1192,37 +1437,37 @@ internal fun ProfileSourceBadge(
     badge: UserBadge,
     display: ProfileBadgeDisplay,
     modifier: Modifier = Modifier,
+    stretchToParent: Boolean = false,
 ) {
+    // The live forum's ornate badge is authored as a data-SVG background and CSS mask. Render
+    // that isolated, non-interactive style document so the native feed keeps the website's
+    // silhouette/animation instead of flattening it into a generic pill. JavaScript, navigation,
+    // cookies, and external network resources are disabled by ProfileBadgeWebView.
+    if (profileBadgeCssUsesOrnateNameplate(badge.badgeCss)) {
+        ProfileBadgeWebArtwork(
+            badge = badge,
+            display = display,
+            modifier = modifier,
+        )
+        return
+    }
+    val artworkUrl = remember(badge.badgeCss, badge.imageUrl) { profileBadgeArtworkUrl(badge) }
+    if (artworkUrl != null) {
+        ProfileArtworkBadge(
+            badge = badge,
+            display = display,
+            artworkUrl = artworkUrl,
+            modifier = modifier,
+        )
+        return
+    }
     val isShowcase = display == ProfileBadgeDisplay.Showcase
     val visualSpec = profileBadgeVisualSpec(display)
-    val renderMetrics = remember(badge.badgeCss, display) {
-        profileBadgeRenderMetrics(badge.badgeCss, display)
+    val renderMetrics = remember(badge.badgeCss, badge.name, badge.imageUrl, display) {
+        profileBadgeRenderMetrics(badge.badgeCss, display, badge.name, badge.imageUrl)
     }
     val colors = remember(badge.badgeCss, badge.name, badge.imageUrl) {
         adminShopBadgePreviewColors(badge.badgeCss, badge.name, badge.imageUrl)
-    }
-    val backgroundImageUrl = remember(badge.badgeCss) {
-        // UserBadge only uses image_url to select its fallback palette. Painting that asset as a
-        // backdrop changes the source badge into an unrelated thumbnail. Only custom CSS may
-        // provide a visual background image.
-        adminShopBadgePreviewBackgroundImageUrl(badge.badgeCss)
-    }
-    val context = LocalContext.current
-    val backgroundImageModel: Any? = remember(backgroundImageUrl, display, context) {
-        backgroundImageUrl?.let { url ->
-            if (display == ProfileBadgeDisplay.Inline) {
-                // Inline badges are repeated in every forum row; freeze their first frame so a
-                // recycled list does not keep an AnimatedImageDrawable alive per author.
-                novalPieStaticImageRequest(
-                    context = context,
-                    url = url,
-                    widthPx = 320,
-                    heightPx = 96,
-                )
-            } else {
-                url
-            }
-        }
     }
     val textColor = remember(badge.badgeCss) { adminShopBadgePreviewTextColor(badge.badgeCss) }
     val borderColor = remember(badge.badgeCss) { adminShopBadgePreviewBorderColor(badge.badgeCss) }
@@ -1239,92 +1484,354 @@ internal fun ProfileSourceBadge(
     }
     val hasDot = remember(badge.badgeHtml) { adminShopBadgePreviewHasDot(badge.badgeHtml) }
     val dotColor = remember(badge.badgeCss) { adminShopBadgePreviewDotColor(badge.badgeCss) }
-    val badgeShape = RoundedCornerShape(cornerRadius.dp)
-    val widthModifier = when {
+    val badgeShape = if (renderMetrics.usesOrnateNameplate) {
+        RoundedCornerShape(0.dp)
+    } else if (renderMetrics.usesHexagonShape) {
+        // The discussion badge used by the website is a six-sided nameplate rather than a pill.
+        // This is a passive approximation of clip-path: polygon(...); arbitrary CSS is never run.
+        GenericShape { size, _ ->
+            val cut = size.height / 2f
+            moveTo(cut, 0f)
+            lineTo(size.width - cut, 0f)
+            lineTo(size.width, size.height / 2f)
+            lineTo(size.width - cut, size.height)
+            lineTo(cut, size.height)
+            lineTo(0f, size.height / 2f)
+            close()
+        }
+    } else {
+        RoundedCornerShape(cornerRadius.dp)
+    }
+    val maxIntrinsicWidth = if (renderMetrics.minWidthDp != null ||
+        renderMetrics.beforeContent != null || renderMetrics.afterContent != null
+    ) {
+        when (display) {
+            ProfileBadgeDisplay.Inline -> 320.dp
+            ProfileBadgeDisplay.Hero -> 280.dp
+            ProfileBadgeDisplay.Showcase -> 240.dp
+        }
+    } else {
+        180.dp
+    }
+    val widthModifier = if (stretchToParent) {
+        // The website's profile header puts ordinary md badges in a vertical stretch column.
+        // Keep that profile-specific treatment separate from forum sm badges, which stay
+        // content-sized pills.
+        Modifier.fillMaxWidth()
+    } else when {
         renderMetrics.widthDp != null -> Modifier.width(renderMetrics.widthDp.dp)
-        isShowcase -> Modifier
-        else -> Modifier.widthIn(min = 38.dp, max = 180.dp)
+        isShowcase -> Modifier.widthIn(
+            min = (renderMetrics.minWidthDp ?: 0).dp,
+            max = maxIntrinsicWidth,
+        )
+        else -> Modifier.widthIn(
+            min = (renderMetrics.minWidthDp ?: 38).dp,
+            max = maxIntrinsicWidth,
+        )
+    }
+
+    val hasExplicitHeight = profileBadgeCssPixels(adminShopBadgePreviewResolvedCss(badge.badgeCss), "height") != null
+    val heightModifier = if (hasExplicitHeight || renderMetrics.usesOrnateNameplate) {
+        Modifier.height(renderMetrics.heightDp.dp)
+    } else {
+        Modifier.heightIn(min = visualSpec.heightDp.dp, max = renderMetrics.heightDp.dp)
     }
 
     Box(
         modifier = modifier
             .then(widthModifier)
-            .height(renderMetrics.heightDp.dp)
-            .shadow(visualSpec.shadowDp.dp, badgeShape, clip = false)
+            .then(heightModifier)
+            .shadow(
+                visualSpec.shadowDp.dp,
+                badgeShape,
+                clip = false,
+            )
             .clip(badgeShape)
             .background(Brush.linearGradient(colors))
-            .border(1.dp, borderColor.copy(alpha = 0.74f), badgeShape)
-            .padding(
-                start = renderMetrics.startPaddingDp.dp,
-                end = renderMetrics.endPaddingDp.dp,
-            ),
+            .border(1.dp, borderColor.copy(alpha = 0.74f), badgeShape),
         contentAlignment = Alignment.Center,
     ) {
-        if (backgroundImageModel != null) {
-            SubcomposeAsyncImage(
-                model = backgroundImageModel,
-                contentDescription = null,
-                // Background artwork must follow the text-sized badge, never take the parent's
-                // maximum width. matchParentSize keeps it visual-only during Box measurement.
-                modifier = Modifier.matchParentSize(),
-                contentScale = adminShopBadgePreviewContentScale(badge.badgeCss),
-                loading = {},
-                error = {},
-            )
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(visualSpec.contentGapDp.dp),
+        Box(
+            modifier = Modifier
+                .then(
+                    if (renderMetrics.widthDp != null || renderMetrics.minWidthDp != null) {
+                        Modifier.fillMaxSize()
+                    } else {
+                        Modifier
+                    },
+                )
+                .padding(
+                    start = renderMetrics.startPaddingDp.dp,
+                    end = renderMetrics.endPaddingDp.dp,
+                    top = (renderMetrics.topPaddingDp.coerceAtMost(3)).dp,
+                    bottom = (renderMetrics.bottomPaddingDp.coerceAtMost(3)).dp,
+                ),
+            contentAlignment = Alignment.Center,
         ) {
-            if (hasDot) {
-                Box(
-                    modifier = Modifier
-                        .size(visualSpec.dotSizeDp.dp)
-                        .clip(CircleShape)
-                        .background(dotColor)
-                        .border(1.dp, Color.White.copy(alpha = 0.34f), CircleShape),
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(visualSpec.contentGapDp.dp),
+            ) {
+                if (hasDot) {
+                    Box(
+                        modifier = Modifier
+                            .size(visualSpec.dotSizeDp.dp)
+                            .clip(CircleShape)
+                            .background(dotColor)
+                            .border(1.dp, Color.White.copy(alpha = 0.34f), CircleShape),
+                    )
+                }
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        shadow = null,
+                        platformStyle = androidx.compose.ui.text.PlatformTextStyle(includeFontPadding = false),
+                    ),
+                    fontSize = renderMetrics.fontSizeSp.sp,
+                    lineHeight = (renderMetrics.fontSizeSp + 4).sp,
+                    letterSpacing = renderMetrics.letterSpacingSp.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = textColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+        // The website positions pseudo-elements against the badge edge, not in the text flow.
+        // Keeping them as overlays also prevents a long translated badge name from pushing the
+        // ornaments into the middle of the nameplate.
+        renderMetrics.beforeContent?.let { content ->
             Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                fontSize = renderMetrics.fontSizeSp.sp,
+                text = content,
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(start = 12.dp),
+                color = renderMetrics.beforeColor ?: textColor,
+                fontSize = (renderMetrics.fontSizeSp + 4).sp,
+                lineHeight = renderMetrics.fontSizeSp.sp,
                 fontWeight = FontWeight.Bold,
-                color = textColor,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        renderMetrics.afterContent?.let { content ->
+            Text(
+                text = content,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 12.dp),
+                color = renderMetrics.afterColor ?: textColor,
+                fontSize = (renderMetrics.fontSizeSp + 4).sp,
+                lineHeight = renderMetrics.fontSizeSp.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
             )
         }
     }
 }
 
-/** Mirrors the source UserBadges component: three records followed by a compact count marker. */
+private const val PROFILE_BADGE_WEB_BASE_URL = "https://novalpie-badge.invalid/"
+
 @Composable
+private fun ProfileBadgeWebArtwork(
+    badge: UserBadge,
+    display: ProfileBadgeDisplay,
+    modifier: Modifier = Modifier,
+) {
+    val metrics = remember(badge.badgeCss, badge.name, display) {
+        profileBadgeRenderMetrics(badge.badgeCss, display, badge.name, badge.imageUrl)
+    }
+    val label = remember(badge.badgeHtml, badge.name, badge.description, badge.id) {
+        adminShopBadgePreviewForeground(
+            html = badge.badgeHtml,
+            fallback = badge.name,
+            description = badge.description,
+            id = badge.id,
+        ) ?: adminShopBadgePreviewText(badge.badgeHtml, badge.name)
+    }
+    BoxWithConstraints(modifier = modifier) {
+        val naturalWidth = (metrics.widthDp ?: metrics.minWidthDp ?: 288).coerceIn(1, 480)
+        val naturalHeight = metrics.heightDp.coerceIn(1, 96)
+        val availableWidth = maxWidth.value.takeIf { it.isFinite() && it > 0f } ?: naturalWidth.toFloat()
+        val scale = profileBadgeWebScale(naturalWidth, availableWidth)
+        val renderedWidth = (naturalWidth * scale).coerceAtLeast(1f).dp
+        val renderedHeight = (naturalHeight * scale).coerceAtLeast(1f).dp
+        val documentKey = remember(badge.badgeCss, label, naturalWidth, naturalHeight, scale) {
+            "${badge.badgeCss.orEmpty().hashCode()}:$label:$naturalWidth:$naturalHeight:$scale"
+        }
+        AndroidView(
+            modifier = Modifier
+                .width(renderedWidth)
+                .height(renderedHeight)
+                .semantics { contentDescription = label },
+            factory = { context -> ProfileBadgeWebView(context) },
+            update = { webView ->
+                if (webView.tag != documentKey) {
+                    webView.tag = documentKey
+                    webView.loadDataWithBaseURL(
+                        PROFILE_BADGE_WEB_BASE_URL,
+                        profileBadgeWebDocument(
+                            css = badge.badgeCss.orEmpty(),
+                            label = label,
+                            widthDp = naturalWidth,
+                            heightDp = naturalHeight,
+                            scale = scale,
+                        ),
+                        "text/html",
+                        "UTF-8",
+                        null,
+                    )
+                }
+            },
+            onRelease = { webView ->
+                webView.stopLoading()
+                webView.loadUrl("about:blank")
+                webView.destroy()
+            },
+        )
+    }
+}
+
+/** Keep server-authored CSS inert outside a tiny local document with no script or network. */
+internal fun profileBadgeWebScale(naturalWidth: Int, availableWidth: Float): Float =
+    (availableWidth / naturalWidth.coerceAtLeast(1).toFloat()).coerceIn(0.01f, 1f)
+
+internal fun profileBadgeCssHidesText(css: String?): Boolean {
+    val source = adminShopBadgePreviewResolvedCss(css)
+    val baseRule = Regex(
+        """(?:\.badge|^)\s*\{([^}]*)\}""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+    ).find(source)?.groupValues?.getOrNull(1).orEmpty()
+    val ruleToCheck = if (baseRule.isNotBlank()) baseRule else source
+    val transparentColor = Regex(
+        """(?:^|[;{}\s])color\s*:\s*(?:transparent|#(?:[0-9a-f]{8}(?![0-9a-f])|[0-9a-f]{4}(?![0-9a-f]))|rgba?\([^)]*,\s*0(?:\.0+)?\s*\))""",
+        RegexOption.IGNORE_CASE,
+    ).containsMatchIn(ruleToCheck)
+    val hiddenTextRule = Regex(
+        """\.badge\s+\.badge__text\s*\{[^}]*display\s*:\s*none""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+    ).containsMatchIn(source)
+    return transparentColor || hiddenTextRule
+}
+
+internal fun profileBadgeWebDocument(
+    css: String,
+    label: String,
+    widthDp: Int,
+    heightDp: Int,
+    scale: Float,
+): String {
+    val safeCss = css
+        .replace(Regex("(?is)@import[^;]*;"), "")
+        .replace(Regex("(?is)url\\(\\s*(?!['\\\"]?data:image/)[^)]*\\)"), "none")
+        .replace("<", "\\3c ")
+        .replace(">", "\\3e ")
+        .replace("</style", "<\\/style", ignoreCase = true)
+    val safeLabel = label.replace("&", "&amp;").replace("<", "&lt;")
+        .replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;")
+    val fitScale = scale.coerceIn(0.01f, 1f)
+    val fittedWidth = widthDp * fitScale
+    val fittedHeight = heightDp * fitScale
+    return """
+        <!doctype html>
+        <html><head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; connect-src 'none';">
+        <style>
+          html, body { margin:0; padding:0; width:${fittedWidth}px; height:${fittedHeight}px; overflow:hidden; background:transparent; }
+          .badge { box-sizing:border-box; }
+        </style>
+        <style>$safeCss</style>
+        <style>
+          #np-badge-stage { width:${widthDp}px; height:${heightDp}px; transform:scale($fitScale); transform-origin:0 0; }
+          #np-badge-stage > .badge { margin:0!important; box-sizing:border-box!important; width:${widthDp}px!important; min-width:0!important; max-width:${widthDp}px!important; height:${heightDp}px!important; }
+        </style>
+        </head><body><div id="np-badge-stage"><span class="badge"><span class="badge__text">$safeLabel</span></span></div></body></html>
+    """.trimIndent()
+}
+
+@Suppress("ClickableViewAccessibility")
+private class ProfileBadgeWebView(context: android.content.Context) : android.webkit.WebView(context) {
+    init {
+        settings.javaScriptEnabled = false
+        settings.domStorageEnabled = false
+        settings.loadsImagesAutomatically = true
+        settings.blockNetworkLoads = true
+        settings.blockNetworkImage = false
+        settings.allowFileAccess = false
+        settings.allowContentAccess = false
+        settings.textZoom = 100
+        isVerticalScrollBarEnabled = false
+        isHorizontalScrollBarEnabled = false
+        overScrollMode = android.view.View.OVER_SCROLL_NEVER
+        isFocusable = false
+        isClickable = false
+        isLongClickable = false
+        importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        webViewClient = object : android.webkit.WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: android.webkit.WebView?,
+                request: android.webkit.WebResourceRequest?,
+            ): Boolean = true
+
+            override fun shouldInterceptRequest(
+                view: android.webkit.WebView?,
+                request: android.webkit.WebResourceRequest?,
+            ): android.webkit.WebResourceResponse? {
+                val url = request?.url?.toString().orEmpty()
+                return if (url.startsWith("data:image/", ignoreCase = true)) {
+                    null
+                } else {
+                    android.webkit.WebResourceResponse(
+                        "text/plain",
+                        "UTF-8",
+                        java.io.ByteArrayInputStream(ByteArray(0)),
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean = false
+
+    override fun performClick(): Boolean = false
+}
+
+/** Mirrors the source UserBadges component: inline items followed by a compact count marker. */
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun ProfileBadgeRow(
     badges: List<UserBadge>,
     display: ProfileBadgeDisplay = ProfileBadgeDisplay.Inline,
     maxVisible: Int = 3,
+    modifier: Modifier = Modifier,
 ) {
     val sourceMax = maxVisible.coerceAtLeast(1)
     val visibleBadges = badges.take(sourceMax)
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        items(visibleBadges, key = { badge -> badge.id?.toString() ?: badge.name }) { badge ->
-            ProfileSourceBadge(badge = badge, display = display)
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        visibleBadges.forEach { badge ->
+            ProfileSourceBadge(
+                badge = badge,
+                display = display,
+                stretchToParent = false,
+            )
         }
         if (badges.size > visibleBadges.size) {
-            item {
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ) {
-                    Text(
-                        "+${badges.size - visibleBadges.size}",
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
+            Surface(
+                shape = RoundedCornerShape(999.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ) {
+                Text(
+                    "+${badges.size - visibleBadges.size}",
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                )
             }
         }
     }
@@ -1395,7 +1902,13 @@ private fun ProfileSettingsCard(
 @OptIn(ExperimentalLayoutApi::class)
 private fun ProfileDownloadSettingsCard(
     imageConcurrency: Int,
+    compressImages: Boolean,
+    imageQuality: Int,
+    zipCompressionLevel: Int,
     onImageConcurrencyChange: (Int) -> Unit,
+    onCompressImagesChange: (Boolean) -> Unit,
+    onImageQualityChange: (Int) -> Unit,
+    onZipCompressionLevelChange: (Int) -> Unit,
 ) {
     var customText by remember(imageConcurrency) { mutableStateOf(imageConcurrency.toString()) }
     var customError by remember { mutableStateOf(false) }
@@ -1404,13 +1917,16 @@ private fun ProfileDownloadSettingsCard(
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            Text("下载设置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+
+            // 1. 并发设置
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("下载并发", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("插图并发", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
                 Text("${imageConcurrency} 路", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
             }
@@ -1444,7 +1960,7 @@ private fun ProfileDownloadSettingsCard(
                     },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    label = { Text("自定义") },
+                    label = { Text("自定义并发") },
                     suffix = { Text("路") },
                     isError = customError,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -1465,10 +1981,94 @@ private fun ProfileDownloadSettingsCard(
             }
             if (customError) {
                 Text(
-                    "请输入正整数",
+                    "请输入正整数 (1~256)",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.error,
                 )
+            }
+
+            // 2. 压缩插图
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("压缩插图", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (compressImages) "按比例缩放至最大1080×1920并转为JPEG" else "保留原始格式与原图尺寸",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = compressImages,
+                    onCheckedChange = onCompressImagesChange,
+                )
+            }
+
+            // 3. 图片画质
+            if (compressImages) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("图片画质", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.weight(1f))
+                        Text("${imageQuality}%", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    }
+                    Slider(
+                        value = imageQuality.toFloat(),
+                        onValueChange = { onImageQualityChange(it.toInt()) },
+                        valueRange = 1f..95f,
+                        steps = 93,
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        listOf(50, 75, 85, 95).forEach { q ->
+                            FilterChip(
+                                selected = imageQuality == q,
+                                onClick = { onImageQualityChange(q) },
+                                label = { Text(if (q == 75) "75% (推荐)" else "$q%") },
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 4. ZIP 压缩级别
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("ZIP 压缩等级", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        if (zipCompressionLevel == 0) "0 (不压缩 STORE)" else "$zipCompressionLevel (DEFLATE 压缩)",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                Slider(
+                    value = zipCompressionLevel.toFloat(),
+                    onValueChange = { onZipCompressionLevelChange(it.toInt()) },
+                    valueRange = 0f..9f,
+                    steps = 8,
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    listOf(0 to "0 (极速)", 1 to "1 (快速)", 6 to "6 (标准)", 9 to "9 (极限)").forEach { (lvl, label) ->
+                        FilterChip(
+                            selected = zipCompressionLevel == lvl,
+                            onClick = { onZipCompressionLevelChange(lvl) },
+                            label = { Text(label) },
+                        )
+                    }
+                }
             }
         }
     }

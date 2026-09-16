@@ -89,7 +89,11 @@ internal fun measureChapterDocument(
                     style = if (block.heading) headingStyle else paragraphStyle,
                     softWrap = true,
                     maxLines = Int.MAX_VALUE,
-                    constraints = Constraints(maxWidth = key.widthPx),
+                    constraints = if (block.heading) {
+                        Constraints(minWidth = key.widthPx, maxWidth = key.widthPx)
+                    } else {
+                        Constraints(maxWidth = key.widthPx)
+                    },
                 )
                 layouts[block.id] = layout
                 MeasuredChapterBlock.Paragraph(

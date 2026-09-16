@@ -79,6 +79,7 @@ internal fun NativePagedReader(
     followText:String?=null,
     highlightText:String?=null,
     backgroundImageUri:String?=null,
+    onPageProgress:(Float)->Unit = {},
     comments:@Composable ()->Unit,
 ) {
     val context=LocalContext.current
@@ -103,6 +104,7 @@ internal fun NativePagedReader(
     val latestTap by rememberUpdatedState(onTap)
     val latestBoundary by rememberUpdatedState(onBoundary)
     val latestAnchor by rememberUpdatedState(onAnchor)
+    val latestProgress by rememberUpdatedState(onPageProgress)
     val touchSlop=LocalViewConfiguration.current.touchSlop
 
     fun move(direction:Int) {
@@ -132,6 +134,10 @@ internal fun NativePagedReader(
     // Local function references compare equal even when their captured catalogue flags change.
     // A lambda refreshes the callback after the asynchronous catalogue arrives.
     val latestMove by rememberUpdatedState<(Int)->Unit>({ direction -> move(direction) })
+    LaunchedEffect(pageIndex, measured, showComments) {
+        val last = measured?.plan?.pages?.lastIndex ?: return@LaunchedEffect
+        latestProgress(if (showComments) 1f else if (last <= 0) 0f else pageIndex.toFloat() / last)
+    }
     LaunchedEffect(options.showComments){if(!options.showComments)showComments=false}
     LaunchedEffect(pageIndex) {
         if(turnBusy)kotlinx.coroutines.delay(if(options.pageTurnEffect=="simulated")240 else 180)

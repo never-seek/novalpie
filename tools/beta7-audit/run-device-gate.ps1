@@ -8,12 +8,14 @@ param(
     [switch]$AllowPublicRuleWrite,
     [switch]$VerifyImageArchive,
     [switch]$VerifyFullImagePrecheck,
-    [switch]$AllowForumWrite
+    [switch]$AllowForumWrite,
+    [string]$ProcessCaseId = ''
 )
 $ErrorActionPreference = 'Stop'
 if ($TestClass -notmatch '^com\.novalpie\.nativeapp\.[A-Za-z0-9_.]+$') { throw 'Only NovalPie test classes are accepted' }
 if ($EvidenceName -notmatch '^[a-zA-Z0-9_-]+$') { throw 'Use a simple evidence name' }
 if ($BookId -lt 0 -or $ChapterId -lt 0) { throw 'Source IDs must be positive when supplied' }
+if ($ProcessCaseId -and $ProcessCaseId -notmatch '^[a-f0-9]{32}$') { throw 'Invalid process fixture id' }
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $appApk = Join-Path $repositoryRoot 'app\build\outputs\apk\debug\app-debug.apk'
 $testApk = Join-Path $repositoryRoot 'app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk'
@@ -46,6 +48,7 @@ if ($AllowPublicRuleWrite) { $instrumentArgs += @('-e', 'allowPublicRuleWrite', 
 if ($VerifyImageArchive) { $instrumentArgs += @('-e', 'verifyImageArchive', 'true'); $metadata.verifyImageArchive = $true }
 if ($VerifyFullImagePrecheck) { $instrumentArgs += @('-e', 'verifyFullImagePrecheck', 'true'); $metadata.verifyFullImagePrecheck = $true }
 if ($AllowForumWrite) { $instrumentArgs += @('-e', 'allowForumWrite', 'true'); $metadata.allowForumWrite = $true }
+if ($ProcessCaseId) { $instrumentArgs += @('-e', 'processCaseId', $ProcessCaseId); $metadata.processCaseId = $ProcessCaseId }
 $instrumentArgs += 'com.novalpie.app.debug.test/androidx.test.runner.AndroidJUnitRunner'
 $log = & $Adb @instrumentArgs 2>&1
 $logText = $log -join "`n"

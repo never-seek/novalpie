@@ -54,4 +54,27 @@ class DownloadSettingsStoreTest {
         assertNull(parseDownloadImageConcurrency("-2"))
         assertNull(parseDownloadImageConcurrency("8.5"))
     }
+
+    @Test
+    fun compressionSettingsPersistAndAreBounded() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val store = DownloadSettingsStore(context)
+
+        assertEquals(false, store.load().compressImages)
+        assertEquals(DEFAULT_DOWNLOAD_IMAGE_QUALITY, store.load().imageQuality)
+        assertEquals(DEFAULT_DOWNLOAD_ZIP_COMPRESSION_LEVEL, store.load().zipCompressionLevel)
+
+        store.save(DownloadSettings(compressImages = true, imageQuality = 85, zipCompressionLevel = 6))
+        val loaded = store.load()
+        assertEquals(true, loaded.compressImages)
+        assertEquals(85, loaded.imageQuality)
+        assertEquals(6, loaded.zipCompressionLevel)
+
+        // Bounded checks
+        store.save(DownloadSettings(imageQuality = -10, zipCompressionLevel = 99))
+        val bounded = store.load()
+        assertEquals(MIN_DOWNLOAD_IMAGE_QUALITY, bounded.imageQuality)
+        assertEquals(MAX_DOWNLOAD_ZIP_COMPRESSION_LEVEL, bounded.zipCompressionLevel)
+    }
 }
+

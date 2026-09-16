@@ -199,7 +199,7 @@ internal class ProfileViewModel(
         }
     }
     private fun refreshFailed() { state = state.copy(actionMessage = "操作已提交成功，部分资料刷新失败；请刷新查看，不要重复提交") }
-    fun environmentChanged() { environment++; generation++; heroRevision++; inventoryRevision++; draftDirty = false; editRevision = 0; tokenProfile = null; work.coroutineContext.cancelChildren(); state = ProfileState(booksGridColumns = state.booksGridColumns, downloadImageConcurrency = state.downloadImageConcurrency) }
+    fun environmentChanged() { environment++; generation++; heroRevision++; inventoryRevision++; draftDirty = false; editRevision = 0; tokenProfile = null; work.coroutineContext.cancelChildren(); state = ProfileState(booksGridColumns = state.booksGridColumns, downloadImageConcurrency = state.downloadImageConcurrency, downloadCompressImages = state.downloadCompressImages, downloadImageQuality = state.downloadImageQuality, downloadZipCompressionLevel = state.downloadZipCompressionLevel) }
     private fun publish() { (state.profile as? LoadResult.Success)?.value?.let(onProfile) }
     private suspend fun <T> attempt(action: suspend () -> T): Result<T> = try { Result.success(action()) } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { Result.failure(failure) }
     private fun <T> Result<T>.asLoad(label: String): LoadResult<T> = fold({ LoadResult.Success(it) }, { LoadResult.Error(apiFailureMessage(label, it)) })

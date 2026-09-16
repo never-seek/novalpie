@@ -713,26 +713,45 @@ class NativeEpubArchiveWriterTest {
     }
 
     @Test
-    fun usesStoredZipEntriesLikeTheWebsiteDefault() = runBlocking {
+    fun deflatesTextLosslesslyWhileMimetypeAndOriginalImagesRemainStored() = runBlocking {
         val output = ByteArrayOutputStream()
-
+        val prose = "正文无损压缩，保留标点和人物名字。".repeat(2000)
+        // Opaque binary fixtures: the archive must not decode, resize or flatten any image.
+        val originals = mapOf(
+            "png" to (byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 13, 10, 26, 10) + ByteArray(128) { it.toByte() }),
+            "gif" to ("GIF89a".toByteArray() + ByteArray(128) { (it * 13).toByte() }),
+            "webp" to ("RIFF0000WEBPANIMANMF".toByteArray() + ByteArray(128) { (it * 31).toByte() }),
+        )
         NativeEpubArchiveWriter.write(
             output = output,
             metadata = NativeEpubMetadata(title = "Stored EPUB", author = "Writer"),
-            source = StringReader("第1章\n正文"),
-            openAsset = { error("no image should be requested") },
+            source = StringReader("第1章\n$prose\n" + originals.keys.joinToString("\n") { "[图片: https://images.example.test/original.$it]" }),
+            openAsset = { url ->
+                val extension = url.substringAfterLast('.')
+                NativeEpubAsset("image/$extension", originals.getValue(extension).inputStream())
+            },
         )
-
-        ZipInputStream(ByteArrayInputStream(output.toByteArray())).use { zip ->
-            val methods = buildList {
-                while (true) {
-                    val entry = zip.nextEntry ?: break
-                    add(entry.method)
+        val file = File.createTempFile("novalpie-lossless-", ".epub")
+        try {
+            file.writeBytes(output.toByteArray())
+            java.util.zip.ZipFile(file).use { zip ->
+                val entries = zip.entries().asSequence().toList()
+                assertEquals("mimetype", entries.first().name)
+                assertEquals(ZipEntry.STORED, entries.first().method)
+                assertEquals("application/epub+zip", zip.getInputStream(entries.first()).use { it.readBytes().toString(Charsets.US_ASCII) })
+                val text = entries.filter { it.name != "mimetype" && !it.name.startsWith("OEBPS/images/") }
+                assertTrue("Chapter/XML text should use lossless Deflate", text.all { it.method == ZipEntry.DEFLATED })
+                assertTrue("Compressible prose should not be stored at its original size", text.sumOf { it.compressedSize } < text.sumOf { it.size } / 4)
+                println("LOSSLESS_EPUB textBytes=${text.sumOf { it.size }} compressedTextBytes=${text.sumOf { it.compressedSize }} originalImageBytes=${originals.values.sumOf { it.size }}")
+                assertTrue(zip.getInputStream(zip.getEntry("OEBPS/chapter-1.xhtml")).use { it.readBytes().toString(Charsets.UTF_8) }.contains(prose))
+                for ((extension, bytes) in originals) {
+                    val entry = entries.single { it.name.startsWith("OEBPS/images/") && it.name.endsWith(".$extension") }
+                    assertEquals(ZipEntry.STORED, entry.method)
+                    assertEquals(bytes.size.toLong(), entry.size)
+                    assertArrayEquals(bytes, zip.getInputStream(entry).use { it.readBytes() })
                 }
             }
-            assertTrue(methods.isNotEmpty())
-            assertTrue(methods.all { it == ZipEntry.STORED })
-        }
+        } finally { file.delete() }
     }
 
     @Test

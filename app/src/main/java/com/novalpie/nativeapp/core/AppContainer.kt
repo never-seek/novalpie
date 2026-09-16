@@ -38,6 +38,9 @@ internal class AppContainer(context: Context) {
     val uploadDrafts by lazy { com.novalpie.nativeapp.feature.upload.StoredUploadDrafts(
         com.novalpie.nativeapp.feature.upload.UploadDraftStore(File(application.noBackupFilesDir, "upload-drafts")), applicationScope) }
     val speechEngine by lazy { AndroidSpeechEngine(application,applicationScope) }
+    private val readerPreferencesDelegate = lazy { com.novalpie.nativeapp.feature.reader.preferences.ReaderPreferencesViewModel(
+        com.novalpie.nativeapp.feature.reader.preferences.WebsiteReaderPreferenceRepository(api), applicationScope) }
+    val readerPreferences by readerPreferencesDelegate
     val readingProgressSync by lazy {
         com.novalpie.nativeapp.feature.reader.progress.ReadingProgressSynchronizer(applicationScope, {environment.revision}) { bookId, chapterId ->
             api.saveReadingProgress(bookId, chapterId)
@@ -51,6 +54,7 @@ internal class AppContainer(context: Context) {
         environment.setToken(AuthSessionStore(application).loadToken())
         environment.setProxy(NetworkConfigStore(application).loadProxySettings())
         if(revision!=environment.revision) {
+            if(readerPreferencesDelegate.isInitialized()) readerPreferences.environmentChanged()
             if(playbackDelegate.isInitialized()){pendingSpeech=null;playback.stop()}
             if(downloadsDelegate.isInitialized()){pendingDownload=null;downloads.cancel()}
             if(translationsDelegate.isInitialized()){pendingTranslation=null;translations.environmentChanged()}
@@ -99,6 +103,11 @@ internal class AppContainer(context: Context) {
     val bookRepository: com.novalpie.nativeapp.feature.books.BookDetailRepository by lazy {
         com.novalpie.nativeapp.feature.books.WebsiteBookDetailRepository(api)
     }
+    fun bookManagementRepository(
+        readDocument: suspend (String) -> com.novalpie.nativeapp.ui.UploadDocument,
+        source: (com.novalpie.nativeapp.ui.UploadDocument) -> com.novalpie.nativeapp.data.UploadFileSource,
+    ): com.novalpie.nativeapp.feature.books.BookManagementRepository =
+        com.novalpie.nativeapp.feature.books.WebsiteBookManagementRepository(api, readDocument, source)
     val messagesRepository: com.novalpie.nativeapp.feature.messages.MessagesRepository by lazy {
         com.novalpie.nativeapp.feature.messages.WebsiteMessagesRepository(api)
     }

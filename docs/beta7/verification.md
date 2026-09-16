@@ -1,6 +1,14 @@
 # Beta 7 验证记录与发布门禁
 
+2026-09-13最新：以[STATUS.md](STATUS.md)为准，以下均为按日期保留的历史分片。完整1225tests/173suites全部通过；编辑器busy下标保护、书籍管理严格回执/草稿/身份、离线未知进度和EPUB文本Deflate均有先红后绿证据并经独立审查。最新521be94e优化APK已R8打包、lintDebug为0错误5警告，并在MuMu覆盖安装；44章实书EPUB/7图字节/CRC/Librera正文验收通过。剩余完整业务矩阵、黑盒自动化和发布门禁仍未闭合。
+
+09-10最新：源码1147单测/159suites全绿（73255），包含标题孤页/完整行offset、20秒初始化、12秒迟到TTS成功/取消/关闭绑定/超时，以及大书上传协议/批次检查点。30408正运行lint和优化打包；这些改动尚未实机验收。已安装旧优化包8900b7de的真实Beta6升级完整性/主界面通过见20260909-beta7-r8-runtime，不能替代本次新包。
+
 当前：**NOT READY TO RELEASE**。Beta 7 已开始接线，但以下完整发布门禁尚未完成。
+
+2026-09-09 14:49首次R8 beta候选已生成：3,227,047bytes，SHA8900b7de...8fa4f3，包ID`.debug`/原Beta6证书/2026090901/2.0.0-native-beta7、debuggable=false且无audit组件均通过verify-beta-artifact检查。还没有覆盖安装/全量业务/性能矩阵；此为产物静态门禁，不代表可发布。准备SDK-only黑盒两阶段Beta6→Beta7数据/主界面验证，避免Debug辅助组件和被R8改名的类影响判断。
+
+15:18实际升级31561：Beta6真实发布APK prepare成功，设置/离线文件摘要仅保存在App私有noBackup，未导出凭据/正文；Beta7 install-r也成功，无卸载/清数据。Verify在AndroidJUnitRunner.onCreate缺androidx.tracing.Trace而进程退出，不能当主App业务崩溃或成功。改用仅测试APK的纯Java/系统Instrumentation，目标8900b7de优化APK保持不变；待`-VerifyOnly`继续检查。同一快照保留，禁止为重做测试而强降级。
 
 2026-09-08当前事实以[CURRENT_STATE](CURRENT_STATE.md)优先：752帖基线人工全文分类已齐，当前开发包整书12.20GB/1365章/10402图完整性通过；985ee739开发包全量1077与lint通过、无损安装、翻译服务/分页5/Reader7通过。上传新分片仍在本地回归，优化包/全场景矩阵没有因此通过。下面按日期的旧记录保留出处，非最终状态。
 

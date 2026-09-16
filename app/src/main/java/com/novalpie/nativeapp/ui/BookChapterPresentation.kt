@@ -24,6 +24,11 @@ data class BookAccessPolicyDraft(
     val readThresholdValue: String = "0"
 )
 
+internal fun bookAccessPolicyDraft(policy: ManagedBookAccessPolicy): BookAccessPolicyDraft = BookAccessPolicyDraft(
+    policy.allowDownload, policy.downloadThresholdType, policy.downloadThresholdValue.toString(),
+    policy.readThresholdType, policy.readThresholdValue.toString(),
+)
+
 internal fun validateBookAccessPolicyDraft(draft: BookAccessPolicyDraft): String? {
     validateThresholdDraft(
         type = if (draft.allowDownload) draft.downloadThresholdType else "none",

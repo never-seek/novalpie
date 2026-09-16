@@ -1,237 +1,73 @@
-# NovalPie 2.0 — Android client
+# NovalPie 2.0 原生 Android 客户端
 
-> 2026-09-05：Beta 7 已开始保留外观的 Kotlin/Compose 深度重构。当前执行入口是
-> [docs/beta7/README.md](docs/beta7/README.md)。以下旧架构说明保留出处，不代替当前功能/设备验收。
+基于 Kotlin + Jetpack Compose，连接 [novalpie.cc](https://novalpie.cc) 的账号、书库、论坛和阅读服务。
 
-A native Android reader for [novalpie.cc](https://novalpie.cc): browsing and searching the catalogue,
-reading chapters, the forum, private messages, uploading and editing EPUBs, and the site's
-administration tools. Kotlin and Jetpack Compose throughout; the WebView is a fallback, not the app.
+> 2026-09-12：Beta 7 仍在重构与验收中，**尚未发布**。当前源码有 1,194 项单测通过，优化 APK 已生成；最新包尚因主机资源不足未完成 MuMu 安装复验。测试通过不等于全功能验收通过。
+>
+> 当前进度：[状态摘要](docs/beta7/STATUS.md) · [剩余交付清单](docs/beta7/REMAINING.md) · [完整需求](docs/beta7/requirements.md)。旧 README 的历史版本保留在 Git 与 `docs/history/` 中，不作为当前功能证明。
 
-The interface is Simplified Chinese only, deliberately — see [Localisation](#localisation).
+## 与网页不同的部分
 
----
+- 原生按行分页、段落断点、音量键翻页开关及无动画选项；连续阅读和分页共享章节身份，字体变化重新布局。
+- 使用 Android 系统 TTS 和播放服务；声音取决于设备安装的引擎，不捆绑付费云 TTS。
+- 公共替换规则可按书启停、逐条屏蔽；个人规则与公共规则的共享关系明确，屏蔽不删除他人贡献。
+- 原生 EPUB/TXT 可选原文或冻结的替换规则快照，保留原图和动态图字节，提供有界并发、暂停/继续、取消与下载记录。
+- 收藏与上传书籍页面提供 2/3/4 列；封面预览、书籍管理长按与正文交互按不同入口处理。
+- 新增原生网页阅读配置管理：主动保存、加载、更新、设置默认和删除；不会自动覆盖本机设置。
 
-## Getting started
+这些功能有分片测试和运行证据，但 Beta 7 全部组合、所有角色、不同屏幕与后台分支仍按验收清单关闭，不能把这份功能介绍当作最终通过报告。
 
-You need JDK 17 and the Android SDK (platform 35, build-tools 35.0.0).
+## 保留的边界
 
-```bash
+账号、内容、积分、权限和可下载范围仍由网站决定。App 不会伪造服务器缺失的章节、图片或翻译。
+
+正文不提供复制/全选；不恢复轮盘或无效“网页正文”按钮；不引入外部书源、爬虫、付费云 TTS 或横屏双页。安全验证和部分 HTML/CSS 装扮素材仍需要 WebView，主业务不以整页 WebView 代替。
+
+界面与正文已有简繁转换实现；此前“仅简体、无 UI 测试”的说明已过时。具体覆盖情况以当前 APK 证据为准。
+
+## 构建与测试
+
+需要 JDK 17、Android SDK platform 35 / build-tools 35.0.0。本项目当前锁定 Gradle 8.9 与 AGP 8.7.3。
+
+Windows PowerShell 示例：
+
+```powershell
 cd D:\NovalPie\native-android
+$env:GRADLE_USER_HOME = 'D:\NovalPie\.gradle-user-home'
+.\gradlew.bat :app:testDebugUnitTest --no-daemon --max-workers=1
+.\gradlew.bat :app:assembleBeta :app:lintDebug --no-daemon --max-workers=1
 ```
 
-```bash
-GRADLE_USER_HOME=D:\NovalPie\.gradle-sandbox ./gradlew :app:assembleDebug
-```
+缓存齐全后可加 `--offline`。低内存主机应顺序执行测试、优化编译、R8、模拟器验收，不并发启动 Gradle 和 MuMu。此前遇到的主机内存耗尽不通过删除用户数据或修改服务端协议解决。
 
-`GRADLE_USER_HOME` points at a sandbox cache used by this project. Without it Gradle uses the
-default `~/.gradle` and re-downloads everything, which works but is slow.
+- `Debug` 用于开发及组件设备测试。
+- `Beta` 开启 R8/资源优化，关闭调试，保持 Beta 6 的 `com.novalpie.app.debug` 包身份和同一签名以便覆盖安装。
+- `Release` 是独立构建配置，不能不经签名与包名校验就当作 Beta 6 的兼容升级。
+- Beta APK 输出：`app/build/outputs/apk/beta/app-beta.apk`。
+- 验包工具：`tools/beta7-audit/verify-beta-artifact.ps1`。公开证书指纹与 APK SHA-256 可以记录，私钥及凭据不进仓库。
 
-Common tasks:
+## 当前架构
 
-```bash
-GRADLE_USER_HOME=D:\NovalPie\.gradle-sandbox ./gradlew :app:testDebugUnitTest
-```
+仍为单个 `:app` 模块：
 
-```bash
-GRADLE_USER_HOME=D:\NovalPie\.gradle-sandbox ./gradlew :app:assembleRelease
-```
+- `core/`：AppContainer、会话/代理环境、公共依赖和任务组合。
+- `feature/`：已拆出的搜索、收藏、书籍详情读取、论坛、消息、个人页、管理、工作区、上传、编辑器、阅读/TTS/下载等业务组件。
+- `data/`：API 兼容字段、存储、章节会话/解密、EPUB 和文件处理。
+- `ui/`：Compose 页面、主题与导航入口。
 
-A cold build takes 5–10 minutes on a typical machine. Release builds run R8, which takes longer
-still.
+**拆分尚未全部完成。** 阅读加载/部分进度与替换动作、书籍管理和部分账号/考试逻辑仍在根 ViewModel；集中 API 和页面文件也仍较大。不要把所有文件已迁到 `feature/` 当成事实。详见[架构合同](docs/beta7/architecture-and-migration.md)。
 
-### Release signing
+章节签名、会话、AES-GCM 和响应兼容别名由协议测试保护，整理代码不能擅自更换这些协议。
 
-`assembleRelease` produces an **unsigned** APK unless you create `signing.properties` in the project
-root. That file is gitignored and never committed:
+## 验证与发布
 
-```properties
-storeFile=../keystore/novalpie.jks
-storePassword=...
-keyAlias=novalpie
-keyPassword=...
-```
+测试包含行为单测、MockWebServer 协议测试、Robolectric/Compose 测量与交互测试，以及独立的 MuMu/原生 UI 证据。字符串清单只是辅助，不能代替真实按钮、分页、TTS 发声或导出校验。
 
----
+Beta 7 交付必须满足：
 
-## Architecture
+1. 所有计划中的功能缺口与阻断缺陷关闭，并关联当前源码和 APK。
+2. 无损覆盖、当前优化包实际安装、核心流程和适配/性能验收通过。
+3. 源码提交、`v2.0.0-native-beta7` 标签、验收 APK 与 GitHub 资产哈希一致。
+4. 新建 Beta 7 Release，保留 Beta 6；中文说明列出 App 特点、网页差异和未认证的设备边界。
 
-```
-app/src/main/java/com/novalpie/nativeapp/
-├── MainActivity.kt          entry point: splash, edge-to-edge, deep links
-├── model/Models.kt          data classes for every API response
-├── data/                    network, persistence, file formats
-│   ├── NovalPieApi.kt       ~130 endpoints and their response normalisers
-│   ├── NovalPieApiException.kt
-│   ├── NetworkConfigStore.kt    proxy settings and route selection
-│   ├── AuthSessionStore.kt      the site JWT
-│   ├── *Store.kt                reader progress, settings, search history, drafts
-│   ├── Epub{Parser,Writer}.kt   EPUB import and export
-│   └── EditorProcessor.kt       chapter splitting and text transforms
-└── ui/
-    ├── NovalPieApp.kt       route dispatch and the core screens
-    ├── NovalPieViewModel.kt all application state and actions
-    ├── NovalPieTheme.kt     assembles the design system
-    ├── design/              the design system (see below)
-    ├── *Screens.kt          admin, messages, workspace, upload, exam, book editing
-    └── *Presentation.kt     pure functions turning models into display text
-```
-
-### How a screen gets its data
-
-There is a single `NovalPieViewModel`. It owns one state object per feature area (`HomeState`,
-`ForumState`, `ReaderState`, …), calls `NovalPieApi` directly, and persists through the `*Store`
-classes. `NovalPieApp.kt` reads that state and passes callbacks down.
-
-**This is not the intended end state.** `NovalPieViewModel.kt` is ~4000 lines and `NovalPieApi.kt`
-~3400, and splitting them is planned work — see
-[the refactor plan](docs/REFACTOR_PLAN_2026-07-26.md). Until then, expect to work in large files.
-
-### Navigation
-
-Routes are an `AppRoute` sealed class held in a `mutableStateListOf` stack inside the ViewModel, not
-Navigation-Compose. `goBack()` pops; `openTab()` resets. There is one shared stack rather than one
-per tab, so switching tabs discards the previous tab's history.
-
-Deep links use the `novalpie://app` scheme and currently handle `/book/{id}`,
-`/book/{id}/{chapterId}` and `/user/{id}`.
-
-### The design system
-
-`ui/design/` is where visual decisions live. Screens consume it and should not invent their own
-colours, sizes or type.
-
-| File | Contents |
-|---|---|
-| `NovalPieColors.kt` | All 36 Material 3 colour roles, light and dark. `NovalPieColorTokens` has no default values, so the compiler rejects a scheme that forgets a role. |
-| `NovalPieType.kt` | The type scale, with line heights tuned for Chinese text (~1.6 for body, against Material's Latin-oriented 1.43). |
-| `NovalPieTokens.kt` | Spacing, radius, elevation, size and motion scales. |
-| `NpChip.kt` | Metadata chips. Colour is semantic via `NpChipTone`; `NpChipRow` wraps rather than scrolling. |
-| `NpStates.kt` | `NpErrorState`, `NpEmptyState`, `NpSkeleton`. |
-| `NpComponents.kt` | `NpCard`, `NpSectionHeader`, `NpSearchField`. |
-
-Two rules carry real weight:
-
-- **Never hardcode a colour or dimension.** Use a role and a token. `ColorContrastTest` computes
-  WCAG contrast ratios and fails the build if a pair drops below AA, which is what caught the
-  previous palette's 3.53:1 body text.
-- **Colour must mean something.** `NpChipTone` exists because chips used to be coloured
-  per-call-site, so a search result showed `上传` in grey beside `已完结` and `奇幻` in another
-  colour, signifying nothing.
-
-### The reader protocol
-
-Chapter content uses a signed session the site enforces, reverse-engineered from its JavaScript:
-
-1. `GET /api/reader/session-key` with `X-Client-Signature`, `X-Client-Timestamp`, `X-Client-Nonce`
-2. `GET /api/chapters/{id}/content?session=…`
-3. Decrypt with `AES/GCM/NoPadding`, where `aesKey = SHA-256(base64Decode(session_key))`
-
-It uses a **custom base64 alphabet** and a rotate-left step over the timestamp. All of it lives in
-`NovalPieApi.kt` (`readerSignatureHeaders`, `decryptReaderContent`). Changing any detail breaks
-chapter reading outright, so treat this code as fixed unless the site changes.
-
-### Response normalisation
-
-The server returns inconsistent shapes for the same data — an array might arrive as `results`,
-`novels`, `list` or `records`; a title as `title`, `true_name` or `original_title`. The ~90
-`normalize*()` functions in `NovalPieApi.kt` accept every observed alias.
-
-**Those alias lists are a feature, not redundancy.** Trimming one to tidy the code will silently
-blank a field for some responses.
-
----
-
-## Networking
-
-By default the app talks to the site directly. A proxy can be configured in Settings, and on an
-**emulator** two development proxies (`127.0.0.1:7890`, then `10.0.2.2:7890`) are tried before the
-direct route. `isEmulatorRuntime()` gates that on `Build` markers.
-
-On a real device there is no proxy fallback. This matters: the fallbacks were previously applied
-everywhere, so every request on a real phone stalled on an unreachable emulator address for the full
-12-second connect timeout before falling through.
-
-For emulator QA, forward the port first:
-
-```bash
-adb reverse tcp:7890 tcp:7890
-```
-
----
-
-## Testing
-
-```bash
-GRADLE_USER_HOME=D:\NovalPie\.gradle-sandbox ./gradlew :app:testDebugUnitTest
-```
-
-274 tests across 53 suites. Three kinds:
-
-- **MockWebServer contract tests** cover 103 of 106 API functions, asserting request shape and
-  response normalisation. These are the safety net for changing the data layer.
-- **Presentation tests** pin the exact Chinese text pure helper functions produce.
-- **Robolectric tests** cover anything touching Android classes — including `org.json`, which ships
-  in the platform and is stubbed to throw under a plain JVM runner.
-
-There are **no UI tests yet**; no Composable is currently exercised by a test.
-
-### The string golden master
-
-```bash
-py tools/golden_strings.py
-```
-
-This extracts every user-visible string in the app and fails if one disappeared. It exists because
-the ongoing refactor moves a lot of code, and a dropped label is easy to miss and hard to notice.
-
-Adding strings is fine. Removing one fails, and if the removal is intentional it must be justified
-in [`tools/golden/REMOVALS.md`](tools/golden/REMOVALS.md) — never silently rebaselined.
-
----
-
-## Localisation
-
-The app is Simplified Chinese only, on purpose. Strings live inline in Kotlin rather than in
-`res/values/strings.xml`, and the `MissingTranslation` lint check is disabled.
-
-This is a deliberate trade, not an oversight: about 40 presentation helpers are pure functions
-returning Chinese text, pinned by fast unit tests. Externalising would force an Android `Context`
-into all of them and convert those tests to Robolectric, in exchange for a multi-language capability
-nobody wants. If the app ever needs a second language, that calculus changes.
-
-Strings were previously written as `\uXXXX` escapes, which is what made the files unreadable. They
-are now plain characters. If escapes reappear:
-
-```bash
-py tools/decode_unicode_escapes.py --check
-```
-
-One trap that tool handles: Kotlin identifiers may contain CJK letters, so `"$label已同步"` parses as
-a variable named `label已同步`. Templates followed by a CJK letter need braces — `"${label}已同步"`.
-
----
-
-## Documentation
-
-| Document | What it is for |
-|---|---|
-| [docs/REFACTOR_PLAN_2026-07-26.md](docs/REFACTOR_PLAN_2026-07-26.md) | The current refactor: diagnosis, phases, decisions, progress |
-| [docs/inventory/](docs/inventory/README.md) | ~13,000 lines cataloguing every route, endpoint, screen element and string, plus ranked correctness and design findings. The parity contract for the refactor. |
-| [docs/inventory/07-bugs.md](docs/inventory/07-bugs.md) | 33 ranked correctness findings with reproduction detail |
-| [docs/LIVE_SITE_ROUTE_API_MATRIX.md](docs/LIVE_SITE_ROUTE_API_MATRIX.md) | Website routes and API shapes observed from the live site |
-| [docs/history/](docs/history/) | The former README: a turn-by-turn build log from June–July 2026 |
-
-The build log is kept for provenance — APK hashes, runtime evidence — but it is **not** a reliable
-description of the app. It records builds passing at commits where the tree did not compile.
-
----
-
-## Current verification gaps (2026-09-05)
-
-- `NovalPieApp.kt`, `NovalPieViewModel.kt` and `NovalPieApi.kt` remain oversized and are the Beta 7 decomposition targets.
-- Native login/registration/reset-password screens, forum categories, deep links, selectable collection/upload grid density and Compose instrumentation now exist. The previous July list claiming that these were all absent was stale.
-- Current UI instrumentation is narrow. A green pure-function or API test does not prove the real reader gestures, publication APK, lifecycle, or all-role workflows.
-- System TTS needs a working Chinese engine for actual playback acceptance; MuMu currently has no default engine. Error-message handling is not speech verification.
-- Reader pagination, background downloads/TTS, source v2 profile/blocking APIs and full live-site parity are being audited; see [Beta 7 findings](docs/beta7/findings.md).
-- Reader body copying/selection is intentionally disabled by the user's later requirement. Do not restore the old selection-based replacement workflow or removed radial menu.
-- Historic files under `docs/inventory/` describe their original commits. Beta 7 must prove its own current source, APK, device and website contracts as recorded in [verification](docs/beta7/verification.md).
+旧包成功、只跑单测、模拟器无法启动时的静态验包都不能替代最终安装验收。当前发布状态始终以[状态摘要](docs/beta7/STATUS.md)为准。

@@ -421,11 +421,14 @@ class NovalPieApi(
     ): EpubDownloadTicket = withContext(Dispatchers.IO) {
         require(bookId > 0) { "书籍 ID 无效" }
         normalizeEpubDownloadTicket(
-            post(
-                "/api/downloads",
-                JSONObject()
+            request(
+                path = "/api/downloads",
+                method = "POST",
+                body = JSONObject()
                     .put("novel_id", bookId)
-                    .put("download_type", downloadType)
+                    .put("download_type", downloadType),
+                callTimeoutSeconds = DOWNLOAD_AUTHORIZATION_CALL_TIMEOUT_SECONDS,
+                readTimeoutSeconds = DOWNLOAD_AUTHORIZATION_READ_TIMEOUT_SECONDS,
             )
         )
     }
@@ -718,7 +721,8 @@ class NovalPieApi(
             status = if (spans.contains("完结")) "已完结" else "连载中",
             isAdult = source.firstBooleanOrNull("is_adult", "isAdult") ?: spans.contains("19"),
             photoUrl = normalizeAssetUrl(source.firstStringOrNull("photo_url", "photoUrl", "cover_url", "coverUrl")).orEmpty(),
-            tags = normalizeEditableBookTags(source)
+            tags = normalizeEditableBookTags(source),
+            accessPolicy = com.novalpie.nativeapp.feature.books.managedBookPolicy(source),
         )
     }
 
@@ -763,12 +767,18 @@ class NovalPieApi(
             .put("is_adult", if (request.isAdult) 1 else 0)
             .put("photo_url", request.photoUrl.trim().takeIf(String::isNotBlank) ?: JSONObject.NULL)
             .put("tags", JSONArray(request.tags.map(String::trim).filter(String::isNotBlank).distinct()))
-        val source = unwrapObject(patch("/api/users/me/novels/$bookId", body), "data", "result")
+        val acknowledgement = com.novalpie.nativeapp.feature.books.confirmedManagedBookMutation(
+            patch("/api/users/me/novels/$bookId", body)
+        )
+        if (acknowledgement.errors.isNotEmpty() && acknowledgement.failedFields.isEmpty()) {
+            throw IllegalStateException(acknowledgement.errors.joinToString("\n"))
+        }
         BookEditResult(
-            success = source.firstBooleanOrNull("success", "ok") ?: true,
-            message = source.firstStringOrNull("message", "msg", "detail"),
-            failedFields = (source.opt("failed_fields") as? JSONArray)?.toList()?.mapNotNull { it?.toString() }.orEmpty(),
-            errors = (source.opt("errors") as? JSONArray)?.toList()?.mapNotNull { it?.toString() }.orEmpty()
+            // The site acknowledges partial updates too; the UI displays failedFields explicitly.
+            success = true,
+            message = acknowledgement.message,
+            failedFields = acknowledgement.failedFields,
+            errors = acknowledgement.errors,
         )
     }
 
@@ -795,7 +805,7 @@ class NovalPieApi(
             "none" to 0
         }
         val read = normalizedThreshold(policy.readThresholdType, policy.readThresholdValue, "read")
-        normalizeForumActionResult(
+        normalizeManagedBookActionResult(
             patch(
                 "/api/users/me/novels/$bookId/permissions",
                 JSONObject()
@@ -1135,8 +1145,8 @@ class NovalPieApi(
                 price = source.longOrNull("price") ?: 0L,
                 type = source.firstStringOrNull("type", "item_type") ?: "frame",
                 imageUrl = normalizeAssetUrl(source.firstStringOrNull("image_url", "imageUrl")),
-                badgeHtml = source.firstStringOrNull("badge_html", "badgeHtml"),
-                badgeCss = source.firstStringOrNull("badge_css", "badgeCss"),
+                    badgeHtml = source.firstStringOrNull("badge_html", "badgeHtml", "html", "markup", "html_content"),
+                    badgeCss = source.firstStringOrNull("badge_css", "badgeCss", "css", "style", "style_css"),
                 isActive = source.firstBooleanOrNull("is_active", "isActive", "active") ?: false
             )
         }
@@ -2457,7 +2467,7 @@ class NovalPieApi(
 
     suspend fun reorderManagedChapters(bookId: Long, orderedChapterIds: List<Long>): ForumActionResult = withContext(Dispatchers.IO) {
         require(bookId > 0 && orderedChapterIds.isNotEmpty()) { "book and chapter ids are required" }
-        normalizeForumActionResult(
+        normalizeManagedBookActionResult(
             post(
                 "/api/users/me/chapters/reorder",
                 JSONObject()
@@ -2470,7 +2480,7 @@ class NovalPieApi(
     suspend fun insertManagedChapter(bookId: Long, insertAt: Int, title: String, content: String): ForumActionResult = withContext(Dispatchers.IO) {
         require(bookId > 0 && insertAt >= 1) { "book id and insertion position are required" }
         require(title.trim().isNotBlank() && content.trim().isNotBlank()) { "chapter title and content are required" }
-        normalizeForumActionResult(
+        normalizeManagedBookActionResult(
             post(
                 "/api/users/me/chapters/insert",
                 JSONObject()
@@ -2485,7 +2495,7 @@ class NovalPieApi(
     suspend fun updateManagedChapter(chapterId: Long, title: String, content: String): ForumActionResult = withContext(Dispatchers.IO) {
         require(chapterId > 0) { "chapter id is required" }
         require(title.trim().isNotBlank() && content.trim().isNotBlank()) { "chapter title and content are required" }
-        normalizeForumActionResult(
+        normalizeManagedBookActionResult(
             patch(
                 "/api/users/me/chapters/$chapterId",
                 JSONObject().put("title", title.trim()).put("content", content.trim())
@@ -2495,12 +2505,12 @@ class NovalPieApi(
 
     suspend fun deleteManagedChapter(chapterId: Long): ForumActionResult = withContext(Dispatchers.IO) {
         require(chapterId > 0) { "chapter id is required" }
-        normalizeForumActionResult(delete("/api/users/me/chapters/$chapterId"))
+        normalizeManagedBookActionResult(delete("/api/users/me/chapters/$chapterId"))
     }
 
     suspend fun batchDeleteManagedChapters(bookId: Long, chapterIds: List<Long>): ForumActionResult = withContext(Dispatchers.IO) {
         require(bookId > 0 && chapterIds.isNotEmpty()) { "book and chapter ids are required" }
-        normalizeForumActionResult(
+        normalizeManagedBookActionResult(
             post(
                 "/api/users/me/chapters/batch-delete",
                 JSONObject().put("novel_id", bookId).put("chapter_ids", JSONArray(chapterIds))
@@ -2515,7 +2525,7 @@ class NovalPieApi(
     ): ForumActionResult = withContext(Dispatchers.IO) {
         require(bookId > 0 && chapterIds.isNotEmpty()) { "book and chapter ids are required" }
         require(mode in setOf("personal", "shared")) { "translation mode is invalid" }
-        normalizeForumActionResult(
+        normalizeManagedBookActionResult(
             post(
                 "/api/users/me/novels/$bookId/translation-requests",
                 JSONObject().put("chapter_ids", JSONArray(chapterIds)).put("mode", mode)
@@ -2701,6 +2711,12 @@ class NovalPieApi(
             callTimeoutSeconds = callTimeoutSeconds,
             readTimeoutSeconds = readTimeoutSeconds,
         )
+    }
+
+    /** Domain adapter for the website's reader preference profiles; shares normal auth/cancellation. */
+    internal suspend fun readerPreferenceRequest(method: String, params: Map<String, String> = emptyMap(), body: JSONObject? = null): Any = withContext(Dispatchers.IO) {
+        require(method in setOf("GET", "POST", "PUT", "DELETE"))
+        request("/api/reader/settings", params = params, method = method, body = body)
     }
 
     /**
@@ -5150,24 +5166,24 @@ class NovalPieApi(
 
     private fun normalizeChapterIllustrationMutation(raw: Any): ChapterIllustrationMutationResult {
         val source = unwrapObject(raw, "data", "result")
+        val acknowledgement = com.novalpie.nativeapp.feature.books.confirmedManagedBookMutation(raw)
+        if (acknowledgement.errors.isNotEmpty()) throw IllegalStateException(acknowledgement.errors.joinToString("\n"))
         return ChapterIllustrationMutationResult(
-            success = booleanFromAny(raw)
-                ?: source.firstBooleanOrNull("success", "ok", "status")
-                ?: true,
+            success = true,
             imageCount = source.intOrNull("image_count") ?: source.intOrNull("imageCount"),
-            message = source.firstStringOrNull("message", "msg", "detail"),
-            errors = (source.opt("errors") as? JSONArray)?.toList()?.mapNotNull { it?.toString() }.orEmpty()
+            message = acknowledgement.message,
+            errors = acknowledgement.errors,
         )
     }
 
     private fun normalizeManagedBookTransfer(raw: Any): ManagedBookTransferResult {
+        val acknowledgement = com.novalpie.nativeapp.feature.books.confirmedManagedBookMutation(raw)
+        if (acknowledgement.errors.isNotEmpty()) throw IllegalStateException(acknowledgement.errors.joinToString("\n"))
         val source = unwrapObject(raw, "data", "result")
         val target = source.optJSONObject("target") ?: (raw as? JSONObject)?.optJSONObject("target")
         return ManagedBookTransferResult(
-            success = booleanFromAny(raw)
-                ?: source.firstBooleanOrNull("success", "ok", "status")
-                ?: true,
-            message = source.firstStringOrNull("message", "msg", "detail"),
+            success = true,
+            message = acknowledgement.message,
             targetUsername = source.firstStringOrNull("target_username", "targetUsername", "username")
                 ?: target?.firstStringOrNull("username", "name", "target_username", "targetUsername"),
             targetUserId = source.longOrNull("target_user_id")
@@ -5176,6 +5192,12 @@ class NovalPieApi(
                 ?: target?.longOrNull("user_id")
                 ?: target?.longOrNull("userId")
         )
+    }
+
+    private fun normalizeManagedBookActionResult(raw: Any): ForumActionResult {
+        val acknowledgement = com.novalpie.nativeapp.feature.books.confirmedManagedBookMutation(raw)
+        if (acknowledgement.errors.isNotEmpty()) throw IllegalStateException(acknowledgement.errors.joinToString("\n"))
+        return ForumActionResult(success = true, message = acknowledgement.message)
     }
 
     private fun normalizedThreshold(type: String, value: Int, label: String): Pair<String, Int> {
@@ -5659,8 +5681,8 @@ class NovalPieApi(
                             "coverUrl"
                         )
                     ),
-                    badgeHtml = firstString("badge_html", "badgeHtml"),
-                    badgeCss = firstString("badge_css", "badgeCss"),
+                    badgeHtml = firstString("badge_html", "badgeHtml", "html", "markup", "html_content"),
+                    badgeCss = firstString("badge_css", "badgeCss", "css", "style", "style_css"),
                     slot = firstString("slot", "equipment_slot", "equipmentSlot", "position"),
                     equipped = item.firstBooleanOrNull("equipped", "is_equipped", "isEquipped") == true ||
                         sourceItem?.firstBooleanOrNull("equipped", "is_equipped", "isEquipped") == true ||
@@ -5708,10 +5730,10 @@ class NovalPieApi(
                         source.firstStringOrNull("image_url", "imageUrl", "icon_url", "iconUrl")
                             ?: item.firstStringOrNull("image_url", "imageUrl", "icon_url", "iconUrl")
                     ),
-                    badgeHtml = source.firstStringOrNull("badge_html", "badgeHtml")
-                        ?: item.firstStringOrNull("badge_html", "badgeHtml"),
-                    badgeCss = source.firstStringOrNull("badge_css", "badgeCss")
-                        ?: item.firstStringOrNull("badge_css", "badgeCss")
+                    badgeHtml = source.firstStringOrNull("badge_html", "badgeHtml", "html", "markup", "html_content")
+                        ?: item.firstStringOrNull("badge_html", "badgeHtml", "html", "markup", "html_content"),
+                    badgeCss = source.firstStringOrNull("badge_css", "badgeCss", "css", "style", "style_css")
+                        ?: item.firstStringOrNull("badge_css", "badgeCss", "css", "style", "style_css")
                 )
             }
             .distinctBy(ShopItem::id)
@@ -5777,8 +5799,12 @@ class NovalPieApi(
                         imageUrl = normalizeAssetUrl(
                             source.firstStringOrNull("image_url", "imageUrl", "icon_url", "iconUrl")
                         ),
-                        badgeHtml = source.firstStringOrNull("badge_html", "badgeHtml"),
-                        badgeCss = source.firstStringOrNull("badge_css", "badgeCss"),
+                        badgeHtml = source.firstStringOrNull(
+                            "badge_html", "badgeHtml", "html", "markup", "html_content",
+                        ),
+                        badgeCss = source.firstStringOrNull(
+                            "badge_css", "badgeCss", "css", "style", "style_css",
+                        ),
                     )
                 }
                 null, JSONObject.NULL -> null
@@ -6186,6 +6212,8 @@ class NovalPieApi(
         private const val READER_CONTENT_READ_TIMEOUT_SECONDS = 45L
         private const val EPUB_DOWNLOAD_CALL_TIMEOUT_SECONDS = 15 * 60L
         private const val EPUB_DOWNLOAD_READ_TIMEOUT_SECONDS = 2 * 60L
+        private const val DOWNLOAD_AUTHORIZATION_CALL_TIMEOUT_SECONDS = 15 * 60L
+        private const val DOWNLOAD_AUTHORIZATION_READ_TIMEOUT_SECONDS = 5 * 60L
         private const val ASSET_CALL_TIMEOUT_SECONDS = 90L
         private const val ASSET_READ_TIMEOUT_SECONDS = 90L
         private const val READER_SESSION_FALLBACK_CACHE_MILLIS = 60_000L

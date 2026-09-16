@@ -251,6 +251,8 @@ internal suspend fun stageNativeEpubFile(
     input: InputStream,
     mediaType: String?,
     destination: File,
+    compressImages: Boolean = false,
+    imageQuality: Int = DEFAULT_DOWNLOAD_IMAGE_QUALITY,
     awaitIfPaused: suspend () -> Unit = {},
 ): NativeEpubStagedFile {
     val crc = CRC32()
@@ -258,50 +260,106 @@ internal suspend fun stageNativeEpubFile(
     val header = ByteArray(512)
     var headerSize = 0
     var detectedType: String? = null
-    // Never expose the destination while the network bytes are still being copied. Android's
-    // cache/filesystem can be observed by another worker (or an interrupted old job) between two
-    // reads; publishing a partially written final path lets that observer retain a bad length and
-    // later makes FileInputStream stop early even though the path metadata looks complete. The
-    // sibling temporary file is renamed only after the copy and buffered flush finish.
     val temporary = File.createTempFile("novalpie-stage-", ".part", destination.parentFile)
     input.use { source ->
         try {
             FileOutputStream(temporary).buffered().use { output ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                awaitIfPaused()
-                val read = source.read(buffer)
-                if (read < 0) break
-                if (read == 0) continue
-                output.write(buffer, 0, read)
-                crc.update(buffer, 0, read)
-                if (headerSize < header.size) {
-                    val copied = minOf(read, header.size - headerSize)
-                    System.arraycopy(buffer, 0, header, headerSize, copied)
-                    headerSize += copied
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    awaitIfPaused()
+                    val read = source.read(buffer)
+                    if (read < 0) break
+                    if (read == 0) continue
+                    output.write(buffer, 0, read)
+                    crc.update(buffer, 0, read)
+                    if (headerSize < header.size) {
+                        val copied = minOf(read, header.size - headerSize)
+                        System.arraycopy(buffer, 0, header, headerSize, copied)
+                        headerSize += copied
+                    }
+                    size += read
                 }
-                size += read
-            }
             }
             if (size <= 0L) throw IllegalStateException("图片内容为空")
             detectedType = detectNativeEpubMediaType(mediaType, header.copyOf(headerSize))
+
+            var finalFile = temporary
+            var finalSize = size
+            var finalCrc = crc.value
+
+            if (compressImages && detectedType in setOf("image/jpeg", "image/png", "image/webp")) {
+                val compressed = File.createTempFile("novalpie-compressed-", ".jpg", destination.parentFile)
+                val result = compressStagedImageIfPossible(temporary, compressed, imageQuality)
+                if (result != null) {
+                    finalFile = compressed
+                    finalSize = result.first
+                    finalCrc = result.second
+                    detectedType = "image/jpeg"
+                    temporary.delete()
+                } else {
+                    compressed.delete()
+                }
+            }
+
             if (destination.exists() && !destination.delete()) {
                 throw IllegalStateException("无法替换 EPUB 阶段文件")
             }
-            if (!temporary.renameTo(destination)) {
+            if (!finalFile.renameTo(destination)) {
                 throw IllegalStateException("无法发布 EPUB 阶段文件")
             }
+            return NativeEpubStagedFile(
+                file = destination,
+                mediaType = detectedType,
+                size = finalSize,
+                crc = finalCrc,
+            )
         } catch (failure: Throwable) {
             temporary.delete()
             throw failure
         }
     }
-    return NativeEpubStagedFile(
-        file = destination,
-        mediaType = detectedType,
-        size = size,
-        crc = crc.value,
-    )
+}
+
+internal fun compressStagedImageIfPossible(
+    sourceFile: File,
+    targetFile: File,
+    imageQuality: Int,
+    maxWidth: Int = 1080,
+    maxHeight: Int = 1920,
+): Pair<Long, Long>? {
+    return try {
+        val boundsOptions = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(sourceFile.absolutePath, boundsOptions)
+        val origW = boundsOptions.outWidth
+        val origH = boundsOptions.outHeight
+        if (origW <= 0 || origH <= 0) return null
+        val scale = minOf(1.0, maxWidth.toDouble() / origW, maxHeight.toDouble() / origH)
+        val targetW = maxOf(1, (origW * scale).toInt())
+        val targetH = maxOf(1, (origH * scale).toInt())
+        val sampleSize = maxOf(1, minOf(origW / targetW, origH / targetH))
+        val decodeOptions = android.graphics.BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        val bitmap = android.graphics.BitmapFactory.decodeFile(sourceFile.absolutePath, decodeOptions) ?: return null
+        val scaled = if (bitmap.width != targetW || bitmap.height != targetH) {
+            val s = android.graphics.Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
+            if (s != bitmap) bitmap.recycle()
+            s
+        } else {
+            bitmap
+        }
+        val quality = imageQuality.coerceIn(1, 95)
+        val crc = CRC32()
+        val bos = java.io.ByteArrayOutputStream()
+        val compressedOk = scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, bos)
+        scaled.recycle()
+        if (!compressedOk) return null
+        val bytes = bos.toByteArray()
+        if (bytes.isEmpty()) return null
+        crc.update(bytes)
+        targetFile.outputStream().use { it.write(bytes) }
+        Pair(bytes.size.toLong(), crc.value)
+    } catch (_: Throwable) {
+        null
+    }
 }
 
 /**
@@ -435,6 +493,9 @@ object NativeEpubArchiveWriter {
             NativeDownloadChapterText(title = title, body = body)
         },
         imageConcurrency: Int = DEFAULT_IMAGE_CONCURRENCY,
+        compressImages: Boolean = false,
+        imageQuality: Int = DEFAULT_DOWNLOAD_IMAGE_QUALITY,
+        zipCompressionLevel: Int = DEFAULT_DOWNLOAD_ZIP_COMPRESSION_LEVEL,
         stagingDirectory: File? = null,
         stagedAssetCacheMaxBytes: Long = DEFAULT_STAGED_ASSET_CACHE_MAX_BYTES,
         awaitIfPaused: suspend () -> Unit = {},
@@ -457,6 +518,9 @@ object NativeEpubArchiveWriter {
 
         try {
             ZipOutputStream(output.buffered()).use { zip ->
+                if (zipCompressionLevel in 1..9) {
+                    zip.setLevel(zipCompressionLevel)
+                }
                 awaitIfPaused()
                 writeStoredText(zip, "mimetype", EPUB_MIMETYPE)
                 writeText(zip, "META-INF/container.xml", containerXml())
@@ -473,6 +537,8 @@ object NativeEpubArchiveWriter {
                             openAsset = openAsset,
                             protectedKeys = setOf(coverUrl),
                             stagingDirectory = stagingDirectory,
+                            compressImages = compressImages,
+                            imageQuality = imageQuality,
                             awaitIfPaused = awaitIfPaused,
                         )
                         val record = writeStagedImage(
@@ -522,6 +588,8 @@ object NativeEpubArchiveWriter {
                         stagedAssets = stagedAssets,
                         openAsset = openAsset,
                         imageConcurrency = effectiveImageConcurrency,
+                        compressImages = compressImages,
+                        imageQuality = imageQuality,
                         stagingDirectory = stagingDirectory,
                         awaitIfPaused = awaitIfPaused,
                         nextImageNumber = { nextImageNumber++ },
@@ -699,6 +767,8 @@ object NativeEpubArchiveWriter {
         stagedAssets: NativeEpubStagedAssetCache,
         openAsset: suspend (String) -> NativeEpubAsset,
         imageConcurrency: Int,
+        compressImages: Boolean = false,
+        imageQuality: Int = DEFAULT_DOWNLOAD_IMAGE_QUALITY,
         stagingDirectory: File?,
         awaitIfPaused: suspend () -> Unit,
         nextImageNumber: () -> Int,
@@ -715,6 +785,8 @@ object NativeEpubArchiveWriter {
             stagedAssets = stagedAssets,
             openAsset = openAsset,
             imageConcurrency = imageConcurrency,
+            compressImages = compressImages,
+            imageQuality = imageQuality,
             stagingDirectory = stagingDirectory,
             awaitIfPaused = awaitIfPaused,
         )
@@ -735,6 +807,8 @@ object NativeEpubArchiveWriter {
                     openAsset = openAsset,
                     protectedKeys = matches.map(ImageMatch::url).toSet(),
                     stagingDirectory = stagingDirectory,
+                    compressImages = compressImages,
+                    imageQuality = imageQuality,
                     awaitIfPaused = awaitIfPaused,
                 )
             val record = writeStagedImage(
@@ -757,9 +831,10 @@ object NativeEpubArchiveWriter {
             val index = result.groupValues[1].toIntOrNull() ?: return@replace ""
             val record = imageRecords.getOrNull(index)
             if (record?.path != null) {
-                "<img src=\"${escapeXml(record.path)}\" alt=\"插图 ${index + 1}\" class=\"chapter-image\" />"
+                "<img class=\"chapter-image\" src=\"${escapeXml(record.path)}\" alt=\"插图\"/>"
             } else {
-                "<span class=\"image-missing\">【${escapeXml(record?.error ?: "插图获取失败")}】</span>"
+                val error = record?.error?.takeIf(String::isNotBlank) ?: "插图获取失败"
+                "<p class=\"image-missing\">[${escapeXml(error)}]</p>"
             }
         }
         return paragraphs(withImages)
@@ -800,6 +875,8 @@ object NativeEpubArchiveWriter {
         stagedAssets: NativeEpubStagedAssetCache,
         openAsset: suspend (String) -> NativeEpubAsset,
         imageConcurrency: Int,
+        compressImages: Boolean = false,
+        imageQuality: Int = DEFAULT_DOWNLOAD_IMAGE_QUALITY,
         stagingDirectory: File?,
         awaitIfPaused: suspend () -> Unit,
     ): Map<String, StagedAsset> {
@@ -824,6 +901,8 @@ object NativeEpubArchiveWriter {
                             openAsset = openAsset,
                             protectedKeys = protectedKeys,
                             stagingDirectory = stagingDirectory,
+                            compressImages = compressImages,
+                            imageQuality = imageQuality,
                             awaitIfPaused = awaitIfPaused,
                         )
                     }
@@ -852,6 +931,8 @@ object NativeEpubArchiveWriter {
         openAsset: suspend (String) -> NativeEpubAsset,
         protectedKeys: Set<String>,
         stagingDirectory: File?,
+        compressImages: Boolean = false,
+        imageQuality: Int = DEFAULT_DOWNLOAD_IMAGE_QUALITY,
         awaitIfPaused: suspend () -> Unit,
     ): StagedAsset {
         // Share only successful bytes. The website retries each descriptor independently; caching
@@ -866,7 +947,7 @@ object NativeEpubArchiveWriter {
             )
         }
         awaitIfPaused()
-        val staged = stageAssetUncached(url, openAsset, stagingDirectory, awaitIfPaused)
+        val staged = stageAssetUncached(url, openAsset, stagingDirectory, compressImages, imageQuality, awaitIfPaused)
         if (staged.file != null) {
             stagedAssets.put(
                 key = url,
@@ -886,6 +967,8 @@ object NativeEpubArchiveWriter {
         url: String,
         openAsset: suspend (String) -> NativeEpubAsset,
         stagingDirectory: File?,
+        compressImages: Boolean = false,
+        imageQuality: Int = DEFAULT_DOWNLOAD_IMAGE_QUALITY,
         awaitIfPaused: suspend () -> Unit,
     ): StagedAsset {
         var lastFailure: Throwable? = null
@@ -901,6 +984,8 @@ object NativeEpubArchiveWriter {
                     input = asset.input,
                     mediaType = asset.mediaType,
                     destination = destination,
+                    compressImages = compressImages,
+                    imageQuality = imageQuality,
                     awaitIfPaused = awaitIfPaused,
                 )
                 awaitIfPaused()
@@ -1031,7 +1116,14 @@ object NativeEpubArchiveWriter {
     }
 
     private fun writeText(zip: ZipOutputStream, path: String, text: String) {
-        writeStoredBytes(zip, path, text.toByteArray(Charsets.UTF_8))
+        // Deflate changes the container size, not the decoded text. Original image entries and
+        // the required first mimetype entry remain STORED; no image is decoded/re-encoded here.
+        zip.putNextEntry(ZipEntry(path).apply { method = ZipEntry.DEFLATED })
+        try {
+            zip.write(text.toByteArray(Charsets.UTF_8))
+        } finally {
+            zip.closeEntry()
+        }
     }
 
     private fun writeStoredBytes(zip: ZipOutputStream, path: String, bytes: ByteArray) {

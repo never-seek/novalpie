@@ -23,9 +23,10 @@ android {
         applicationId = "com.novalpie.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2026090101
-        versionName = "2.0.0-native-beta6"
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        versionCode = 2026091601
+        versionName = "2.0.0-native-beta7"
+        testInstrumentationRunner = if (providers.gradleProperty("betaBlackBox").orNull == "true")
+            "com.novalpie.nativeapp.ui.BetaSdkInstrumentation" else "androidx.test.runner.AndroidJUnitRunner"
     }
 
     if (hasSigningConfig) {
@@ -57,6 +58,18 @@ android {
             if (hasSigningConfig) {
                 signingConfig = signingConfigs.getByName("release")
             }
+        }
+        create("beta") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".debug"
+            isDebuggable = false
+            isJniDebuggable = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // Beta6 was distributed with this existing signer/package. A new certificate would
+            // force uninstall/data loss. Verify the public certificate digest before delivery.
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
         }
     }
 

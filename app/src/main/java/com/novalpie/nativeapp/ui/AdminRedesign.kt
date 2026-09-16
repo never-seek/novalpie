@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import com.novalpie.nativeapp.model.UserBadge
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -1742,39 +1743,22 @@ internal fun AdminShopPreview(item: AdminShopItem, compact: Boolean) {
                 modifier = Modifier.fillMaxSize()
             )
         } else if (item.type == "badge") {
-            val colors = remember(item.badgeCss, item.name, item.imageUrl) {
-                adminShopBadgePreviewColors(item.badgeCss, item.name, item.imageUrl)
-            }
-            val label = remember(item.badgeHtml, item.name) {
-                adminShopBadgePreviewText(item.badgeHtml, item.name)
-            }
-            val backgroundImageUrl = remember(item.badgeCss) {
-                adminShopBadgePreviewBackgroundImageUrl(item.badgeCss)
-            }
-            val textColor = remember(item.badgeCss) { adminShopBadgePreviewTextColor(item.badgeCss) }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Brush.linearGradient(colors), shape)
-                    .border(1.dp, Color.White.copy(alpha = 0.46f), shape)
                     .padding(NovalPieSpacing.xs),
                 contentAlignment = Alignment.Center
             ) {
-                if (backgroundImageUrl != null) {
-                    AsyncImage(
-                        model = backgroundImageUrl,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = adminShopBadgePreviewContentScale(item.badgeCss)
-                    )
-                }
-                Text(
-                    text = label,
-                    color = textColor,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = if (compact) 2 else 3,
-                    overflow = TextOverflow.Ellipsis
+                ProfileSourceBadge(
+                    badge = UserBadge(
+                        id = item.id.takeIf { it > 0 },
+                        name = item.name,
+                        description = item.description,
+                        imageUrl = item.imageUrl,
+                        badgeHtml = item.badgeHtml,
+                        badgeCss = item.badgeCss,
+                    ),
+                    display = if (compact) ProfileBadgeDisplay.Inline else ProfileBadgeDisplay.Showcase,
                 )
             }
         } else {
@@ -1935,8 +1919,16 @@ internal fun adminShopTypeLabel(type: String): String = when (type) {
  * shadow, or text colors so different source badges stay visually different.
  */
 internal fun adminShopBadgePreviewResolvedCss(css: String?): String {
-    val source = css.orEmpty()
+    var source = css.orEmpty().trim()
     if (source.isBlank()) return source
+    val styleBlock = Regex("""<style[^>]*>(.*?)</style>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        .find(source)?.groupValues?.getOrNull(1)
+    if (styleBlock != null) {
+        source = styleBlock
+    } else if (source.contains("<") && source.contains(">")) {
+        source = source.replace(Regex("""<[^>]*>"""), " ")
+    }
+    source = source.replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), " ")
     val variables = Regex(
         """(--[a-z0-9_-]+)\s*:\s*([^;{}]+)""",
         RegexOption.IGNORE_CASE,
@@ -2100,11 +2092,15 @@ internal fun adminShopBadgePreviewBorderColor(css: String?): Color {
 
 /** Source custom badge styles can override the default white label with `color`. */
 internal fun adminShopBadgePreviewTextColor(css: String?): Color {
-    val token = Regex("""(?:^|[;{}\s])color\s*:\s*(#[0-9a-f]{3,6}|rgba?\([^)]*\))""", RegexOption.IGNORE_CASE)
-        .find(adminShopBadgePreviewResolvedCss(css))
-        ?.groupValues
-        ?.getOrNull(1)
-        ?: return Color.White
+    val resolved = adminShopBadgePreviewResolvedCss(css)
+    val token = Regex(
+        """(?:^|[;{}\s])color\s*:\s*(transparent|#[0-9a-f]{3,8}|rgba?\([^)]*\)|[a-z]+)""",
+        RegexOption.IGNORE_CASE
+    ).find(resolved)?.groupValues?.getOrNull(1)?.trim()?.lowercase() ?: return Color.White
+    if (token == "transparent" || token == "#0000" || token == "#00000000" || token.startsWith("rgba(0,0,0,0)") || token.startsWith("rgba(0, 0, 0, 0)")) {
+        return Color.Transparent
+    }
+    if (token == "lightgreen") return Color(0xFF90EE90)
     return adminShopBadgePreviewColors("background: $token;").firstOrNull() ?: Color.White
 }
 

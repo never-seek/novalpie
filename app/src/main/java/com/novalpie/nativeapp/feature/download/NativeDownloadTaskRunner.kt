@@ -48,7 +48,7 @@ internal class NativeDownloadTaskRunner(
                 hiddenSharedRuleIds=store.loadHiddenSharedRuleIds(task.bookId),sharedRulesEnabledOverride=enabled))
             save(current.get().copy(replacementSnapshot=snapshot))
         }
-        val metadata=api.bookDetail(task.bookId)
+        val metadata=runCatching{api.bookDetail(task.bookId)}.getOrNull()
         var ticket=current.get().authorizationFile
         if(ticket==null) {
             if(!current.get().mayAuthorizeAgain)throw IOException("上次授权结果未确认，请核对下载记录后再新建任务，避免重复扣分")
@@ -109,12 +109,16 @@ internal class NativeDownloadTaskRunner(
             save(current.get().copy(sourceOnlyImages = sourceOnlyImages))
             var lastSaved=0L
             val progressLock=Any()
+            val downloadSettings = DownloadSettingsStore(app).load()
             finished.outputStream().use {output->source.reader(Charsets.UTF_8).use {reader->
-                NativeEpubArchiveWriter.write(output,NativeEpubMetadata(task.title,metadata.author ?: "未知作者",metadata.description.orEmpty(),coverUrl=metadata.coverUrl),reader,
+                NativeEpubArchiveWriter.write(output,NativeEpubMetadata(task.title,metadata?.author ?: "未知作者",metadata?.description.orEmpty(),coverUrl=metadata?.coverUrl),reader,
                     openAsset={url->openResource(assets,url,control,resourceLocks)},
                     transformChapter={number,title,body->transformed?.transform(number,title,body)?.toNativeDownloadText() ?: NativeDownloadChapterText(title,body)},
                     reconcileSourceImages=imageReconciler::reconcile,
                     imageConcurrency=effectiveDownloadConcurrency(task.requestedConcurrency,Runtime.getRuntime().maxMemory()/4),
+                    compressImages=downloadSettings.compressImages,
+                    imageQuality=downloadSettings.imageQuality,
+                    zipCompressionLevel=downloadSettings.zipCompressionLevel,
                     stagingDirectory=staging,awaitIfPaused=control::awaitIfPaused,
                     onProgress={progress->
                         synchronized(progressLock) {

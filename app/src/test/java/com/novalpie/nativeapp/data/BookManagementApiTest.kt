@@ -1,6 +1,7 @@
 package com.novalpie.nativeapp.data
 
 import com.novalpie.nativeapp.model.ManagedBookAccessPolicy
+import com.novalpie.nativeapp.model.BookEditRequest
 import com.novalpie.nativeapp.model.UploadChapter
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.runBlocking
@@ -17,6 +18,88 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class BookManagementApiTest {
+    @Test fun everyChapterManagementWriteRejectsEmptyOrDeniedAcknowledgementsWithoutRetry() = runBlocking {
+        val writes: List<Pair<String, suspend () -> Any>> = listOf(
+            "reorder" to { api.reorderManagedChapters(42, listOf(1, 2)) },
+            "insert" to { api.insertManagedChapter(42, 1, "标题", "正文") },
+            "update" to { api.updateManagedChapter(1, "标题", "正文") },
+            "delete" to { api.deleteManagedChapter(1) },
+            "batch-delete" to { api.batchDeleteManagedChapters(42, listOf(1, 2)) },
+            "translate" to { api.requestManagedChapterTranslation(42, listOf(1, 2), "shared") },
+        )
+        val accepted = mutableListOf<String>()
+        for (response in listOf("{}", """{"success":true,"result":{"success":false,"message":"拒绝"}}""")) {
+            for ((name, write) in writes) {
+                server.enqueue(jsonResponse(response))
+                if (runCatching { write() }.isSuccess) accepted += "$name: $response"
+            }
+        }
+        assertEquals(12, server.requestCount)
+        assertEquals("No unconfirmed/rejected write may enter the caller's success path", emptyList<String>(), accepted)
+    }
+
+    @Test fun outerRejectionCannotBeHiddenByAnInnerBookResult() = runBlocking {
+        server.enqueue(jsonResponse("""{"success":false,"message":"权限已撤销","data":{"id":42}}"""))
+        val result = runCatching { api.updateManagedBook(42, BookEditRequest(title = "测试", authorName = "作者")) }
+        assertTrue("A rejected write must stop the success path", result.isFailure)
+        assertEquals("权限已撤销", result.exceptionOrNull()?.message)
+    }
+
+    @Test fun aBookSaveWithoutAnAcknowledgementIsNotSuccessAndIsNotRetried() = runBlocking {
+        server.enqueue(jsonResponse("""{"data":{}}"""))
+        val result = runCatching { api.updateManagedBook(42, BookEditRequest(title = "测试", authorName = "作者")) }
+        assertTrue("Empty response must be reported as unconfirmed", result.isFailure || result.getOrNull()?.success == false)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun partialBookSaveKeepsOuterFailureFieldsAndErrorMessages() = runBlocking {
+        server.enqueue(jsonResponse("""{"success":true,"failed_fields":["title"],"errors":["不可编辑标题"],"data":{"id":42}}"""))
+        val result = api.updateManagedBook(42, BookEditRequest(title = "测试", authorName = "作者"))
+        assertEquals(listOf("title"), result.failedFields)
+        assertEquals(listOf("不可编辑标题"), result.errors)
+    }
+
+    @Test fun bookTransferWithoutAnAcknowledgementDoesNotInventASuccess() = runBlocking {
+        server.enqueue(jsonResponse("""{"data":{"target_user_id":123}}"""))
+        val result = runCatching { api.transferManagedBook(42, "123") }
+        assertTrue(result.isFailure || result.getOrNull()?.success == false)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun illustrationDeletionRequiresAnAcknowledgementEvenIfImageCountExists() = runBlocking {
+        server.enqueue(jsonResponse("""{"image_count":0}"""))
+        val result = runCatching { api.deleteManagedChapterIllustration(9001, 11) }
+        assertTrue(result.isFailure || result.getOrNull()?.success == false)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun nestedIllustrationRejectionWinsOverOuterSuccess() = runBlocking {
+        server.enqueue(jsonResponse("""{"success":true,"data":{"success":false,"message":"无权限","image_count":2}}"""))
+        val result = runCatching { api.deleteManagedChapterIllustration(9001, 11) }
+        assertTrue("A rejected image operation must not clear the current editor", result.isFailure)
+        assertEquals("无权限", result.exceptionOrNull()?.message)
+    }
+
+    @Test fun permissionSaveWithoutAnAcknowledgementDoesNotInventASuccess() = runBlocking {
+        server.enqueue(jsonResponse("{}"))
+        val result = runCatching { api.updateManagedBookAccessPolicy(42, ManagedBookAccessPolicy()) }
+        assertTrue(result.isFailure || result.getOrNull()?.success == false)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun currentBookReadAndDownloadThresholdsAreLoadedInsteadOfInventingUnrestrictedDefaults() = runBlocking {
+        server.enqueue(jsonResponse("""{"id":42,"title":"测试","author":"作者","allowDownload":false,"readThresholdType":"points_min","readThresholdValue":80,"downloadThresholdType":"none","downloadThresholdValue":0}"""))
+        val info = api.managedBookInfo(42)
+        assertEquals(ManagedBookAccessPolicy(false,"none",0,"points_min",80), info.accessPolicy)
+    }
+    @Test fun incompletePolicyIsUnknownAndCannotMasqueradeAsNoThreshold() = runBlocking {
+        server.enqueue(jsonResponse("""{"id":42,"title":"测试","allowDownload":true}"""))
+        assertEquals(null, api.managedBookInfo(42).accessPolicy)
+    }
+    @Test fun snakeCasePolicyKeepsTheAuthorsThresholds() = runBlocking {
+        server.enqueue(jsonResponse("""{"id":42,"title":"测试","allow_download":1,"read_threshold_type":"none","read_threshold_value":0,"download_threshold_type":"points_pay","download_threshold_value":30}"""))
+        assertEquals(ManagedBookAccessPolicy(true,"points_pay",30,"none",0),api.managedBookInfo(42).accessPolicy)
+    }
     private lateinit var server: MockWebServer
     private lateinit var api: NovalPieApi
 

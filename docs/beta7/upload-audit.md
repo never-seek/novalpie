@@ -73,3 +73,5 @@ VM进入恢复期间表单禁用，读取失败保留原文件、阻止默认空
 08:38最后80603完整1129unit/Debug/AndroidTest/lint全部通过8m29s，APK `BB1B1EEC9716BD8560D3E0FE97A397F059F35AA40268D0B10D8D8638BEE83D59`，正在MuMu启动后做此最终草稿小片实机复验。
 
 08:40 bb1b1eec已install-r，86986同包UploadDraftDeviceTest/UploadFeatureDeviceTest/AdminFeatureDeviceTest全部通过；恢复报告再次相同字段/0writes。最新防重复/哈希guard已包含在此包的1129单测，进程kill场景仍需独立两阶段测试。
+
+14:30真正进程恢复24654通过：Prepare通过真实GET核对登录，独立合成repo停在等待回执状态并保存草稿；确认没有真实后台服务后host am force-stop，pidof确认旧进程消失；Verify新PID2229（旧2082）恢复全部字段/章节和Uncertain，普通submit没有重发，前后真实currentUser一致。报告20260909-upload-process-report.json SHA256 `4dd33c4062619edfb6b5d172984af1a9c424323f47f1ec21a63f230b4b9fd415`。成功后只清`beta7-upload-process-f1d14fae948346c9977d9df66c3acb67`测试目录；生产草稿/登录不清、0真实上传。

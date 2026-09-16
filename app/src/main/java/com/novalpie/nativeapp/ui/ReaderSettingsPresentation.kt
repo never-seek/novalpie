@@ -478,9 +478,10 @@ internal fun ReaderSettingsControls(
     }
 
     if (category == ReaderSettingsCategory.Other) {
+        com.novalpie.nativeapp.feature.reader.preferences.ReaderPreferencesPanel(options, onOptionsChange)
         ReaderSettingsSection(title = "其他设置", textColor = textColor, metaColor = metaColor) {
             Text(
-                "阅读偏好只保存在当前设备。恢复默认不会影响网站账号、收藏、下载或阅读进度。",
+                "日常调整自动保存在当前设备，云端配置只在手动操作时同步。恢复默认不会影响网站账号、收藏、下载或阅读进度。",
                 style = MaterialTheme.typography.bodySmall,
                 color = metaColor,
             )

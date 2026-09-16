@@ -288,6 +288,9 @@ data class ProfileState(
     val bookQuery: String = "",
     val booksGridColumns: Int = 2,
     val downloadImageConcurrency: Int = com.novalpie.nativeapp.data.DEFAULT_DOWNLOAD_IMAGE_CONCURRENCY,
+    val downloadCompressImages: Boolean = false,
+    val downloadImageQuality: Int = com.novalpie.nativeapp.data.DEFAULT_DOWNLOAD_IMAGE_QUALITY,
+    val downloadZipCompressionLevel: Int = com.novalpie.nativeapp.data.DEFAULT_DOWNLOAD_ZIP_COMPRESSION_LEVEL,
     val inventory: LoadResult<UserInventory> = LoadResult.Idle,
     val shopItems: LoadResult<List<ShopItem>> = LoadResult.Idle,
     val quizReward: LoadResult<UserQuizRewardStatus> = LoadResult.Idle,
@@ -459,40 +462,6 @@ data class UploadBookState(
     val batchCheckpoint: com.novalpie.nativeapp.model.UploadBatchCheckpoint? = null,
 )
 
-data class UploadEditorState(
-    val selectedTab: EditorTab = EditorTab.Text,
-    val text: String = "",
-    val cursorPosition: Int = 0,
-    val canUndo: Boolean = false,
-    val canRedo: Boolean = false,
-    val fileName: String? = null,
-    val files: List<UploadDocument> = emptyList(),
-    val encoding: String = "UTF-8",
-    val metadata: EditorBookMetadata = EditorBookMetadata(),
-    val chapters: List<UploadChapter> = emptyList(),
-    val splitMode: EditorSplitMode = EditorSplitMode.Regex,
-    val splitPattern: String = DEFAULT_EDITOR_CHAPTER_REGEX,
-    val splitTarget: String = "3000",
-    val customScript: String = DEFAULT_EDITOR_CUSTOM_SCRIPT,
-    val scriptChunked: Boolean = false,
-    val scriptChunkSize: String = "200000",
-    val scriptRunId: Long = 0,
-    val apiEndpoint: String = "http://localhost:8000",
-    val apiTimeoutSeconds: String = "30",
-    val apiMarkerMode: EditorMarkerMode = EditorMarkerMode.Incremental,
-    val batchMode: EditorBatchMode = EditorBatchMode.Chapters,
-    val batchTarget: String = EditorBatchMode.Chapters.defaultTarget,
-    val markerValidationErrors: List<String> = emptyList(),
-    val aiConfigs: List<WorkspaceLocalApiConfig> = emptyList(),
-    val selectedAiConfigId: Long? = null,
-    val findText: String = "",
-    val replaceText: String = "",
-    val findUsesRegex: Boolean = false,
-    val archiveName: String = "",
-    val archives: List<EditorArchive> = emptyList(),
-    val busy: Boolean = false,
-    val actionMessage: String? = null
-)
 
 data class PoliticalExamState(
     val phase: PoliticalExamPhase = PoliticalExamPhase.Landing,
@@ -742,20 +711,6 @@ data class TerminologyState(
     val loadMoreError: String? = null,
 )
 
-data class BookEditState(
-    val bookId: Long = 0,
-    val info: LoadResult<BookEditInfo> = LoadResult.Idle,
-    val permissions: LoadResult<BookEditPermissions> = LoadResult.Idle,
-    val draft: BookEditDraft = BookEditDraft(),
-    val accessPolicyDraft: BookAccessPolicyDraft = BookAccessPolicyDraft(),
-    val transferIdentifier: String = "",
-    val saving: Boolean = false,
-    val uploadingCover: Boolean = false,
-    val savingAccessPolicy: Boolean = false,
-    val transferringBook: Boolean = false,
-    val actionMessage: String? = null
-)
-
 data class BookChapterManagerState(
     val bookId: Long = 0,
     val chapters: LoadResult<List<Chapter>> = LoadResult.Idle,
@@ -1001,8 +956,6 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private val profileBooksSettingsStore = ProfileBooksSettingsStore(application)
     private val downloadSettingsStore = DownloadSettingsStore(application)
     private val workspaceLocalStore = WorkspaceLocalStore(application)
-    private val editorArchiveStore = EditorArchiveStore(application)
-    private val editorDocumentHistory = EditorDocumentHistory()
 
     var proxySettings by mutableStateOf(networkConfigStore.loadProxySettings())
         private set
@@ -1022,7 +975,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     private val searchFeature = SearchViewModel(
         WebsiteSearchRepository(api),StoredSearchPreferences(searchSettingsStore,searchHistoryStore),
     )
-    private val navigator = AppNavigator(readerSessionRouteStack(startupReaderSession))
+    private var managedEntryJob: kotlinx.coroutines.Job? = null
+    private val navigator = AppNavigator(readerSessionRouteStack(startupReaderSession), ::cancelManagedBookEntry)
+
+    private fun cancelManagedBookEntry() {
+        managedEntryJob?.cancel()
+        managedEntryJob = null
+    }
     private val routes:List<AppRoute> get() = navigator.entries
     private val forumFeature=com.novalpie.nativeapp.feature.forum.ForumFeedViewModel(dependencies.forumFeedRepository)
     private val forumPostFeature = com.novalpie.nativeapp.feature.forum.ForumPostViewModel(dependencies.forumPostRepository)
@@ -1032,7 +991,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     )
     private val bookDetailRequestSerial:Long get()=bookFeature.revision
     private var terminologyRequestSerial = 0L
-    private var bookEditRequestSerial = 0L
+    private val bookManagementFeature = com.novalpie.nativeapp.feature.books.BookManagementViewModel(
+        dependencies.bookManagementRepository(::readUploadDocument, { uploadSource(it) }),
+        environmentRevision = { dependencies.environment.revision },
+        onSaved = { id -> if (currentRoute == AppRoute.BookEditInfo(id)) loadBookDetail(id) },
+    )
     private var bookChapterRequestSerial = 0L
     private val publicProfileFeature = com.novalpie.nativeapp.feature.profile.PublicProfileViewModel(dependencies.publicProfileRepository)
     private val adminFeature = com.novalpie.nativeapp.feature.admin.AdminViewModel(dependencies.adminRepository, { isAdminProfile(currentUserProfile()) })
@@ -1050,8 +1013,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         drafts = dependencies.uploadDrafts,
         accountId = { authToken?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0)?.id } },
     )
-    private var editorRequestSerial = 0L
-    private var editorProcessorRequestSerial = 0L
+    private val editorFeature = com.novalpie.nativeapp.feature.editor.EditorViewModel(
+        com.novalpie.nativeapp.feature.editor.AndroidEditorRepository(application, api, ::readUploadDocument, { uploadSource(it) }))
     private var authRequestSerial = 0L
     private var readerRequestSerial = 0L
     private var readerCatalogRequestSerial = 0L
@@ -1094,6 +1057,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         ProfileState(
             booksGridColumns = initialProfileBooksSettings.gridColumns,
             downloadImageConcurrency = initialDownloadSettings.imageConcurrency,
+            downloadCompressImages = initialDownloadSettings.compressImages,
+            downloadImageQuality = initialDownloadSettings.imageQuality,
+            downloadZipCompressionLevel = initialDownloadSettings.zipCompressionLevel,
         ), onProfile = ::publishHomeUserProfile,
     )
     var profileState: ProfileState
@@ -1118,8 +1084,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         get() = workspaceFeature.state
         private set(value) { workspaceFeature.present { value } }
     val uploadBookState: UploadBookState get() = uploadFeature.state
-    var uploadEditorState by mutableStateOf(UploadEditorState(archives = editorArchiveStore.list()))
-        private set
+    val uploadEditorState: UploadEditorState get() = editorFeature.uploadEditorState
     var politicalExamState by mutableStateOf(PoliticalExamState())
         private set
     var authState by mutableStateOf(AuthState())
@@ -1155,8 +1120,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         private set
     var terminologyState by mutableStateOf(TerminologyState())
         private set
-    var bookEditState by mutableStateOf(BookEditState())
-        private set
+    val bookEditState: BookEditState get() = bookManagementFeature.state
     var bookChapterManagerState by mutableStateOf(BookChapterManagerState())
         private set
     var readerCatalogQuery by mutableStateOf("")
@@ -1224,13 +1188,16 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             var previous=authToken to proxySettings
             snapshotFlow {authToken to proxySettings}.collect {next->
-                if(next!=previous){previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged();libraryFeature.environmentChanged();bookFeature.environmentChanged()
+                if(next!=previous){
+                    val editorAccountChanged = previous.first?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0)?.id } != next.first?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0)?.id }
+                    previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged();libraryFeature.environmentChanged();bookFeature.environmentChanged()
                     messageInboxFeature.environmentChanged();messageDetailFeature.environmentChanged();conversationFeature.environmentChanged();messageSettingsFeature.environmentChanged()
                     profileFeature.environmentChanged()
                     publicProfileFeature.environmentChanged()
                     workspaceFeature.environmentChanged()
                     forumPostFeature.environmentChanged()
                     uploadFeature.environmentChanged()
+                    editorFeature.environmentChanged(editorAccountChanged)
                     adminFeature.environmentChanged()
                     nativeEpubDownloadState = NativeEpubDownloadState()
                     replacementLoadRevision++;pendingReaderReplacementCreates.clear();deletedPendingReaderReplacementCreates.clear()
@@ -2329,12 +2296,17 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             host = proxyHost.trim().ifBlank { ProxySettings.DEFAULT_PROXY_HOST },
             port = proxyPortText.toIntOrNull()?.coerceIn(1, 65535) ?: ProxySettings.DEFAULT_PROXY_PORT
         )
+        val changed = proxySettings != next
         proxySettings = next
         proxyEnabled = next.enabled
         proxyHost = next.host
         proxyPortText = next.port.toString()
         networkConfigStore.saveProxySettings(next)
         AppContainer.from(getApplication()).refreshEnvironmentFromStores()
+        if (changed) {
+            cancelManagedBookEntry()
+            bookManagementFeature.environmentChanged(accountChanged = false)
+        }
         configureNovalPieImageLoader(getApplication(), next)
         loadHome()
     }
@@ -2342,12 +2314,14 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     fun saveCapturedAuthToken(token: String) {
         val normalized = token.trim()
         if (normalized.isBlank() || normalized == authToken) return
+        val previousToken = authToken
         // A token change may switch away from an administrator account. Close any already-open
         // management surface before the replacement account has been resolved.
         sanitizeAdminSurfaceIfNeeded(isAdmin = false)
         authSessionStore.saveToken(normalized)
         authToken = normalized
         AppContainer.from(getApplication()).refreshEnvironmentFromStores()
+        notifyBookManagementAuthChange(previousToken, normalized)
         loadHome()
     }
 
@@ -2355,9 +2329,19 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         authSessionStore.clearToken()
         authToken = null
         AppContainer.from(getApplication()).refreshEnvironmentFromStores()
+        cancelManagedBookEntry()
+        bookManagementFeature.environmentChanged(accountChanged = true)
         profileFeature.environmentChanged()
         sanitizeAdminSurfaceIfNeeded(isAdmin = false)
         loadHome()
+    }
+
+    private fun notifyBookManagementAuthChange(previous: String?, next: String?) {
+        cancelManagedBookEntry()
+        val previousId = previous?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0)?.id }
+        val nextId = next?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0)?.id }
+        val sameAccount = previousId != null && previousId == nextId
+        bookManagementFeature.environmentChanged(accountChanged = !sameAccount)
     }
 
     fun openTab(tab: BottomTab) {
@@ -2459,12 +2443,51 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     fun updateDownloadImageConcurrency(value: Int) {
         val normalized = com.novalpie.nativeapp.data.normalizeDownloadImageConcurrency(value)
         if (profileState.downloadImageConcurrency == normalized) return
+        val current = downloadSettingsStore.load()
         downloadSettingsStore.save(
-            com.novalpie.nativeapp.data.DownloadSettings(imageConcurrency = normalized),
+            current.copy(imageConcurrency = normalized),
         )
         profileState = profileState.copy(
             downloadImageConcurrency = normalized,
             actionMessage = "下载并发已设为 ${normalized} 路",
+        )
+    }
+
+    fun updateDownloadCompressImages(value: Boolean) {
+        if (profileState.downloadCompressImages == value) return
+        val current = downloadSettingsStore.load()
+        downloadSettingsStore.save(
+            current.copy(compressImages = value),
+        )
+        profileState = profileState.copy(
+            downloadCompressImages = value,
+            actionMessage = if (value) "已开启插图压缩" else "已关闭插图压缩（保留原图）",
+        )
+    }
+
+    fun updateDownloadImageQuality(value: Int) {
+        val normalized = com.novalpie.nativeapp.data.normalizeDownloadImageQuality(value)
+        if (profileState.downloadImageQuality == normalized) return
+        val current = downloadSettingsStore.load()
+        downloadSettingsStore.save(
+            current.copy(imageQuality = normalized),
+        )
+        profileState = profileState.copy(
+            downloadImageQuality = normalized,
+            actionMessage = "图片画质已设为 ${normalized}%",
+        )
+    }
+
+    fun updateDownloadZipCompressionLevel(value: Int) {
+        val normalized = com.novalpie.nativeapp.data.normalizeDownloadZipCompressionLevel(value)
+        if (profileState.downloadZipCompressionLevel == normalized) return
+        val current = downloadSettingsStore.load()
+        downloadSettingsStore.save(
+            current.copy(zipCompressionLevel = normalized),
+        )
+        profileState = profileState.copy(
+            downloadZipCompressionLevel = normalized,
+            actionMessage = if (normalized == 0) "ZIP压缩级别已设为 0 (不压缩)" else "ZIP压缩级别已设为 ${normalized}",
         )
     }
 
@@ -2845,842 +2868,117 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun openUploadEditor() {
-        val aiConfigs = workspaceLocalStore.loadApis()
-            .filter { it.endpoint.isNotBlank() && it.model.isNotBlank() && it.apiKey.isNotBlank() }
-        val selectedAiConfigId = uploadEditorState.selectedAiConfigId
-            ?.takeIf { selected -> aiConfigs.any { it.id == selected } }
-            ?: aiConfigs.firstOrNull()?.id
-        uploadEditorState = uploadEditorState.copy(
-            archives = editorArchiveStore.list(),
-            aiConfigs = aiConfigs,
-            selectedAiConfigId = selectedAiConfigId,
-            actionMessage = null
-        )
+        editorFeature.openUploadEditor()
         navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.UploadEditor))
     }
 
-    fun selectEditorTab(tab: EditorTab) {
-        uploadEditorState = uploadEditorState.copy(selectedTab = tab, actionMessage = null)
-    }
+    fun selectEditorTab(tab: EditorTab) = editorFeature.selectEditorTab(tab)
 
-    private fun editorSnapshot(state: UploadEditorState) = EditorDocumentSnapshot(
-        text = state.text,
-        cursorPosition = state.cursorPosition,
-        chapters = state.chapters.toList(),
-        markerValidationErrors = state.markerValidationErrors.toList()
-    )
+    fun updateEditorDocument(value: String, cursorPosition: Int) = editorFeature.updateEditorDocument(value, cursorPosition)
 
-    private fun withEditorHistoryFlags(state: UploadEditorState) = state.copy(
-        canUndo = editorDocumentHistory.canUndo,
-        canRedo = editorDocumentHistory.canRedo
-    )
+    fun updateEditorText(value: String) = editorFeature.updateEditorText(value)
 
-    private fun commitEditorDocumentChange(
-        previous: UploadEditorState,
-        updated: UploadEditorState
-    ): UploadEditorState {
-        editorDocumentHistory.record(editorSnapshot(previous), editorSnapshot(updated))
-        return withEditorHistoryFlags(updated)
-    }
+    fun updateEditorCursor(position: Int) = editorFeature.updateEditorCursor(position)
 
-    private fun replaceEditorDocument(updated: UploadEditorState): UploadEditorState {
-        editorDocumentHistory.clear()
-        return withEditorHistoryFlags(updated)
-    }
+    fun undoEditorDocument() = editorFeature.undoEditorDocument()
 
-    private fun restoreEditorDocument(
-        state: UploadEditorState,
-        snapshot: EditorDocumentSnapshot,
-        actionMessage: String
-    ): UploadEditorState = withEditorHistoryFlags(
-        state.copy(
-            text = snapshot.text,
-            cursorPosition = snapshot.cursorPosition.coerceIn(0, snapshot.text.length),
-            chapters = snapshot.chapters,
-            markerValidationErrors = snapshot.markerValidationErrors,
-            selectedTab = if (snapshot.chapters.isEmpty()) EditorTab.Text else EditorTab.Chapters,
-            actionMessage = actionMessage
-        )
-    )
+    fun redoEditorDocument() = editorFeature.redoEditorDocument()
 
-    /** Atomic text/selection updates keep a history snapshot at the exact caret position. */
-    fun updateEditorDocument(value: String, cursorPosition: Int) {
-        val state = uploadEditorState
-        val textChanged = value != state.text
-        val updated = state.copy(
-            text = value,
-            cursorPosition = cursorPosition.coerceIn(0, value.length),
-            chapters = if (textChanged) emptyList() else state.chapters,
-            markerValidationErrors = if (textChanged) emptyList() else state.markerValidationErrors,
-            selectedTab = if (textChanged) EditorTab.Text else state.selectedTab,
-            actionMessage = null
-        )
-        uploadEditorState = if (textChanged) commitEditorDocumentChange(state, updated) else withEditorHistoryFlags(updated)
-    }
+    fun updateEditorEncoding(value: String) = editorFeature.updateEditorEncoding(value)
 
-    fun updateEditorText(value: String) {
-        updateEditorDocument(value, uploadEditorState.cursorPosition)
-    }
+    fun updateEditorMetadata(value: EditorBookMetadata) = editorFeature.updateEditorMetadata(value)
 
-    fun updateEditorCursor(position: Int) {
-        uploadEditorState = withEditorHistoryFlags(uploadEditorState.copy(
-            cursorPosition = position.coerceIn(0, uploadEditorState.text.length)
-        ))
-    }
+    fun updateEditorSplitMode(value: EditorSplitMode) = editorFeature.updateEditorSplitMode(value)
 
-    fun undoEditorDocument() {
-        val state = uploadEditorState
-        if (state.busy) return
-        val previous = editorDocumentHistory.undo(editorSnapshot(state)) ?: return
-        uploadEditorState = restoreEditorDocument(state, previous, "撤销上一步编辑")
-    }
+    fun updateEditorSplitPattern(value: String) = editorFeature.updateEditorSplitPattern(value)
 
-    fun redoEditorDocument() {
-        val state = uploadEditorState
-        if (state.busy) return
-        val next = editorDocumentHistory.redo(editorSnapshot(state)) ?: return
-        uploadEditorState = restoreEditorDocument(state, next, "重做上一步编辑")
-    }
+    fun updateEditorSplitTarget(value: String) = editorFeature.updateEditorSplitTarget(value)
 
-    fun updateEditorEncoding(value: String) {
-        uploadEditorState = uploadEditorState.copy(encoding = value, actionMessage = null)
-    }
+    fun updateEditorCustomScript(value: String) = editorFeature.updateEditorCustomScript(value)
 
-    fun updateEditorMetadata(value: EditorBookMetadata) {
-        uploadEditorState = uploadEditorState.copy(metadata = value, actionMessage = null)
-    }
+    fun updateEditorScriptChunked(value: Boolean) = editorFeature.updateEditorScriptChunked(value)
 
-    fun updateEditorSplitMode(value: EditorSplitMode) {
-        uploadEditorState = uploadEditorState.copy(splitMode = value, actionMessage = null)
-    }
+    fun updateEditorScriptChunkSize(value: String) = editorFeature.updateEditorScriptChunkSize(value)
 
-    fun updateEditorSplitPattern(value: String) {
-        uploadEditorState = uploadEditorState.copy(splitPattern = value, actionMessage = null)
-    }
+    fun updateEditorApiEndpoint(value: String) = editorFeature.updateEditorApiEndpoint(value)
 
-    fun updateEditorSplitTarget(value: String) {
-        uploadEditorState = uploadEditorState.copy(splitTarget = value.filter(Char::isDigit), actionMessage = null)
-    }
+    fun updateEditorApiTimeout(value: String) = editorFeature.updateEditorApiTimeout(value)
 
-    fun updateEditorCustomScript(value: String) {
-        uploadEditorState = uploadEditorState.copy(customScript = value, actionMessage = null)
-    }
+    fun updateEditorApiMarkerMode(value: EditorMarkerMode) = editorFeature.updateEditorApiMarkerMode(value)
 
-    fun updateEditorScriptChunked(value: Boolean) {
-        uploadEditorState = uploadEditorState.copy(scriptChunked = value, actionMessage = null)
-    }
+    fun updateEditorBatchMode(value: EditorBatchMode) = editorFeature.updateEditorBatchMode(value)
 
-    fun updateEditorScriptChunkSize(value: String) {
-        uploadEditorState = uploadEditorState.copy(scriptChunkSize = value.filter(Char::isDigit), actionMessage = null)
-    }
+    fun updateEditorBatchTarget(value: String) = editorFeature.updateEditorBatchTarget(value)
 
-    fun updateEditorApiEndpoint(value: String) {
-        uploadEditorState = uploadEditorState.copy(apiEndpoint = value, actionMessage = null)
-    }
+    fun selectEditorAiConfig(id: Long) = editorFeature.selectEditorAiConfig(id)
 
-    fun updateEditorApiTimeout(value: String) {
-        uploadEditorState = uploadEditorState.copy(apiTimeoutSeconds = value.filter(Char::isDigit), actionMessage = null)
-    }
+    fun generateEditorRegexWithAi() = editorFeature.generateEditorRegexWithAi()
 
-    fun updateEditorApiMarkerMode(value: EditorMarkerMode) {
-        uploadEditorState = uploadEditorState.copy(apiMarkerMode = value, actionMessage = null)
-    }
+    fun updateEditorFind(value: String) = editorFeature.updateEditorFind(value)
 
-    fun updateEditorBatchMode(value: EditorBatchMode) {
-        val state = uploadEditorState
-        val target = if (state.batchTarget == state.batchMode.defaultTarget) value.defaultTarget else state.batchTarget
-        uploadEditorState = state.copy(batchMode = value, batchTarget = target, actionMessage = null)
-    }
+    fun updateEditorReplace(value: String) = editorFeature.updateEditorReplace(value)
 
-    fun updateEditorBatchTarget(value: String) {
-        uploadEditorState = uploadEditorState.copy(batchTarget = value.filter(Char::isDigit), actionMessage = null)
-    }
+    fun updateEditorFindUsesRegex(value: Boolean) = editorFeature.updateEditorFindUsesRegex(value)
 
-    fun selectEditorAiConfig(id: Long) {
-        if (uploadEditorState.aiConfigs.none { it.id == id }) return
-        uploadEditorState = uploadEditorState.copy(selectedAiConfigId = id, actionMessage = null)
-    }
+    fun updateEditorArchiveName(value: String) = editorFeature.updateEditorArchiveName(value)
 
-    fun generateEditorRegexWithAi() {
-        val state = uploadEditorState
-        if (state.busy) return
-        if (state.chapters.size < 2) {
-            uploadEditorState = state.copy(actionMessage = "请先生成至少两个章节标题")
-            return
-        }
-        val config = state.aiConfigs.firstOrNull { it.id == state.selectedAiConfigId }
-        if (config == null) {
-            uploadEditorState = state.copy(actionMessage = "请先在工作区保存可用的本地 API 配置")
-            return
-        }
-        uploadEditorState = state.copy(busy = true, actionMessage = "正在生成章节正则…")
-        viewModelScope.launch {
-            val result = runCatching {
-                api.generateEditorRegex(
-                    endpoint = config.endpoint,
-                    apiKey = config.apiKey,
-                    model = config.model,
-                    chapterTitles = state.chapters.take(20).map { it.title }
-                )
-            }
-            val updated = result.fold(
-                onSuccess = { regex ->
-                    uploadEditorState.copy(
-                        splitMode = EditorSplitMode.Regex,
-                        splitPattern = regex,
-                        selectedTab = EditorTab.Split,
-                        busy = false,
-                        actionMessage = "AI 已生成正则，请检查后再执行分章"
-                    )
-                },
-                onFailure = { failure ->
-                    uploadEditorState.copy(
-                        busy = false,
-                        actionMessage = apiFailureMessage("AI 生成正则", failure)
-                    )
-                }
-            )
-        }
-    }
+    fun queueEditorDocuments(rawUris: List<String>) = editorFeature.queueEditorDocuments(rawUris)
 
-    fun updateEditorFind(value: String) {
-        uploadEditorState = uploadEditorState.copy(findText = value, actionMessage = null)
-    }
+    fun removeQueuedEditorDocument(rawUri: String) = editorFeature.removeQueuedEditorDocument(rawUri)
 
-    fun updateEditorReplace(value: String) {
-        uploadEditorState = uploadEditorState.copy(replaceText = value, actionMessage = null)
-    }
+    fun selectEditorDocument(rawUri: String) = editorFeature.selectEditorDocument(rawUri)
 
-    fun updateEditorFindUsesRegex(value: Boolean) {
-        uploadEditorState = uploadEditorState.copy(findUsesRegex = value, actionMessage = null)
-    }
+    fun importQueuedEditorDocuments() = editorFeature.importQueuedEditorDocuments()
 
-    fun updateEditorArchiveName(value: String) {
-        uploadEditorState = uploadEditorState.copy(archiveName = value, actionMessage = null)
-    }
+    fun processEditorSplit() = editorFeature.processEditorSplit()
 
-    fun queueEditorDocuments(rawUris: List<String>) {
-        if (uploadEditorState.busy || rawUris.isEmpty()) return
-        val serial = ++editorRequestSerial
-        uploadEditorState = uploadEditorState.copy(busy = true, actionMessage = "正在加入文件…")
-        viewModelScope.launch {
-            val result = runCatching {
-                val documents = mutableListOf<UploadDocument>()
-                for (rawUri in rawUris.distinct()) {
-                    documents += readUploadDocument(rawUri)
-                }
-                documents
-            }
-            if (!isFreshRequestSerial(serial, editorRequestSerial)) return@launch
-            uploadEditorState = result.fold(
-                onSuccess = { documents ->
-                    val previous = uploadEditorState.files.associateBy(UploadDocument::uri)
-                    val merged = (previous.values + documents).distinctBy(UploadDocument::uri)
-                    uploadEditorState.copy(
-                        files = merged,
-                        selectedTab = EditorTab.Files,
-                        busy = false,
-                        actionMessage = "已加入 ${documents.size} 个文件"
-                    )
-                },
-                onFailure = { failure ->
-                    uploadEditorState.copy(busy = false, actionMessage = apiFailureMessage("加入编辑文件", failure))
-                }
-            )
-        }
-    }
+    fun insertEditorTitleMarkerAtCursor() = editorFeature.insertEditorTitleMarkerAtCursor()
 
-    fun removeQueuedEditorDocument(rawUri: String) {
-        if (uploadEditorState.busy) return
-        val updated = uploadEditorState.files.filterNot { it.uri == rawUri }
-        if (updated.size == uploadEditorState.files.size) return
-        uploadEditorState = uploadEditorState.copy(files = updated, actionMessage = "文件已移除")
-    }
+    fun insertEditorContentMarkerAtCursor() = editorFeature.insertEditorContentMarkerAtCursor()
 
-    fun selectEditorDocument(rawUri: String) {
-        if (uploadEditorState.busy) return
-        val serial = ++editorRequestSerial
-        uploadEditorState = uploadEditorState.copy(busy = true, actionMessage = "正在打开文件…")
-        viewModelScope.launch {
-            val result = runCatching {
-                val document = readUploadDocument(rawUri)
-                if (document.displayName.endsWith(".epub", ignoreCase = true)) {
-                    val parsed = withContext(Dispatchers.IO) { EpubParser.parse(uploadSource(document)) }
-                    EditorLoadResult(
-                        document = document,
-                        text = EditorProcessor.toWebsiteIdentifiers(parsed.chapters),
-                        metadata = EditorBookMetadata(
-                            title = parsed.title,
-                            author = parsed.author,
-                            description = parsed.description,
-                            language = parsed.language
-                        ),
-                        chapters = parsed.chapters
-                    )
-                } else {
-                    EditorLoadResult(
-                        document = document,
-                        text = readEditorText(document, uploadEditorState.encoding),
-                        metadata = uploadEditorState.metadata,
-                        chapters = emptyList()
-                    )
-                }
-            }
-            if (!isFreshRequestSerial(serial, editorRequestSerial)) return@launch
-            uploadEditorState = result.fold(
-                onSuccess = { loaded ->
-                    replaceEditorDocument(uploadEditorState.copy(
-                        text = loaded.text,
-                        cursorPosition = 0,
-                        fileName = loaded.document.displayName,
-                        files = (uploadEditorState.files + loaded.document).distinctBy(UploadDocument::uri),
-                        metadata = loaded.metadata,
-                        chapters = loaded.chapters,
-                        markerValidationErrors = emptyList(),
-                        selectedTab = if (loaded.chapters.isEmpty()) EditorTab.Text else EditorTab.Chapters,
-                        busy = false,
-                        actionMessage = if (loaded.chapters.isEmpty()) "文件已加载，请配置分章规则" else "EPUB 已加载，共 ${loaded.chapters.size} 章"
-                    ))
-                },
-                onFailure = { failure ->
-                    uploadEditorState.copy(busy = false, actionMessage = apiFailureMessage("打开编辑文件", failure))
-                }
-            )
-        }
-    }
+    fun insertEditorChapterAtCursor() = editorFeature.insertEditorChapterAtCursor()
 
-    fun importQueuedEditorDocuments() {
-        val state = uploadEditorState
-        if (state.busy) return
-        if (state.files.isEmpty()) {
-            uploadEditorState = state.copy(actionMessage = "请先在文件面板添加 .txt、.md、.epub 或 .zip 文件")
-            return
-        }
-        val serial = ++editorRequestSerial
-        uploadEditorState = state.copy(busy = true, actionMessage = "正在批量导入 ${state.files.size} 个文件…")
-        viewModelScope.launch {
-            val result = runCatching { importEditorDocuments(state.files, state.encoding) }
-            if (!isFreshRequestSerial(serial, editorRequestSerial)) return@launch
-            uploadEditorState = result.fold(
-                onSuccess = { chapters ->
-                    val fileName = if (state.files.size == 1) state.files.single().displayName
-                    else "批量导入（${state.files.size} 个文件）"
-                    replaceEditorDocument(state.copy(
-                        text = EditorProcessor.toWebsiteIdentifiers(chapters),
-                        cursorPosition = 0,
-                        fileName = fileName,
-                        chapters = chapters,
-                        markerValidationErrors = emptyList(),
-                        selectedTab = EditorTab.Chapters,
-                        busy = false,
-                        actionMessage = "已从 ${state.files.size} 个文件导入 ${chapters.size} 章"
-                    ))
-                },
-                onFailure = { failure ->
-                    uploadEditorState.copy(busy = false, actionMessage = apiFailureMessage("批量导入编辑文件", failure))
-                }
-            )
-        }
-    }
+    fun deleteEditorChapterAtCursor() = editorFeature.deleteEditorChapterAtCursor()
 
-    fun processEditorSplit() {
-        val state = uploadEditorState
-        if (state.text.isBlank()) {
-            uploadEditorState = state.copy(actionMessage = "请先加载或输入文本")
-            return
-        }
-        editorSplitTargetError(
-            state.splitMode,
-            editorSplitPattern(state),
-            editorSplitTarget(state),
-            state.customScript,
-            state.scriptChunked,
-            state.scriptChunkSize
-        )?.let { error ->
-            uploadEditorState = state.copy(actionMessage = error)
-            return
-        }
-        if (state.splitMode == EditorSplitMode.CustomScript) {
-            uploadEditorState = state.copy(
-                busy = true,
-                scriptRunId = state.scriptRunId + 1,
-                actionMessage = "正在本地沙箱执行脚本…"
-            )
-            return
-        }
-        if (state.splitMode == EditorSplitMode.ApiProcess) {
-            processEditorThroughApi(state)
-            return
-        }
-        if (state.splitMode == EditorSplitMode.Manual) {
-            uploadEditorState = state.copy(actionMessage = "请使用下方的标识符手动工具")
-            return
-        }
-        val result = runCatching {
-            when (state.splitMode) {
-                EditorSplitMode.Regex -> EditorProcessor.splitByRegex(
-                    state.text,
-                    state.splitPattern.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
-                )
-                EditorSplitMode.MarkdownH1 -> EditorProcessor.splitByMarkdown(state.text, 1)
-                EditorSplitMode.MarkdownH2 -> EditorProcessor.splitByMarkdown(state.text, 2)
-                EditorSplitMode.KeywordNumber -> EditorProcessor.splitByKeywordNumber(
-                    state.text,
-                    state.splitPattern.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
-                )
-                EditorSplitMode.CharacterCount -> EditorProcessor.splitByCharacterCount(state.text, state.splitTarget.toInt())
-                EditorSplitMode.ParagraphCount -> EditorProcessor.splitByParagraphCount(state.text, state.splitTarget.toInt())
-                EditorSplitMode.BatchGenerate -> when (state.batchMode) {
-                    EditorBatchMode.Paragraphs -> EditorProcessor.splitByParagraphCount(state.text, state.batchTarget.toInt())
-                    EditorBatchMode.Characters -> EditorProcessor.splitByCharacterInterval(state.text, state.batchTarget.toInt())
-                    EditorBatchMode.Chapters -> EditorProcessor.splitEvenlyByChapterCount(state.text, state.batchTarget.toInt())
-                }
-                EditorSplitMode.ApiProcess,
-                EditorSplitMode.CustomScript,
-                EditorSplitMode.Manual -> emptyList()
-            }
-        }
-        val updated = result.fold(
-            onSuccess = { chapters ->
-                if (chapters.isEmpty()) state.copy(actionMessage = "没有匹配到章节标题，请调整规则")
-                else state.copy(
-                    text = EditorProcessor.toWebsiteIdentifiers(chapters),
-                    cursorPosition = 0,
-                    chapters = chapters,
-                    markerValidationErrors = emptyList(),
-                    selectedTab = EditorTab.Chapters,
-                    actionMessage = "已生成 ${chapters.size} 章"
-                )
-            },
-            onFailure = { failure -> state.copy(actionMessage = "分章失败：${failure.message ?: "规则无效"}") }
-        )
-        uploadEditorState = if (updated.text != state.text || updated.chapters != state.chapters) {
-            commitEditorDocumentChange(state, updated)
-        } else {
-            withEditorHistoryFlags(updated)
-        }
-    }
+    fun renumberEditorMarkers() = editorFeature.renumberEditorMarkers()
 
-    private fun editorSplitPattern(state: UploadEditorState): String = when (state.splitMode) {
-        EditorSplitMode.ApiProcess -> state.apiEndpoint
-        else -> state.splitPattern
-    }
+    fun clearEditorMarkers() = editorFeature.clearEditorMarkers()
 
-    private fun editorSplitTarget(state: UploadEditorState): String = when (state.splitMode) {
-        EditorSplitMode.ApiProcess -> state.apiTimeoutSeconds
-        EditorSplitMode.BatchGenerate -> state.batchTarget
-        else -> state.splitTarget
-    }
+    fun validateEditorMarkers() = editorFeature.validateEditorMarkers()
 
-    private fun processEditorThroughApi(state: UploadEditorState) {
-        val serial = ++editorProcessorRequestSerial
-        val processorInput = when (state.apiMarkerMode) {
-            EditorMarkerMode.Incremental -> state.text
-            EditorMarkerMode.Full -> EditorProcessor.clearWebsiteIdentifiers(state.text)
-        }
-        uploadEditorState = state.copy(busy = true, actionMessage = "正在发送文本到接口处理…")
-        viewModelScope.launch {
-            val result = runCatching {
-                api.processEditorTextWithApi(
-                    endpoint = state.apiEndpoint,
-                    text = processorInput,
-                    timeoutSeconds = state.apiTimeoutSeconds.toInt()
-                )
-            }
-            if (!isFreshRequestSerial(serial, editorProcessorRequestSerial)) return@launch
-            val updated = result.fold(
-                onSuccess = { processedText ->
-                    val markerErrors = EditorProcessor.validateWebsiteIdentifiers(processedText)
-                    val chapters = if (markerErrors.isEmpty()) {
-                        EditorProcessor.parseWebsiteIdentifiers(processedText)
-                    } else {
-                        emptyList()
-                    }
-                    uploadEditorState.copy(
-                        text = processedText,
-                        cursorPosition = 0,
-                        chapters = chapters,
-                        markerValidationErrors = markerErrors,
-                        selectedTab = if (chapters.isEmpty()) EditorTab.Text else EditorTab.Chapters,
-                        busy = false,
-                        actionMessage = when {
-                            markerErrors.isNotEmpty() -> "接口处理已返回文本，但章节标识符需要修复"
-                            chapters.isEmpty() -> "接口处理完成，返回文本未包含章节标识符"
-                            else -> "接口处理完成，已识别 ${chapters.size} 章"
-                        }
-                    )
-                },
-                onFailure = { failure ->
-                    uploadEditorState.copy(
-                        busy = false,
-                        actionMessage = apiFailureMessage("接口处理", failure)
-                    )
-                }
-            )
-            uploadEditorState = if (updated.text != state.text || updated.chapters != state.chapters) {
-                commitEditorDocumentChange(state, updated)
-            } else {
-                withEditorHistoryFlags(updated)
-            }
-        }
-    }
+    fun completeEditorCustomScript(runId: Long, processedText: String?, error: String?) = editorFeature.completeEditorCustomScript(runId, processedText, error)
 
-    fun insertEditorTitleMarkerAtCursor() {
-        applyEditorMarkerOperation(
-            successMessage = "已插入标题标识符",
-            cursorPosition = ::standaloneEditorMarkerCursor
-        ) { state ->
-            EditorProcessor.insertWebsiteTitleMarkerAtCursor(state.text, state.cursorPosition)
-        }
-    }
+    fun replaceEditorText() = editorFeature.replaceEditorText()
 
-    fun insertEditorContentMarkerAtCursor() {
-        applyEditorMarkerOperation(
-            successMessage = "已插入内容标识符",
-            cursorPosition = ::standaloneEditorMarkerCursor
-        ) { state ->
-            EditorProcessor.insertWebsiteContentMarkerAtCursor(state.text, state.cursorPosition)
-        }
-    }
+    fun updateEditorChapter(index: Int, title: String, content: String) = editorFeature.updateEditorChapter(index, title, content)
 
-    fun insertEditorChapterAtCursor() {
-        applyEditorMarkerOperation("已在光标位置插入新章节") { state ->
-            EditorProcessor.insertWebsiteChapterAtCursor(state.text, state.cursorPosition)
-        }
-    }
+    fun addEditorChapter() = editorFeature.addEditorChapter()
 
-    fun deleteEditorChapterAtCursor() {
-        applyEditorMarkerOperation("已删除光标所在章节并重新编号") { state ->
-            EditorProcessor.deleteWebsiteChapterAtCursor(state.text, state.cursorPosition)
-        }
-    }
+    fun deleteEditorChapter(index: Int) = editorFeature.deleteEditorChapter(index)
 
-    fun renumberEditorMarkers() {
-        applyEditorMarkerOperation("已重新编号所有章节标识符") { state ->
-            EditorProcessor.renumberWebsiteIdentifiers(state.text)
-        }
-    }
+    fun saveEditorArchive() = editorFeature.saveEditorArchive()
 
-    fun clearEditorMarkers() {
-        val state = uploadEditorState
-        val cleared = EditorProcessor.clearWebsiteIdentifiers(state.text)
-        val updated = state.copy(
-            text = cleared,
-            cursorPosition = state.cursorPosition.coerceIn(0, cleared.length),
-            chapters = emptyList(),
-            markerValidationErrors = emptyList(),
-            selectedTab = EditorTab.Text,
-            actionMessage = "已清除所有章节标识符"
-        )
-        uploadEditorState = if (cleared == state.text) {
-            withEditorHistoryFlags(updated)
-        } else {
-            commitEditorDocumentChange(state, updated)
-        }
-    }
+    fun loadEditorArchive(id: String) = editorFeature.loadEditorArchive(id)
 
-    fun validateEditorMarkers() {
-        val state = uploadEditorState
-        val errors = EditorProcessor.validateWebsiteIdentifiers(state.text)
-        uploadEditorState = state.copy(
-            markerValidationErrors = errors,
-            actionMessage = if (errors.isEmpty()) "所有章节标识符验证通过" else "发现 ${errors.size} 个章节标识符问题"
-        )
-    }
+    fun deleteEditorArchive(id: String) = editorFeature.deleteEditorArchive(id)
 
-    private fun standaloneEditorMarkerCursor(state: UploadEditorState, updatedText: String): Int {
-        val cursor = state.cursorPosition.coerceIn(0, state.text.length)
-        val prefixLength = if (cursor > 0 && !state.text.substring(0, cursor).endsWith("\n")) 1 else 0
-        return (cursor + prefixLength + "##__T[00001]__##".length).coerceIn(0, updatedText.length)
-    }
+    fun clearEditorArchives() = editorFeature.clearEditorArchives()
 
-    private fun applyEditorMarkerOperation(
-        successMessage: String,
-        cursorPosition: (UploadEditorState, String) -> Int = { state, updatedText ->
-            state.cursorPosition.coerceIn(0, updatedText.length)
-        },
-        operation: (UploadEditorState) -> String
-    ) {
-        val state = uploadEditorState
-        val result = runCatching { operation(state) }
-        val updated = result.fold(
-            onSuccess = { updatedText ->
-                val errors = EditorProcessor.validateWebsiteIdentifiers(updatedText)
-                val chapters = if (errors.isEmpty()) EditorProcessor.parseWebsiteIdentifiers(updatedText) else emptyList()
-                state.copy(
-                    text = updatedText,
-                    cursorPosition = cursorPosition(state, updatedText).coerceIn(0, updatedText.length),
-                    chapters = chapters,
-                    markerValidationErrors = errors,
-                    selectedTab = if (chapters.isEmpty()) EditorTab.Text else EditorTab.Chapters,
-                    actionMessage = if (errors.isEmpty()) successMessage else "$successMessage，但仍有标识符问题"
-                )
-            },
-            onFailure = { failure ->
-                state.copy(actionMessage = "标识符处理失败：${failure.message ?: "规则无效"}")
-            }
-        )
-        uploadEditorState = if (updated.text != state.text || updated.chapters != state.chapters) {
-            commitEditorDocumentChange(state, updated)
-        } else {
-            withEditorHistoryFlags(updated)
-        }
-    }
+    fun exportEditorEpub(rawUri: String) = editorFeature.exportEditorEpub(rawUri)
 
-    fun completeEditorCustomScript(runId: Long, processedText: String?, error: String?) {
-        val state = uploadEditorState
-        if (state.scriptRunId != runId || !state.busy) return
-        if (!error.isNullOrBlank() || processedText == null) {
-            uploadEditorState = state.copy(
-                busy = false,
-                actionMessage = "脚本执行失败：${error ?: "未返回文本"}"
-            )
-            return
-        }
-        val markerErrors = EditorProcessor.validateWebsiteIdentifiers(processedText)
-        val chapters = if (markerErrors.isEmpty()) EditorProcessor.parseWebsiteIdentifiers(processedText) else emptyList()
-        uploadEditorState = commitEditorDocumentChange(state, state.copy(
-            text = processedText,
-            cursorPosition = 0,
-            chapters = chapters,
-            markerValidationErrors = markerErrors,
-            selectedTab = if (chapters.isEmpty()) EditorTab.Text else EditorTab.Chapters,
-            busy = false,
-            actionMessage = if (markerErrors.isNotEmpty()) {
-                "脚本处理完成，但章节标识符需要修复"
-            } else if (chapters.isEmpty()) {
-                "脚本处理完成；未发现网站章节标识，已保留处理后的文本"
-            } else {
-                "脚本处理完成，已生成 ${chapters.size} 章"
-            }
-        ))
-    }
-
-    fun replaceEditorText() {
-        val state = uploadEditorState
-        if (state.findText.isEmpty()) {
-            uploadEditorState = state.copy(actionMessage = "请输入查找内容")
-            return
-        }
-        val result = runCatching {
-            if (state.findUsesRegex) state.text.replace(Regex(state.findText), state.replaceText)
-            else state.text.replace(state.findText, state.replaceText)
-        }
-        val updated = result.fold(
-            onSuccess = { replaced ->
-                val changed = replaced != state.text
-                state.copy(
-                    text = replaced,
-                    cursorPosition = state.cursorPosition.coerceIn(0, replaced.length),
-                    chapters = if (changed) emptyList() else state.chapters,
-                    markerValidationErrors = if (changed) emptyList() else state.markerValidationErrors,
-                    selectedTab = if (changed) EditorTab.Text else state.selectedTab,
-                    actionMessage = if (changed) "替换完成" else "未找到匹配项"
-                )
-            },
-            onFailure = { failure -> state.copy(actionMessage = "替换失败：${failure.message ?: "正则无效"}") }
-        )
-        uploadEditorState = if (updated.text != state.text || updated.chapters != state.chapters) {
-            commitEditorDocumentChange(state, updated)
-        } else {
-            withEditorHistoryFlags(updated)
-        }
-    }
-
-    fun updateEditorChapter(index: Int, title: String, content: String) {
-        val before = uploadEditorState
-        if (index !in uploadEditorState.chapters.indices) return
-        val next = uploadEditorState.chapters.toMutableList()
-        next[index] = next[index].copy(title = title.trim().ifBlank { "第 ${index + 1} 章" }, content = content)
-        uploadEditorState = uploadEditorState.copy(chapters = next, actionMessage = "章节已更新")
-        uploadEditorState = commitEditorDocumentChange(before, uploadEditorState)
-    }
-
-    fun addEditorChapter() {
-        val before = uploadEditorState
-        val nextIndex = uploadEditorState.chapters.size
-        uploadEditorState = uploadEditorState.copy(
-            chapters = uploadEditorState.chapters + UploadChapter("第 ${nextIndex + 1} 章", "", nextIndex + 1),
-            actionMessage = "已添加章节"
-        )
-        uploadEditorState = commitEditorDocumentChange(before, uploadEditorState)
-    }
-
-    fun deleteEditorChapter(index: Int) {
-        val before = uploadEditorState
-        if (index !in uploadEditorState.chapters.indices) return
-        val next = uploadEditorState.chapters.filterIndexed { chapterIndex, _ -> chapterIndex != index }
-            .mapIndexed { chapterIndex, chapter -> chapter.copy(chapterNumber = chapterIndex + 1) }
-        uploadEditorState = uploadEditorState.copy(chapters = next, actionMessage = "章节已删除并重新编号")
-        uploadEditorState = commitEditorDocumentChange(before, uploadEditorState)
-    }
-
-    fun saveEditorArchive() {
-        val state = uploadEditorState
-        if (state.text.isBlank() && state.chapters.isEmpty()) {
-            uploadEditorState = state.copy(actionMessage = "没有可保存的编辑内容")
-            return
-        }
-        if (state.busy) return
-        uploadEditorState = state.copy(busy = true, actionMessage = "正在保存存档…")
-        viewModelScope.launch {
-            val result = runCatching {
-                val timestamp = System.currentTimeMillis()
-                val archive = EditorArchive(
-                    id = "archive_${timestamp}_${(0..9999).random()}",
-                    name = state.archiveName.trim().ifBlank { state.metadata.title.ifBlank { "存档 $timestamp" } },
-                    timestamp = timestamp,
-                    textContent = state.text,
-                    metadata = state.metadata,
-                    fileName = state.fileName,
-                    chapterCount = state.chapters.size,
-                    totalWords = state.chapters.sumOf { it.content.length }.takeIf { it > 0 } ?: state.text.length
-                )
-                withContext(Dispatchers.IO) { editorArchiveStore.save(archive) }
-            }
-            uploadEditorState = result.fold(
-                onSuccess = {
-                    uploadEditorState.copy(
-                        archiveName = "",
-                        archives = editorArchiveStore.list(),
-                        busy = false,
-                        actionMessage = "存档已保存"
-                    )
-                },
-                onFailure = { failure -> uploadEditorState.copy(busy = false, actionMessage = apiFailureMessage("保存存档", failure)) }
-            )
-        }
-    }
-
-    fun loadEditorArchive(id: String) {
-        if (uploadEditorState.busy) return
-        val request = ++editorRequestSerial
-        val before = uploadEditorState
-        uploadEditorState = before.copy(busy = true, actionMessage = "正在校验存档…")
-        viewModelScope.launch {
-            val result = try { Result.success(withContext(Dispatchers.IO) { editorArchiveStore.load(id) }) }
-                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (failure: Exception) { Result.failure(failure) }
-            if (request != editorRequestSerial) return@launch
-            val current = uploadEditorState.copy(busy = false)
-            if (current.text != before.text || current.metadata != before.metadata) {
-                uploadEditorState = current.copy(actionMessage = "编辑内容已变化，未用存档覆盖新草稿")
-                return@launch
-            }
-            uploadEditorState = result.fold(onSuccess = { archive ->
-                if (archive == null) current.copy(actionMessage = "存档不存在，当前编辑内容保留")
-                else replaceEditorDocument(current.copy(text = archive.textContent, metadata = archive.metadata,
-                    fileName = archive.fileName, chapters = emptyList(), selectedTab = EditorTab.Text,
-                    actionMessage = "存档已加载，请重新生成章节目录"))
-            }, onFailure = { current.copy(actionMessage = apiFailureMessage("读取存档", it)) })
-        }
-    }
-
-    fun deleteEditorArchive(id: String) {
-        runCatching { editorArchiveStore.delete(id) }
-            .onSuccess { uploadEditorState = uploadEditorState.copy(archives = editorArchiveStore.list(), actionMessage = "存档已删除") }
-            .onFailure { uploadEditorState = uploadEditorState.copy(actionMessage = apiFailureMessage("删除存档", it)) }
-    }
-
-    fun clearEditorArchives() {
-        runCatching { editorArchiveStore.clear() }
-            .onSuccess { uploadEditorState = uploadEditorState.copy(archives = emptyList(), actionMessage = "所有存档已清空") }
-            .onFailure { uploadEditorState = uploadEditorState.copy(actionMessage = apiFailureMessage("清空存档", it)) }
-    }
-
-    fun exportEditorEpub(rawUri: String) {
-        val state = uploadEditorState
-        validateEditorOutput(state)?.let { error ->
-            uploadEditorState = state.copy(actionMessage = error)
-            return
-        }
-        uploadEditorState = state.copy(busy = true, actionMessage = "正在生成 EPUB…")
-        viewModelScope.launch {
-            val result = runCatching {
-                withContext(Dispatchers.IO) {
-                    val uri = Uri.parse(rawUri)
-                    getApplication<Application>().contentResolver.openOutputStream(uri, "w")?.use { output ->
-                        EpubWriter.write(output, state.metadata, state.chapters)
-                    } ?: throw IOException("无法写入目标文件")
-                }
-            }
-            uploadEditorState = result.fold(
-                onSuccess = { uploadEditorState.copy(busy = false, actionMessage = "EPUB 已生成") },
-                onFailure = { failure -> uploadEditorState.copy(busy = false, actionMessage = apiFailureMessage("生成 EPUB", failure)) }
-            )
-        }
-    }
+    fun clearUploadEditor() = editorFeature.clearUploadEditor()
 
     fun sendEditorToUpload() {
-        val state = uploadEditorState
-        validateEditorOutput(state)?.let { error ->
-            uploadEditorState = state.copy(actionMessage = error)
-            return
-        }
-        uploadEditorState = state.copy(busy = true, actionMessage = "正在生成上传文件…")
         val appendBookId = routes.asReversed().filterIsInstance<AppRoute.BookAppend>().firstOrNull()?.bookId
-        val requestSerial = ++editorRequestSerial
-        val environmentRevision = dependencies.environment.revision
-        viewModelScope.launch {
-            val result = runCatching {
-                withContext(Dispatchers.IO) {
-                    val safeTitle = state.metadata.title.replace(Regex("[^A-Za-z0-9\\p{L}\\p{N}._-]"), "_").take(48).ifBlank { "novalpie" }
-                    val file = File(getApplication<Application>().cacheDir, "${safeTitle}_${System.currentTimeMillis()}.epub")
-                    file.outputStream().use { EpubWriter.write(it, state.metadata, state.chapters) }
-                    file
-                }
-            }
-            result.onSuccess { file ->
-                if (requestSerial != editorRequestSerial || environmentRevision != dependencies.environment.revision || currentRoute != AppRoute.UploadEditor) {
-                    uploadEditorState = uploadEditorState.copy(busy = false, actionMessage = "页面已变化，未发送到其他书籍；编辑草稿保留")
-                    return@onSuccess
-                }
-                val adopted = uploadFeature.adoptFromEditor(UploadBookState(
-                    existingNovelId = appendBookId,
-                    draft = UploadBookDraft(
-                        title = state.metadata.title,
-                        author = state.metadata.author,
-                        description = state.metadata.description,
-                        language = state.metadata.language,
-                        isAdult = state.metadata.isAdult,
-                        source = state.metadata.source,
-                        sourceUrl = state.metadata.sourceUrl,
-                        tagsText = state.metadata.tags,
-                        chapterCount = state.chapters.size
-                    ),
-                    selectedFile = UploadDocument(
-                        uri = file.toURI().toString(),
-                        displayName = file.name,
-                        sizeBytes = file.length(),
-                        mimeType = "application/epub+zip"
-                    ),
-                    chapters = LoadResult.Success(state.chapters),
-                    actionMessage = "编辑器内容已准备好，请核对后确认上传"
-                )) { requestSerial == editorRequestSerial && environmentRevision == dependencies.environment.revision && currentRoute == AppRoute.UploadEditor }
-                if (!adopted) {
-                    uploadEditorState = uploadEditorState.copy(busy = false, actionMessage = "目标书籍仍有上传任务，请完成后重试；编辑草稿保留")
-                    return@onSuccess
-                }
-                uploadEditorState = uploadEditorState.copy(busy = false, actionMessage = "已发送到上传页")
+        val revision = dependencies.environment.revision
+        val stillRequested = { revision == dependencies.environment.revision && currentRoute == AppRoute.UploadEditor }
+        editorFeature.sendEditorToUpload(appendBookId, stillRequested,
+            onPrepared = { prepared -> uploadFeature.adoptFromEditor(prepared, stillRequested) },
+            onNavigated = {
                 val target = appendBookId?.let { AppRoute.BookAppend(it) } ?: AppRoute.UploadBook
-                val withoutEditor = routes.toMutableList().apply {
-                    if (lastOrNull() is AppRoute.UploadEditor) removeAt(lastIndex)
-                }
+                val withoutEditor = routes.toMutableList().apply { if (lastOrNull() is AppRoute.UploadEditor) removeAt(lastIndex) }
                 navigator.replaceAll(pushDistinctRoute(withoutEditor, target))
-            }.onFailure { failure ->
-                uploadEditorState = uploadEditorState.copy(busy = false, actionMessage = apiFailureMessage("生成上传文件", failure))
-            }
-        }
-    }
-
-    fun clearUploadEditor() {
-        editorRequestSerial++
-        editorDocumentHistory.clear()
-        uploadEditorState = UploadEditorState(
-            archives = editorArchiveStore.list(),
-            aiConfigs = uploadEditorState.aiConfigs,
-            selectedAiConfigId = uploadEditorState.selectedAiConfigId
-        )
+            })
     }
 
     fun openPoliticalExam() {
@@ -3805,9 +3103,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     actionMessage = if (examResult.passed) "考试通过" else "考试未通过"
                 )
                 examResult.token?.takeIf(String::isNotBlank)?.let { replacementToken ->
+                    val previousToken = authToken
                     authSessionStore.saveToken(replacementToken)
                     authToken = replacementToken
                     AppContainer.from(getApplication()).refreshEnvironmentFromStores()
+                    notifyBookManagementAuthChange(previousToken, replacementToken)
                     loadHome()
                 }
             }.onFailure { failure ->
@@ -3823,81 +3123,6 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     fun resetPoliticalExam() {
         politicalExamState = PoliticalExamState()
     }
-
-    private fun validateEditorOutput(state: UploadEditorState): String? = when {
-        state.metadata.title.isBlank() -> "请填写书名"
-        state.metadata.author.isBlank() -> "请填写作者"
-        state.chapters.isEmpty() -> "请先生成章节目录"
-        else -> null
-    }
-
-    private suspend fun readEditorText(document: UploadDocument, encoding: String): String = withContext(Dispatchers.IO) {
-        val charset = runCatching { Charset.forName(encoding) }.getOrElse { throw IOException("不支持的编码：$encoding") }
-        InputStreamReader(uploadSource(document).openStream(), charset).use { reader ->
-            val result = StringBuilder()
-            val buffer = CharArray(16 * 1024)
-            while (true) {
-                val read = reader.read(buffer)
-                if (read < 0) break
-                result.append(buffer, 0, read)
-                if (result.length > 50_000_000) throw IOException("文本超过 5000 万字符，请先分割文件")
-            }
-            result.toString()
-        }
-    }
-
-    private suspend fun importEditorDocuments(
-        documents: List<UploadDocument>,
-        encoding: String
-    ): List<UploadChapter> = withContext(Dispatchers.IO) {
-        val charset = runCatching { Charset.forName(encoding) }
-            .getOrElse { throw IOException("不支持的编码：$encoding") }
-        val imported = mutableListOf<UploadChapter>()
-
-        documents.forEach { document ->
-            when {
-                document.displayName.endsWith(".epub", ignoreCase = true) -> {
-                    imported += EpubParser.parse(uploadSource(document)).chapters
-                }
-                document.displayName.endsWith(".zip", ignoreCase = true) -> {
-                    val entries = EditorBatchImporter.readArchive(uploadSource(document).openStream(), charset)
-                    entries.forEach { entry ->
-                        imported += UploadChapter(
-                            title = editorBatchChapterTitle(entry.displayName, imported.size + 1),
-                            content = entry.text,
-                            chapterNumber = imported.size + 1
-                        )
-                    }
-                }
-                EditorBatchImporter.isTextFile(document.displayName) -> {
-                    imported += UploadChapter(
-                        title = editorBatchChapterTitle(document.displayName, imported.size + 1),
-                        content = readEditorText(document, encoding),
-                        chapterNumber = imported.size + 1
-                    )
-                }
-                else -> throw IOException("不支持的批量文件：${document.displayName}")
-            }
-        }
-
-        if (imported.isEmpty()) throw IOException("没有可导入的章节内容")
-        val totalCharacters = imported.sumOf { it.title.length + it.content.length }
-        if (totalCharacters > EditorBatchImporter.MAX_TOTAL_CHARACTERS) {
-            throw IOException("批量文本超过 5000 万字符，请减少文件后重试")
-        }
-        imported.mapIndexed { index, chapter ->
-            chapter.copy(
-                title = chapter.title.trim().ifBlank { "第 ${index + 1} 章" },
-                chapterNumber = index + 1
-            )
-        }
-    }
-
-    private fun editorBatchChapterTitle(displayName: String, index: Int): String = displayName
-        .substringBeforeLast('.', displayName)
-        .replace(Regex("[\\r\\n\\t]"), " ")
-        .trim()
-        .ifBlank { "第 $index 章" }
 
     private suspend fun readUploadDocument(rawUri: String): UploadDocument = withContext(Dispatchers.IO) {
         val uri = Uri.parse(rawUri)
@@ -3946,13 +3171,6 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             }
         )
     }
-
-    private data class EditorLoadResult(
-        val document: UploadDocument,
-        val text: String,
-        val metadata: EditorBookMetadata,
-        val chapters: List<UploadChapter>
-    )
 
     fun openWorkspace() {
         navigator.replaceAll(pushDistinctRoute(routes.toList(), AppRoute.Workspace))
@@ -4514,195 +3732,21 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         loadBookEditInfo(bookId)
     }
 
-    fun loadBookEditInfo(bookId: Long) {
-        if (bookId <= 0) return
-        val requestSerial = ++bookEditRequestSerial
-        bookEditState = BookEditState(
-            bookId = bookId,
-            info = LoadResult.Loading,
-            permissions = LoadResult.Loading
-        )
-        viewModelScope.launch {
-            val infoResult = async { runCatching { api.managedBookInfo(bookId) } }
-            val permissionResult = async { runCatching { api.managedBookPermissions(bookId) } }
-            val resolvedInfo = infoResult.await()
-            val resolvedPermissions = permissionResult.await()
-            if (!isFreshRequestSerial(requestSerial, bookEditRequestSerial)) return@launch
-            if (currentRoute != AppRoute.BookEditInfo(bookId)) return@launch
-            bookEditState = BookEditState(
-                bookId = bookId,
-                info = resolvedInfo.toLoadResult("加载书籍信息"),
-                permissions = resolvedPermissions.toLoadResult("加载编辑权限"),
-                draft = resolvedInfo.getOrNull()?.let(::bookEditDraft) ?: BookEditDraft()
-            )
-        }
-    }
+    fun loadBookEditInfo(bookId: Long) = bookManagementFeature.load(bookId)
 
-    fun updateBookEditDraft(draft: BookEditDraft) {
-        bookEditState = bookEditState.copy(draft = draft, actionMessage = null)
-    }
+    fun updateBookEditDraft(draft: BookEditDraft) = bookManagementFeature.updateDraft(draft)
 
-    fun updateBookAccessPolicyDraft(draft: BookAccessPolicyDraft) {
-        bookEditState = bookEditState.copy(accessPolicyDraft = draft, actionMessage = null)
-    }
+    fun updateBookAccessPolicyDraft(draft: BookAccessPolicyDraft) = bookManagementFeature.updatePolicyDraft(draft)
 
-    fun updateBookTransferIdentifier(identifier: String) {
-        bookEditState = bookEditState.copy(transferIdentifier = identifier, actionMessage = null)
-    }
+    fun updateBookTransferIdentifier(identifier: String) = bookManagementFeature.updateTransferIdentifier(identifier)
 
-    fun saveManagedBookAccessPolicy() {
-        val state = bookEditState
-        if (state.bookId <= 0 || state.saving || state.uploadingCover || state.savingAccessPolicy || state.transferringBook) return
-        validateBookAccessPolicyDraft(state.accessPolicyDraft)?.let { error ->
-            bookEditState = state.copy(actionMessage = error)
-            return
-        }
-        bookEditState = state.copy(savingAccessPolicy = true, actionMessage = "正在保存读写门槛…")
-        viewModelScope.launch {
-            val result = runCatching {
-                api.updateManagedBookAccessPolicy(state.bookId, bookAccessPolicyFromDraft(state.accessPolicyDraft))
-            }
-            if (currentRoute != AppRoute.BookEditInfo(state.bookId)) return@launch
-            bookEditState = result.fold(
-                onSuccess = {
-                    bookEditState.copy(
-                        savingAccessPolicy = false,
-                        actionMessage = it.message ?: "读写门槛已保存"
-                    )
-                },
-                onFailure = {
-                    bookEditState.copy(
-                        savingAccessPolicy = false,
-                        actionMessage = apiFailureMessage("保存读写门槛", it)
-                    )
-                }
-            )
-        }
-    }
+    fun saveManagedBookAccessPolicy() = bookManagementFeature.savePolicy()
 
-    fun transferManagedBook() {
-        val state = bookEditState
-        val identifier = state.transferIdentifier.trim()
-        if (state.bookId <= 0 || state.saving || state.uploadingCover || state.savingAccessPolicy || state.transferringBook) return
-        if (identifier.isBlank()) {
-            bookEditState = state.copy(actionMessage = "请输入接收方 UID 或用户名")
-            return
-        }
-        bookEditState = state.copy(transferringBook = true, actionMessage = "正在提交书籍转让…")
-        viewModelScope.launch {
-            val result = runCatching { api.transferManagedBook(state.bookId, identifier) }
-            if (currentRoute != AppRoute.BookEditInfo(state.bookId)) return@launch
-            bookEditState = result.fold(
-                onSuccess = { transferred ->
-                    val target = transferred.targetUsername
-                        ?: transferred.targetUserId?.let { "UID $it" }
-                        ?: identifier
-                    bookEditState.copy(
-                        transferringBook = false,
-                        transferIdentifier = "",
-                        actionMessage = transferred.message ?: "已提交转让给 $target"
-                    )
-                },
-                onFailure = {
-                    bookEditState.copy(
-                        transferringBook = false,
-                        actionMessage = apiFailureMessage("转让书籍", it)
-                    )
-                }
-            )
-        }
-    }
+    fun transferManagedBook() = bookManagementFeature.transfer()
 
-    fun saveManagedBook() {
-        val state = bookEditState
-        if (state.bookId <= 0 || state.saving || state.uploadingCover || state.savingAccessPolicy || state.transferringBook) return
-        val validation = validateBookEditDraft(state.draft)
-        if (validation != null) {
-            bookEditState = state.copy(actionMessage = validation)
-            return
-        }
-        val draft = state.draft
-        bookEditState = state.copy(saving = true, actionMessage = "正在保存书籍信息…")
-        viewModelScope.launch {
-            val result = runCatching {
-                api.updateManagedBook(
-                    state.bookId,
-                    BookEditRequest(
-                        title = draft.title,
-                        titleTranslation = draft.titleTranslation,
-                        authorName = draft.authorName,
-                        description = draft.description,
-                        source = draft.source,
-                        sourceUrl = draft.sourceUrl,
-                        language = draft.language,
-                        status = draft.status,
-                        isAdult = draft.isAdult,
-                        photoUrl = draft.photoUrl,
-                        tags = draft.tags
-                    )
-                )
-            }
-            if (currentRoute != AppRoute.BookEditInfo(state.bookId)) return@launch
-            result.fold(
-                onSuccess = { saved ->
-                    val message = when {
-                        !saved.success -> saved.message ?: saved.errors.joinToString("\n").ifBlank { "保存失败" }
-                        saved.failedFields.isNotEmpty() -> "部分信息保存失败：${saved.failedFields.joinToString(", ")}"
-                        else -> saved.message ?: "书籍信息保存成功"
-                    }
-                    bookEditState = bookEditState.copy(saving = false, actionMessage = message)
-                    if (saved.success) loadBookDetail(state.bookId)
-                },
-                onFailure = { failure ->
-                    bookEditState = bookEditState.copy(
-                        saving = false,
-                        actionMessage = apiFailureMessage("保存书籍信息", failure)
-                    )
-                }
-            )
-        }
-    }
+    fun saveManagedBook() = bookManagementFeature.save()
 
-    fun uploadManagedBookCover(rawUri: String) {
-        val state = bookEditState
-        val permissions = (state.permissions as? LoadResult.Success)?.value
-        if (
-            state.bookId <= 0 ||
-            rawUri.isBlank() ||
-            state.uploadingCover ||
-            state.saving ||
-            state.savingAccessPolicy ||
-            state.transferringBook ||
-            permissions?.photoUrl != true
-        ) return
-        val requestSerial = bookEditRequestSerial
-        bookEditState = state.copy(uploadingCover = true, actionMessage = "正在上传原始封面…")
-        viewModelScope.launch {
-            val result = runCatching {
-                val document = readUploadDocument(rawUri)
-                require(document.sizeBytes > 0L) { "封面文件为空" }
-                require(document.mimeType?.startsWith("image/") == true) { "请选择图片文件" }
-                api.uploadManagedBookCover(state.bookId, uploadSource(document))
-            }
-            if (!isFreshRequestSerial(requestSerial, bookEditRequestSerial)) return@launch
-            if (currentRoute != AppRoute.BookEditInfo(state.bookId)) return@launch
-            result.fold(
-                onSuccess = { url ->
-                    bookEditState = bookEditState.copy(
-                        draft = bookEditState.draft.copy(photoUrl = url),
-                        uploadingCover = false,
-                        actionMessage = "封面已上传，保存信息后生效"
-                    )
-                },
-                onFailure = { failure ->
-                    bookEditState = bookEditState.copy(
-                        uploadingCover = false,
-                        actionMessage = apiFailureMessage("上传封面", failure)
-                    )
-                }
-            )
-        }
-    }
+    fun uploadManagedBookCover(rawUri: String) = bookManagementFeature.uploadCover(rawUri)
 
     fun openBookChapters(bookId: Long) {
         if (bookId <= 0) return
@@ -5369,9 +4413,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             if (!isFreshRequestSerial(requestSerial, authRequestSerial)) return@launch
             result.fold(
                 onSuccess = { session ->
+                    val previousToken = authToken
                     authSessionStore.saveToken(session.token)
                     authToken = session.token
                     AppContainer.from(getApplication()).refreshEnvironmentFromStores()
+                    notifyBookManagementAuthChange(previousToken, session.token)
                     authState = AuthState()
                     currentTab = BottomTab.Collection
                     navigator.reset(AppRoute.Home)
@@ -5613,11 +4659,16 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         resetToTabRoot(BottomTab.Collection)
         navigator.push(AppRoute.BookDetail(bookId))
         loadBookDetail(bookId)
-        viewModelScope.launch {
+        val navigationRevision = navigator.revision
+        val environmentRevision = dependencies.environment.revision
+        managedEntryJob = viewModelScope.launch {
             val permissions = runCatching { api.managedBookPermissions(bookId) }.getOrNull()
             if (!bookManagementActionsVisible(permissions)) return@launch
+            if (navigator.revision != navigationRevision || dependencies.environment.revision != environmentRevision) return@launch
             if (currentRoute != AppRoute.BookDetail(bookId)) return@launch
 
+            // This is the accepted transition, not a superseding user navigation.
+            managedEntryJob = null
             navigator.push(route)
             when (route) {
                 is AppRoute.BookEditInfo -> loadBookEditInfo(bookId)
@@ -5636,6 +4687,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         navigator.pop()
         rootRouteTab(currentRoute)?.let { currentTab = it }
         when (val restored = currentRoute) {
+            is AppRoute.BookEditInfo -> if (bookEditState.bookId != restored.bookId) loadBookEditInfo(restored.bookId)
             is AppRoute.Admin -> adminFeature.enter(restored.section)
             AppRoute.UploadBook -> uploadFeature.enter(null)
             is AppRoute.BookAppend -> uploadFeature.enter(restored.bookId)
@@ -6633,6 +5685,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         forumPostFeature.close()
         libraryFeature.close()
         bookFeature.close()
+        bookManagementFeature.close()
         messageInboxFeature.close()
         messageDetailFeature.close()
         conversationFeature.close()
@@ -6641,6 +5694,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         publicProfileFeature.close()
         workspaceFeature.close()
         uploadFeature.close()
+        editorFeature.close()
         adminFeature.close()
         super.onCleared()
     }

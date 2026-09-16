@@ -45,4 +45,6 @@
 
 ## 发布
 
+2026-09-09候选构建已开始：defaultConfig版本2026090901/2.0.0-native-beta7；新增beta继承release的R8/resources shrink，applicationIdSuffix=.debug，使用已发布Beta6同一debug signing配置，isDebuggable/isJniDebuggable=false。验包工具要求实际公开签名digest一致且不含nativeapp.audit调试组件。只有构建配置已落地，运行/升级/发布没有因此完成。
+
 最终只在 optimized beta APK 验收通过后推送源码/标签并创建新 Beta 7 Release；不覆盖 Beta 6。实际构建 commit、安装包哈希、Release digest 一致。中文说明包含各板块自己的原生特点、网页差异、必要网页依赖和未认证的真机/OEM/高刷边界。

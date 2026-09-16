@@ -54,6 +54,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -110,6 +111,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.compositionLocalOf
@@ -524,8 +526,12 @@ fun NovalPieApp(
         bottomBar = {
             if (route is AppRoute.Forum || route is AppRoute.Home || route is AppRoute.Search || route is AppRoute.Tools || route is AppRoute.Profile) {
                 NavigationBar(
+                    modifier = Modifier
+                        .navigationBarsPadding()
+                        .padding(bottom = 4.dp),
                     containerColor = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 0.dp
+                    tonalElevation = 0.dp,
+                    windowInsets = WindowInsets(0, 0, 0, 0),
                 ) {
                     BottomTab.values().forEach { tab ->
                         NavigationBarItem(
@@ -910,6 +916,12 @@ fun NovalPieApp(
                       onBookGridColumnsChange = viewModel::selectProfileBooksGridColumns,
                     downloadImageConcurrency = viewModel.profileState.downloadImageConcurrency,
                     onDownloadImageConcurrencyChange = viewModel::updateDownloadImageConcurrency,
+                    downloadCompressImages = viewModel.profileState.downloadCompressImages,
+                    onDownloadCompressImagesChange = viewModel::updateDownloadCompressImages,
+                    downloadImageQuality = viewModel.profileState.downloadImageQuality,
+                    onDownloadImageQualityChange = viewModel::updateDownloadImageQuality,
+                    downloadZipCompressionLevel = viewModel.profileState.downloadZipCompressionLevel,
+                    onDownloadZipCompressionLevelChange = viewModel::updateDownloadZipCompressionLevel,
                     onNameChange = viewModel::updateProfileName,
                     onBioChange = viewModel::updateProfileBio,
                     onShowCheckinChange = viewModel::updateProfileShowCheckin,
@@ -6358,6 +6370,15 @@ internal fun ReaderScreen(
     var visibleReaderChapterId by remember(state.bookId, state.chapterId) {
         mutableStateOf<Long?>(state.chapterId.takeIf { it > 0L })
     }
+    val visibleProgress = remember(state.bookId, state.chapterId) { mutableStateOf(state.chapterId to 0f) }
+    val progressBounds = remember(readerBodyLayout) {
+        readerBodyLayout.chapters.associate { chapter ->
+            val id = chapter.chapter.chapterId
+            id to ((if (chapter.chapter.title.isNullOrBlank()) 0 else 1) to
+                (readerBodyLayout.locationsByKey["reader-chapter-finish-$id"]?.itemIndexWithinChapter ?: 0))
+        }
+    }
+    val latestProgressBounds by rememberUpdatedState(progressBounds)
     var pendingViewportAnchor by remember(state.bookId, state.chapterId) {
         mutableStateOf(state.restoreViewportAnchor)
     }
@@ -6598,6 +6619,22 @@ internal fun ReaderScreen(
         }
     }
 
+    LaunchedEffect(listState, pageTurnEnabled, visibleProgress) {
+        if (pageTurnEnabled) return@LaunchedEffect
+        snapshotFlow {
+            val item = listState.layoutInfo.visibleItemsInfo.firstOrNull()
+            val location = item?.key?.let { latestReaderBodyLayout.locationsByKey[it.toString()] }
+            val bounds = location?.let { latestProgressBounds[it.chapterId] }
+            if (item == null || location == null || bounds == null) null else {
+                val fraction = readerScrollProgress(location.itemIndexWithinChapter,
+                    listState.firstVisibleItemScrollOffset, item.size, bounds.first, bounds.second)
+                location.chapterId to (fraction * 100).toInt()
+            }
+        }.collect { progress ->
+            if (progress != null) visibleProgress.value = progress.first to progress.second / 100f
+        }
+    }
+
     // The first optimization removed HTML/Markdown parsing from the scroll hot path. Persist the
     // local paragraph anchor only once touch/fling activity settles so SharedPreferences and the
     // root ViewModel do not recompose the reader during every 24px of a high-refresh drag.
@@ -6713,7 +6750,9 @@ internal fun ReaderScreen(
         }
     }
     val palette = readerPalette(options)
-    val chromeLayout = readerChromeLayout()
+    // Convert sp through the actual density/font-scale converter (Android 14+ is nonlinear).
+    // The same budget feeds both text bars and the paginated readable viewport.
+    val chromeLayout = readerChromeLayout(with(LocalDensity.current) { MaterialTheme.typography.labelSmall.lineHeight.toDp().value })
     val sidePanelVisible = catalogVisible.value ||
         readerSettingsVisible.value ||
         readerHelpVisible.value ||
@@ -7113,6 +7152,7 @@ internal fun ReaderScreen(
                 onBoundary={direction->openReaderPageBoundary(if(direction<0)ReaderPageBoundaryTarget.PreviousChapter else ReaderPageBoundaryTarget.NextChapter)},
                 registerTurn={nativePageTurn=it},
                 onAnchor={nativePagedAnchor=it;onViewportAnchorChanged(it)},onPreview=onPreviewImage,
+                onPageProgress = { visibleProgress.value = state.chapterId to it },
                 followText=ttsActiveText.takeIf {ttsSettings.enableAutoScroll},highlightText=ttsHighlightText,
                 backgroundImageUri=palette.backgroundImageUri,
                 modifier=Modifier.align(Alignment.Center).widthIn(max=options.contentWidthDp.dp).fillMaxSize()
@@ -7512,6 +7552,7 @@ internal fun ReaderScreen(
                 state = state,
                 chapters = chapters,
                 visibleChapterId = visibleReaderChapterId,
+                chapterProgress = visibleProgress,
                 options = options,
                 chromeLayout = chromeLayout,
             )
@@ -7878,6 +7919,7 @@ private fun ReaderStatusBar(
     state: ReaderState,
     chapters: List<Chapter>,
     visibleChapterId: Long?,
+    chapterProgress: State<Pair<Long, Float>>,
     options: ReaderUiOptions,
     chromeLayout: ReaderChromeLayout,
     modifier: Modifier = Modifier,
@@ -7893,8 +7935,9 @@ private fun ReaderStatusBar(
         }
     }
     val statusChapterId = readerStatusChapterId(state.chapterId, visibleChapterId)
-    val bookProgress = readerBookProgressFraction(statusChapterId, chapters)
-    val progressLabel = String.format(java.util.Locale.US, "%.2f%%", bookProgress * 100f)
+    val progress = chapterProgress.value
+    val bookProgress = readerBookProgressFraction(statusChapterId, chapters, progress.second.takeIf { progress.first == statusChapterId } ?: 0f)
+    val progressLabel = bookProgress?.let { String.format(java.util.Locale.US, "%.2f%%", it * 100f) } ?: "—"
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = palette.sidebarBackground,
@@ -7913,6 +7956,7 @@ private fun ReaderStatusBar(
                 text = clockLabel,
                 style = MaterialTheme.typography.labelSmall,
                 color = palette.sidebarText.copy(alpha = 0.72f),
+                maxLines = 1,
             )
             Text(
                 text = readerChapterProgressLabel(statusChapterId, chapters),
@@ -7928,19 +7972,23 @@ private fun ReaderStatusBar(
                     text = "离线缓存",
                     style = MaterialTheme.typography.labelSmall,
                     color = Color(0xFFF59E0B),
+                    maxLines = 1,
                 )
             }
-            CircularProgressIndicator(
-                progress = { bookProgress },
-                modifier = Modifier.size(16.dp),
-                color = palette.accent,
-                strokeWidth = 2.dp,
-                trackColor = palette.meta.copy(alpha = 0.18f),
-            )
+            if (bookProgress != null) {
+                CircularProgressIndicator(
+                    progress = { bookProgress },
+                    modifier = Modifier.size(16.dp),
+                    color = palette.accent,
+                    strokeWidth = 2.dp,
+                    trackColor = palette.meta.copy(alpha = 0.18f),
+                )
+            }
             Text(
                 text = progressLabel,
                 style = MaterialTheme.typography.labelSmall,
                 color = palette.meta,
+                maxLines = 1,
             )
         }
     }
@@ -8557,8 +8605,8 @@ private fun ReaderSettingsOverview(
         ReaderSettingsOverviewCard(
             icon = Icons.Filled.Tune,
             title = "偏好配置",
-            summary = "设置会自动保存在当前设备",
-            tags = listOf("自动保存"),
+            summary = "本机自动保存 · 网页配置手动同步",
+            tags = listOf("保存", "加载", "管理"),
             palette = palette,
             onClick = { onSelect(ReaderSettingsCategory.Other) },
         )
@@ -11750,6 +11798,10 @@ private fun ReaderChapterHeading(
             Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = title,
+                // TextAlign only affects the measured width. Without filling the article column,
+                // a long title is measured at its intrinsic width and therefore remains visually
+                // flush-left even though TextAlign.Center is set.
+                modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.headlineSmall.copy(
                     fontSize = textLayout.titleFontSizeSp.sp,
                     lineHeight = (textLayout.titleFontSizeSp * 1.4f).sp,

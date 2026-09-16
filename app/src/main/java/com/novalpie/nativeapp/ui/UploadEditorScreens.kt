@@ -230,7 +230,12 @@ fun UploadEditorScreen(
                 onValidateMarkers,
                 onClearMarkers
             )
-            EditorTab.Chapters -> EditorChaptersTab(state.chapters, { editingChapter = it }, onAddChapter)
+            EditorTab.Chapters -> EditorChaptersTab(
+                state.chapters,
+                canEdit = !state.busy,
+                onEdit = { if (!state.busy) editingChapter = it },
+                onAdd = onAddChapter
+            )
             EditorTab.Metadata -> EditorMetadataTab(state.metadata, onMetadataChange)
             EditorTab.Archives -> EditorArchivesTab(state, onArchiveNameChange, onSaveArchive, onLoadArchive, { deletingArchive = it }, { confirmClearArchives = true })
         }
@@ -856,7 +861,7 @@ private fun EditorManualMarkerControls(
 }
 
 @Composable
-private fun EditorChaptersTab(chapters: List<UploadChapter>, onEdit: (Int) -> Unit, onAdd: () -> Unit) {
+private fun EditorChaptersTab(chapters: List<UploadChapter>, canEdit: Boolean, onEdit: (Int) -> Unit, onAdd: () -> Unit) {
     LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -871,7 +876,7 @@ private fun EditorChaptersTab(chapters: List<UploadChapter>, onEdit: (Int) -> Un
             item { EditorEmpty("还没有章节。先在“分章”页生成目录，或手动新增章节。") }
         } else {
             itemsIndexed(chapters, key = { index, chapter -> "${chapter.chapterNumber}-$index-${chapter.title}" }) { index, chapter ->
-                ElevatedCard(onClick = { onEdit(index) }, shape = RoundedCornerShape(16.dp)) {
+                ElevatedCard(onClick = { onEdit(index) }, enabled = canEdit, shape = RoundedCornerShape(16.dp)) {
                     Row(modifier = Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(12.dp)) {
                             Text("${chapter.chapterNumber}", modifier = Modifier.padding(horizontal = 11.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)

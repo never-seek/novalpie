@@ -205,7 +205,8 @@ data class BookEditInfo(
     val status: String = "连载中",
     val isAdult: Boolean = false,
     val photoUrl: String = "",
-    val tags: List<String> = emptyList()
+    val tags: List<String> = emptyList(),
+    val accessPolicy: ManagedBookAccessPolicy? = null,
 )
 
 data class BookEditPermissions(

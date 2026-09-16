@@ -367,7 +367,10 @@ internal data class ReaderChromeLayout(
     val sidePaddingDp: Float = 12f,
 )
 
-internal fun readerChromeLayout(): ReaderChromeLayout = ReaderChromeLayout()
+internal fun readerChromeLayout(labelLineHeightDp: Float = 16f): ReaderChromeLayout {
+    val line = labelLineHeightDp.takeIf { it.isFinite() && it > 0f } ?: 16f
+    return ReaderChromeLayout(headerHeightDp = maxOf(32f, line + 8f), statusHeightDp = maxOf(26f, line + 8f))
+}
 
 /** The source sidebar uses a slim full-height vertical rail on phones. */
 internal fun readerActionRailWidthDp(): Float = 64f

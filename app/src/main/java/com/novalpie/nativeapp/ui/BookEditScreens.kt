@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,9 +58,9 @@ internal fun BookEditInfoScreen(
     onSave: () -> Unit
 ) {
     val validation = validateBookEditDraft(state.draft)
-    var confirmSave by remember { mutableStateOf(false) }
-    var confirmPolicy by remember { mutableStateOf(false) }
-    var confirmTransfer by remember { mutableStateOf(false) }
+    var confirmSave by remember(state.bookId, state.revision) { mutableStateOf(false) }
+    var confirmPolicy by remember(state.bookId, state.revision) { mutableStateOf(false) }
+    var confirmTransfer by remember(state.bookId, state.revision) { mutableStateOf(false) }
     val busy = state.saving || state.uploadingCover || state.savingAccessPolicy || state.transferringBook
 
     if (confirmSave) {
@@ -125,14 +126,18 @@ internal fun BookEditInfoScreen(
             LoadResult.Idle, LoadResult.Loading -> item { LoadingBlock("正在检查编辑权限") }
             is LoadResult.Error -> item { ErrorBlock(access.message, "重试权限", onRetry) }
             is LoadResult.Success -> {
-                item {
-                    BookEditCoverSection(
-                        title = state.draft.title,
-                        url = state.draft.photoUrl,
-                        enabled = access.value.photoUrl && !busy,
-                        uploading = state.uploadingCover,
-                        onSelected = onCoverSelected
-                    )
+                item(key = "book-cover") {
+                    // Dispose the old ActivityResult registration when its book/request ends.
+                    // rememberLauncherForActivityResult otherwise forwards a late A result to B.
+                    key(state.bookId, state.revision) {
+                        BookEditCoverSection(
+                            title = state.draft.title,
+                            url = state.draft.photoUrl,
+                            enabled = access.value.photoUrl && !busy,
+                            uploading = state.uploadingCover,
+                            onSelected = onCoverSelected
+                        )
+                    }
                 }
                 item {
                     BookEditTextField("中文书名 *", state.draft.title, access.value.title, busy) {
@@ -357,6 +362,10 @@ private fun BookAccessPolicySection(
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("阅读与下载门槛", fontWeight = FontWeight.Bold)
+            if ((state.info as? LoadResult.Success)?.value?.accessPolicy == null) {
+                Text("源站尚未返回当前门槛，暂不能编辑。请重新加载书籍信息；不会用默认“不限”覆盖已有设置。", style = MaterialTheme.typography.bodySmall)
+                return@Column
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text("允许下载")
