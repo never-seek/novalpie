@@ -3,6 +3,7 @@ package com.novalpie.nativeapp
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
@@ -40,34 +41,84 @@ class MainActivity : ComponentActivity() {
 
     private var readerVolumeKeyHandler: ((Int) -> Unit)? = null
     private var readerOriginalPreferredRefreshRate: Float? = null
+    private var readerOriginalPreferredDisplayModeId: Int? = null
 
     /**
      * Requests the highest rate the active physical display advertises while the immersive reader
-     * is on screen. Android can still choose a lower rate for battery saver, thermal limits or a
-     * device policy; leaving the reader restores the window's prior system preference.
+     * is on screen. Supports both legacy preferredRefreshRate and modern preferredDisplayModeId /
+     * setFrameRate so 90/120/144Hz displays across diverse OEM frameworks switch to full frame rate.
+     * Leaving the reader restores the window's prior system preference.
      */
     @Suppress("DEPRECATION")
     internal fun setReaderHighRefreshRateEnabled(enabled: Boolean) {
         val params = window.attributes
         if (!enabled) {
-            val original = readerOriginalPreferredRefreshRate ?: return
-            if (params.preferredRefreshRate != original) {
-                params.preferredRefreshRate = original
+            var modified = false
+            readerOriginalPreferredRefreshRate?.let { originalRate ->
+                if (params.preferredRefreshRate != originalRate) {
+                    params.preferredRefreshRate = originalRate
+                    modified = true
+                }
+            }
+            readerOriginalPreferredDisplayModeId?.let { originalModeId ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && params.preferredDisplayModeId != originalModeId) {
+                    params.preferredDisplayModeId = originalModeId
+                    modified = true
+                }
+            }
+            if (modified) {
                 window.attributes = params
             }
             readerOriginalPreferredRefreshRate = null
+            readerOriginalPreferredDisplayModeId = null
             return
         }
 
-        val targetRate = readerPreferredRefreshRate(
-            window.decorView.display?.supportedModes?.map { mode -> mode.refreshRate }.orEmpty(),
+        val display = window.decorView.display
+        val currentMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) display?.mode else null
+        val supportedModes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            display?.supportedModes.orEmpty()
+        } else {
+            emptyArray()
+        }
+
+        val candidateModes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && currentMode != null) {
+            val matching = supportedModes.filter {
+                it.physicalWidth == currentMode.physicalWidth && it.physicalHeight == currentMode.physicalHeight
+            }
+            if (matching.isNotEmpty()) matching else supportedModes.toList()
+        } else {
+            supportedModes.toList()
+        }
+
+        val bestMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            candidateModes.maxByOrNull { it.refreshRate }
+        } else null
+
+        val targetRate = bestMode?.refreshRate ?: readerPreferredRefreshRate(
+            supportedModes.map { it.refreshRate }
         )
         if (targetRate <= 0f) return
+
         if (readerOriginalPreferredRefreshRate == null) {
             readerOriginalPreferredRefreshRate = params.preferredRefreshRate
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && readerOriginalPreferredDisplayModeId == null) {
+            readerOriginalPreferredDisplayModeId = params.preferredDisplayModeId
+        }
+
+        var modified = false
+        if (bestMode != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (params.preferredDisplayModeId != bestMode.modeId) {
+                params.preferredDisplayModeId = bestMode.modeId
+                modified = true
+            }
+        }
         if (params.preferredRefreshRate != targetRate) {
             params.preferredRefreshRate = targetRate
+            modified = true
+        }
+        if (modified) {
             window.attributes = params
         }
     }

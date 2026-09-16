@@ -6619,19 +6619,24 @@ internal fun ReaderScreen(
         }
     }
 
-    LaunchedEffect(listState, pageTurnEnabled, visibleProgress) {
+    LaunchedEffect(listState, pageTurnEnabled) {
         if (pageTurnEnabled) return@LaunchedEffect
         snapshotFlow {
-            val item = listState.layoutInfo.visibleItemsInfo.firstOrNull()
-            val location = item?.key?.let { latestReaderBodyLayout.locationsByKey[it.toString()] }
-            val bounds = location?.let { latestProgressBounds[it.chapterId] }
-            if (item == null || location == null || bounds == null) null else {
-                val fraction = readerScrollProgress(location.itemIndexWithinChapter,
-                    listState.firstVisibleItemScrollOffset, item.size, bounds.first, bounds.second)
-                location.chapterId to (fraction * 100).toInt()
+            if (listState.isScrollInProgress) null else {
+                val item = listState.layoutInfo.visibleItemsInfo.firstOrNull()
+                val location = item?.key?.let { latestReaderBodyLayout.locationsByKey[it.toString()] }
+                val bounds = location?.let { latestProgressBounds[it.chapterId] }
+                if (item == null || location == null || bounds == null) null else {
+                    val fraction = readerScrollProgress(location.itemIndexWithinChapter,
+                        listState.firstVisibleItemScrollOffset, item.size, bounds.first, bounds.second)
+                    location.chapterId to (fraction * 100).toInt()
+                }
             }
         }.collect { progress ->
-            if (progress != null) visibleProgress.value = progress.first to progress.second / 100f
+            if (progress != null) {
+                val next = progress.first to progress.second / 100f
+                if (visibleProgress.value != next) visibleProgress.value = next
+            }
         }
     }
 
