@@ -18,6 +18,9 @@ import com.novalpie.nativeapp.feature.search.searchTagQueryMatches
 import com.novalpie.nativeapp.model.ChineseVariant
 import java.util.concurrent.atomic.AtomicBoolean
 import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -3909,31 +3912,6 @@ private fun SearchScreen(
         hasHistory = searchHistory.isNotEmpty(),
         advancedSyntaxEnabled = options.advancedSyntaxEnabled
     )
-    val visibleBookIds by remember(searchGridState) {
-        derivedStateOf {
-            searchGridState.layoutInfo.visibleItemsInfo.flatMap { item ->
-                when (val key = item.key) {
-                    is Long -> listOf(key)
-                    else -> searchGridRowBookIds(key)
-                }
-            }
-        }
-    }
-    // Do not let off-screen downloads compete with the two cards visible on a fresh search.
-    // The grid begins with the search panel, filter panel, and pagination header; after those
-    // items have scrolled away, speculative work helps the next row without delaying the first.
-    val allowScrollCoverPreload by remember(searchGridState) {
-        derivedStateOf { searchGridState.firstVisibleItemIndex > 2 }
-    }
-    val scrollCoverPreloadUrls = when (results) {
-        is LoadResult.Success -> searchCoverPreloadUrlsAfterVisible(
-            books = results.value,
-            visibleBookIds = visibleBookIds,
-            columnCount = searchColumnCount,
-            allowSpeculativePreload = allowScrollCoverPreload
-        )
-        else -> emptyList()
-    }
     val context = LocalContext.current
     val initialCoverPreloadUrls = when (results) {
         is LoadResult.Success -> searchInitialCoverPreloadUrls(
@@ -3961,16 +3939,62 @@ private fun SearchScreen(
             prefetches.forEach { it.dispose() }
         }
     }
-    LaunchedEffect(scrollCoverPreloadUrls) {
-        if (scrollCoverPreloadUrls.isEmpty()) return@LaunchedEffect
-        // Let the current grid settle before using the proxy/CDN for off-screen covers. Keeping
-        // the disposables alive lets a new scroll target cancel unfinished stale work.
-        delay(SEARCH_COVER_PRELOAD_SETTLE_MILLIS)
-        val prefetches = preloadNovalPieBookCovers(context, scrollCoverPreloadUrls)
-        try {
-            awaitCancellation()
-        } finally {
-            prefetches.forEach { it.dispose() }
+    // Speculative preloads are driven from snapshotFlow rather than reading layoutInfo in the
+    // Composable body. This isolates scroll observation completely from SearchScreen recomposition,
+    // avoiding top-level recomposition passes while the grid flings.
+    LaunchedEffect(searchGridState, results, searchColumnCount) {
+        if (results !is LoadResult.Success) return@LaunchedEffect
+        snapshotFlow {
+            val allow = searchGridState.firstVisibleItemIndex > 2
+            if (!allow) return@snapshotFlow emptyList()
+            val visibleIds = searchGridState.layoutInfo.visibleItemsInfo.flatMap { item ->
+                when (val key = item.key) {
+                    is Long -> listOf(key)
+                    else -> searchGridRowBookIds(key)
+                }
+            }
+            searchCoverPreloadUrlsAfterVisible(
+                books = results.value,
+                visibleBookIds = visibleIds,
+                columnCount = searchColumnCount,
+                allowSpeculativePreload = true,
+            )
+        }
+            .distinctUntilChanged()
+            .collectLatest { urls ->
+                if (urls.isNotEmpty()) {
+                    delay(SEARCH_COVER_PRELOAD_SETTLE_MILLIS)
+                    val prefetches = preloadNovalPieBookCovers(context, urls)
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        prefetches.forEach { it.dispose() }
+                    }
+                }
+            }
+    }
+    val gridFontScale = searchConfiguration.fontScale
+    val gridTagContentWidthDp = searchGridTagContentWidth
+    val searchGridRows = remember(results, searchColumnCount, gridTagContentWidthDp, gridFontScale) {
+        if (results !is LoadResult.Success) {
+            emptyList()
+        } else {
+            results.value.chunked(searchColumnCount).map { rowBooks ->
+                SearchGridRow(
+                    key = searchGridRowKey(rowBooks.map(NovelCard::id)),
+                    books = rowBooks,
+                    tagLineCount = searchGridRowTagLineCount(
+                        books = rowBooks,
+                        availableTagWidthDp = gridTagContentWidthDp,
+                        fontScale = gridFontScale,
+                    ),
+                    metricLineCount = searchGridRowMetricLineCount(
+                        books = rowBooks,
+                        availableMetricWidthDp = gridTagContentWidthDp,
+                        fontScale = gridFontScale,
+                    ),
+                )
+            }
         }
     }
     // One LazyVerticalGrid, matching the bookshelf. Results use their actual book id as the key,
@@ -4033,11 +4057,10 @@ private fun SearchScreen(
                 DiscoverSection.Results -> searchResultGridItems(
                     keyword = keyword,
                     results = results,
+                    gridRows = searchGridRows,
                     viewMode = viewMode,
                     gridColumnCount = searchColumnCount,
-                    gridTagContentWidthDp = searchGridTagContentWidth,
                     gridCoverHeight = searchGridCoverHeight,
-                    gridFontScale = searchConfiguration.fontScale,
                     searchPage = searchPage,
                     searchLoadingPage = searchLoadingPage,
                     searchPageError = searchPageError,
@@ -4072,14 +4095,20 @@ private fun SearchScreen(
     }
 }
 
+private data class SearchGridRow(
+    val key: String,
+    val books: List<NovelCard>,
+    val tagLineCount: Int,
+    val metricLineCount: Int,
+)
+
 private fun LazyGridScope.searchResultGridItems(
     keyword: String,
     results: LoadResult<List<NovelCard>>,
+    gridRows: List<SearchGridRow>,
     viewMode: SearchViewMode,
     gridColumnCount: Int,
-    gridTagContentWidthDp: Int,
     gridCoverHeight: Dp,
-    gridFontScale: Float,
     searchPage: SearchPage?,
     searchLoadingPage: Boolean,
     searchPageError: String?,
@@ -4124,38 +4153,28 @@ private fun LazyGridScope.searchResultGridItems(
                 }
             } else {
                 if (viewMode == SearchViewMode.Grid) {
-                        items(
-                            items = results.value.chunked(gridColumnCount),
-                            key = { row -> searchGridRowKey(row.map(NovelCard::id)) },
+                    items(
+                        items = gridRows,
+                        key = { row -> row.key },
                         span = { GridItemSpan(maxLineSpan) },
-                    ) { rowBooks ->
-                        val rowTagLineCount = searchGridRowTagLineCount(
-                            books = rowBooks,
-                            availableTagWidthDp = gridTagContentWidthDp,
-                            fontScale = gridFontScale,
-                        )
-                        val rowMetricLineCount = searchGridRowMetricLineCount(
-                            books = rowBooks,
-                            availableMetricWidthDp = gridTagContentWidthDp,
-                            fontScale = gridFontScale,
-                        )
+                    ) { row ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.md),
                             verticalAlignment = Alignment.Top,
                         ) {
-                            rowBooks.forEach { book ->
+                            row.books.forEach { book ->
                                 NovelCardItem(
                                     book = book,
                                     modifier = Modifier.weight(1f),
-                                    gridTagLineCount = rowTagLineCount,
-                                    gridMetricLineCount = rowMetricLineCount,
+                                    gridTagLineCount = row.tagLineCount,
+                                    gridMetricLineCount = row.metricLineCount,
                                     gridCoverHeight = gridCoverHeight,
                                     onPreview = { onPreviewBookCover(book) },
                                     onClick = { onOpenBook(book.id) },
                                 )
                             }
-                            repeat(gridColumnCount - rowBooks.size) {
+                            repeat(gridColumnCount - row.books.size) {
                                 Spacer(modifier = Modifier.weight(1f))
                             }
                         }
@@ -11306,6 +11325,8 @@ private fun BookSummary(book: NovelCard) {
     }
 }
 
+private val BOOK_COVER_SHAPE = RoundedCornerShape(6.dp)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun BookCover(
@@ -11320,7 +11341,7 @@ internal fun BookCover(
     requestSize: NovelCoverRequestSize? = null,
     staticImage: Boolean = false,
 ) {
-    val shape = RoundedCornerShape(6.dp)
+    val shape = BOOK_COVER_SHAPE
     val fallbackText = bookCoverFallbackText(title)
     var previewVisible by remember(previewUrl) { mutableStateOf(false) }
     val imagePreviewActive = LocalImagePreviewActive.current || previewVisible
