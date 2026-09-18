@@ -298,9 +298,10 @@ internal val LocalForumSpoilerPreference = compositionLocalOf {
 }
 private const val SOURCE_SEARCH_SUBMISSION_SETTLE_MILLIS = 96L
 private const val MAX_FORUM_FOLD_DEPTH = 8
-// A short debounce avoids wasting bandwidth while a fling is still moving, without leaving the
-// next row blank for the old 650 ms after the user stops scrolling.
-private const val SEARCH_COVER_PRELOAD_SETTLE_MILLIS = 160L
+// A responsive debounce avoids wasting bandwidth while a fling is still moving, without delaying
+// look-ahead prefetching so long that cards remain cold during a continuous glide.
+private const val SEARCH_COVER_PRELOAD_SETTLE_MILLIS = 48L
+
 
 /**
  * Forum content can contain links to both native NovalPie routes and arbitrary external sites.
@@ -3957,6 +3958,10 @@ private fun SearchScreen(
                 books = results.value,
                 visibleBookIds = visibleIds,
                 columnCount = searchColumnCount,
+                preloadCount = searchCoverPreloadCount(
+                    columnCount = searchColumnCount,
+                    rowCount = 2,
+                ),
                 allowSpeculativePreload = true,
             )
         }
@@ -3997,6 +4002,7 @@ private fun SearchScreen(
             }
         }
     }
+    val searchFlingBehavior = rememberSmoothFlowFlingBehavior()
     // One LazyVerticalGrid, matching the bookshelf. Results use their actual book id as the key,
     // so Compose reuses cells after pagination and the column count can adapt with the window.
     // Every non-result section remains a full-width span in the same continuous scroll.
@@ -4011,7 +4017,8 @@ private fun SearchScreen(
             bottom = NovalPieSpacing.listBottom
         ),
         horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.md),
-        verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.md)
+        verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.md),
+        flingBehavior = searchFlingBehavior,
     ) {
         sectionOrder.forEach { section ->
             when (section) {
@@ -9783,11 +9790,11 @@ internal fun NovelCardItem(
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
-    val preview = novelSearchPreview(book)
-    val thumbnailCoverUrl = novelThumbnailCoverUrl(book)
-    val previewCoverUrl = novelDisplayCoverUrl(book)
-    val coverBadges = novelCardCoverBadges(book)
-    val contentTags = novelCardContentTags(book)
+    val preview = remember(book.id) { novelSearchPreview(book) }
+    val thumbnailCoverUrl = remember(book.id) { novelThumbnailCoverUrl(book) }
+    val previewCoverUrl = remember(book.id) { novelDisplayCoverUrl(book) }
+    val coverBadges = remember(book.id) { novelCardCoverBadges(book) }
+    val contentTags = remember(book.id) { novelCardContentTags(book) }
     val tagAreaMinHeight = gridTagLineCount
         ?.let(::searchGridTagAreaMinHeightDp)
         ?.dp
@@ -9796,7 +9803,7 @@ internal fun NovelCardItem(
         ?.let(::searchGridMetricAreaMinHeightDp)
         ?.dp
         ?: SEARCH_GRID_METRIC_MIN_AREA_HEIGHT_DP.dp
-    val compactMetrics = novelCardCompactMetrics(book)
+    val compactMetrics = remember(book.id) { novelCardCompactMetrics(book) }
     val cardClickModifier = if (onLongClick == null) {
         Modifier.clickable(onClick = onClick)
     } else {
@@ -11541,7 +11548,7 @@ private fun BookCoverLoadingFallback(value: String) {
         value,
         style = MaterialTheme.typography.titleLarge,
         fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
     )
 }
 
