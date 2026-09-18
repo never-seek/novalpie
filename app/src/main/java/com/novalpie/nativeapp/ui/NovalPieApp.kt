@@ -224,6 +224,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
+import coil.request.Disposable
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.novalpie.nativeapp.MainActivity
@@ -298,9 +299,6 @@ internal val LocalForumSpoilerPreference = compositionLocalOf {
 }
 private const val SOURCE_SEARCH_SUBMISSION_SETTLE_MILLIS = 96L
 private const val MAX_FORUM_FOLD_DEPTH = 8
-// A responsive debounce avoids wasting bandwidth while a fling is still moving, without delaying
-// look-ahead prefetching so long that cards remain cold during a continuous glide.
-private const val SEARCH_COVER_PRELOAD_SETTLE_MILLIS = 48L
 
 
 /**
@@ -3945,38 +3943,43 @@ private fun SearchScreen(
     // avoiding top-level recomposition passes while the grid flings.
     LaunchedEffect(searchGridState, results, searchColumnCount) {
         if (results !is LoadResult.Success) return@LaunchedEffect
-        snapshotFlow {
-            val allow = searchGridState.firstVisibleItemIndex > 2
-            if (!allow) return@snapshotFlow emptyList()
-            val visibleIds = searchGridState.layoutInfo.visibleItemsInfo.flatMap { item ->
-                when (val key = item.key) {
-                    is Long -> listOf(key)
-                    else -> searchGridRowBookIds(key)
-                }
-            }
-            searchCoverPreloadUrlsAfterVisible(
-                books = results.value,
-                visibleBookIds = visibleIds,
-                columnCount = searchColumnCount,
-                preloadCount = searchCoverPreloadCount(
-                    columnCount = searchColumnCount,
-                    rowCount = 2,
-                ),
-                allowSpeculativePreload = true,
-            )
-        }
-            .distinctUntilChanged()
-            .collectLatest { urls ->
-                if (urls.isNotEmpty()) {
-                    delay(SEARCH_COVER_PRELOAD_SETTLE_MILLIS)
-                    val prefetches = preloadNovalPieBookCovers(context, urls)
-                    try {
-                        awaitCancellation()
-                    } finally {
-                        prefetches.forEach { it.dispose() }
+        val enqueuedUrls = initialCoverPreloadUrls.toMutableSet()
+        val activeDisposables = mutableListOf<Disposable>()
+        try {
+            snapshotFlow {
+                val visibleIds = searchGridState.layoutInfo.visibleItemsInfo.flatMap { item ->
+                    when (val key = item.key) {
+                        is Long -> listOf(key)
+                        else -> searchGridRowBookIds(key)
                     }
                 }
+                if (visibleIds.isEmpty()) return@snapshotFlow emptyList()
+                searchCoverPreloadUrlsAfterVisible(
+                    books = results.value,
+                    visibleBookIds = visibleIds,
+                    columnCount = searchColumnCount,
+                    preloadCount = searchCoverPreloadCount(
+                        columnCount = searchColumnCount,
+                        rowCount = 2,
+                    ),
+                    allowSpeculativePreload = true,
+                )
             }
+                .distinctUntilChanged()
+                .collect { urls ->
+                    val freshUrls = urls.filter { enqueuedUrls.add(it) }
+                    if (freshUrls.isNotEmpty()) {
+                        val newPrefetches = preloadNovalPieBookCovers(
+                            context = context,
+                            urls = freshUrls,
+                            maxPreloadCount = freshUrls.size,
+                        )
+                        activeDisposables.addAll(newPrefetches)
+                    }
+                }
+        } finally {
+            activeDisposables.forEach { it.dispose() }
+        }
     }
     val gridFontScale = searchConfiguration.fontScale
     val gridTagContentWidthDp = searchGridTagContentWidth
@@ -9790,11 +9793,11 @@ internal fun NovelCardItem(
     onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
-    val preview = remember(book.id) { novelSearchPreview(book) }
-    val thumbnailCoverUrl = remember(book.id) { novelThumbnailCoverUrl(book) }
-    val previewCoverUrl = remember(book.id) { novelDisplayCoverUrl(book) }
-    val coverBadges = remember(book.id) { novelCardCoverBadges(book) }
-    val contentTags = remember(book.id) { novelCardContentTags(book) }
+    val preview = remember(book) { novelSearchPreview(book) }
+    val thumbnailCoverUrl = remember(book) { novelThumbnailCoverUrl(book) }
+    val previewCoverUrl = remember(book) { novelDisplayCoverUrl(book) }
+    val coverBadges = remember(book) { novelCardCoverBadges(book) }
+    val contentTags = remember(book) { novelCardContentTags(book) }
     val tagAreaMinHeight = gridTagLineCount
         ?.let(::searchGridTagAreaMinHeightDp)
         ?.dp
@@ -9803,7 +9806,7 @@ internal fun NovelCardItem(
         ?.let(::searchGridMetricAreaMinHeightDp)
         ?.dp
         ?: SEARCH_GRID_METRIC_MIN_AREA_HEIGHT_DP.dp
-    val compactMetrics = remember(book.id) { novelCardCompactMetrics(book) }
+    val compactMetrics = remember(book) { novelCardCompactMetrics(book) }
     val cardClickModifier = if (onLongClick == null) {
         Modifier.clickable(onClick = onClick)
     } else {
@@ -10026,12 +10029,12 @@ internal fun NovelSearchListItem(
     onPreview: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
-    val preview = novelSearchPreview(book)
-    val thumbnailCoverUrl = novelThumbnailCoverUrl(book)
-    val previewCoverUrl = novelDisplayCoverUrl(book)
-    val coverBadges = novelCardCoverBadges(book)
-    val contentTags = novelCardContentTags(book)
-    val compactMetrics = novelCardCompactMetrics(book)
+    val preview = remember(book) { novelSearchPreview(book) }
+    val thumbnailCoverUrl = remember(book) { novelThumbnailCoverUrl(book) }
+    val previewCoverUrl = remember(book) { novelDisplayCoverUrl(book) }
+    val coverBadges = remember(book) { novelCardCoverBadges(book) }
+    val contentTags = remember(book) { novelCardContentTags(book) }
+    val compactMetrics = remember(book) { novelCardCompactMetrics(book) }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -11544,12 +11547,9 @@ private const val LONG_PRESS_RELEASE_WAIT_TIMEOUT_MILLIS = 15_000L
 
 @Composable
 private fun BookCoverLoadingFallback(value: String) {
-    Text(
-        value,
-        style = MaterialTheme.typography.titleLarge,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
-    )
+    // Intentionally empty: the parent container already provides a calm surfaceVariant
+    // background matching web novalpie.cc card placeholders. Omitting text rendering while images
+    // load avoids visual glyph flickering and text layout thrashing during rapid scrolling.
 }
 
 @Composable

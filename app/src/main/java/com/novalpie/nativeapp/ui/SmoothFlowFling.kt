@@ -19,17 +19,18 @@ import kotlin.math.abs
  * uses platform spline decay with high friction (0.015), halting abruptly after ~1 screenful.
  * This behavior provides the web browser's continuous, fluid gliding flow.
  */
-internal const val SMOOTH_FLOW_FLING_DEFAULT_FRICTION = 0.82f
-internal const val SMOOTH_FLOW_FLING_VELOCITY_THRESHOLD = 0.5f
+internal const val SMOOTH_FLOW_FLING_DEFAULT_FRICTION = 0.28f
+internal const val SMOOTH_FLOW_FLING_VELOCITY_THRESHOLD = 15f
 
 @Composable
 internal fun rememberSmoothFlowFlingBehavior(
     frictionMultiplier: Float = SMOOTH_FLOW_FLING_DEFAULT_FRICTION,
+    absVelocityThreshold: Float = SMOOTH_FLOW_FLING_VELOCITY_THRESHOLD,
 ): FlingBehavior {
-    val decay = remember(frictionMultiplier) {
+    val decay = remember(frictionMultiplier, absVelocityThreshold) {
         exponentialDecay<Float>(
             frictionMultiplier = frictionMultiplier,
-            absVelocityThreshold = SMOOTH_FLOW_FLING_VELOCITY_THRESHOLD,
+            absVelocityThreshold = absVelocityThreshold,
         )
     }
     return remember(decay) {

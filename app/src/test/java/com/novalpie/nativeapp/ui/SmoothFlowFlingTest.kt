@@ -47,12 +47,15 @@ class SmoothFlowFlingTest {
                 }
             }
             val fling = SmoothFlowFlingBehavior(
-                exponentialDecay(frictionMultiplier = 0.82f, absVelocityThreshold = 0.5f)
+                exponentialDecay(
+                    frictionMultiplier = SMOOTH_FLOW_FLING_DEFAULT_FRICTION,
+                    absVelocityThreshold = SMOOTH_FLOW_FLING_VELOCITY_THRESHOLD,
+                )
             )
             with(fling) {
                 val remaining = scope.performFling(3000f)
-                assertTrue("Total scrolled distance must be substantial: $totalScrolled", totalScrolled > 500f)
-                assertTrue("Velocity should decay near zero: $remaining", abs(remaining) <= 1f)
+                assertTrue("Total scrolled distance must be substantial: $totalScrolled", totalScrolled > 2000f)
+                assertTrue("Velocity should decay near threshold: $remaining", abs(remaining) <= SMOOTH_FLOW_FLING_VELOCITY_THRESHOLD + 1f)
             }
         }
     }
@@ -68,12 +71,15 @@ class SmoothFlowFlingTest {
                 }
             }
             val fling = SmoothFlowFlingBehavior(
-                exponentialDecay(frictionMultiplier = 0.82f, absVelocityThreshold = 0.5f)
+                exponentialDecay(
+                    frictionMultiplier = SMOOTH_FLOW_FLING_DEFAULT_FRICTION,
+                    absVelocityThreshold = SMOOTH_FLOW_FLING_VELOCITY_THRESHOLD,
+                )
             )
             with(fling) {
                 val remaining = scope.performFling(-3000f)
-                assertTrue("Total scrolled distance must be negative: $totalScrolled", totalScrolled < -500f)
-                assertTrue("Velocity should decay near zero: $remaining", abs(remaining) <= 1f)
+                assertTrue("Total scrolled distance must be negative: $totalScrolled", totalScrolled < -2000f)
+                assertTrue("Velocity should decay near threshold: $remaining", abs(remaining) <= SMOOTH_FLOW_FLING_VELOCITY_THRESHOLD + 1f)
             }
         }
     }
@@ -94,7 +100,10 @@ class SmoothFlowFlingTest {
                 }
             }
             val fling = SmoothFlowFlingBehavior(
-                exponentialDecay(frictionMultiplier = 0.82f, absVelocityThreshold = 0.5f)
+                exponentialDecay(
+                    frictionMultiplier = SMOOTH_FLOW_FLING_DEFAULT_FRICTION,
+                    absVelocityThreshold = SMOOTH_FLOW_FLING_VELOCITY_THRESHOLD,
+                )
             )
             with(fling) {
                 val remaining = scope.performFling(5000f)
