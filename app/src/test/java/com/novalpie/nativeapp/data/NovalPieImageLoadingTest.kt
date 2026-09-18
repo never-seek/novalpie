@@ -90,6 +90,43 @@ class NovalPieImageLoadingTest {
     }
 
     @Test
+    fun visibleCoverRequestLeavesDispatcherUnconstrainedWhileSpeculativePreloadIsThrottled() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val visibleRequest = novalPieBookCoverRequest(
+            context = context,
+            url = "https://novalpie.cc/cover.jpg",
+            priority = NovelCoverLoadPriority.Visible,
+        )
+        val speculativeRequest = novalPieBookCoverRequest(
+            context = context,
+            url = "https://novalpie.cc/cover.jpg",
+            priority = NovelCoverLoadPriority.Speculative,
+        )
+
+        assertEquals(
+            "Visible cover requests must use unconstrained Dispatchers.IO.",
+            kotlinx.coroutines.Dispatchers.IO,
+            visibleRequest.decoderDispatcher,
+        )
+        assertNull(
+            "Visible cover requests must not override decoderDispatcher.",
+            visibleRequest.defined.decoderDispatcher,
+        )
+        assertNull(
+            "Visible cover requests must not override fetcherDispatcher.",
+            visibleRequest.defined.fetcherDispatcher,
+        )
+        assertNotNull(
+            "Speculative preload requests must bound their decoderDispatcher.",
+            speculativeRequest.defined.decoderDispatcher,
+        )
+        assertNotNull(
+            "Speculative preload requests must bound their fetcherDispatcher.",
+            speculativeRequest.defined.fetcherDispatcher,
+        )
+    }
+
+    @Test
     fun smallForumCoverUsesAUsefulDisplayBoundInsteadOfTheFullGridDecode() {
         assertEquals(
             NovelCoverRequestSize(widthPx = 96, heightPx = 144),

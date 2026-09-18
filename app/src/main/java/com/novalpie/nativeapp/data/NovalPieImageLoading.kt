@@ -28,13 +28,11 @@ private const val NOVALPIE_MIN_THUMBNAIL_HEIGHT_PX = 144
 /** Keep speculative cover work below the visible grid's network demand. */
 internal const val NOVALPIE_BOOK_COVER_PREFETCH_BATCH_SIZE = 4
 private const val NOVALPIE_BITMAP_FACTORY_MAX_PARALLELISM = 2
-private const val NOVALPIE_DECODER_MAX_PARALLELISM = 3
 private const val NOVALPIE_STATIC_IMAGE_CACHE_PREFIX = "novalpie-static-image:"
 
 // Source covers are original files rather than CDN thumbnails. Limit background fetches so a
 // quick search scroll never makes the visible two-card row wait behind an off-screen batch.
 private val coverPrefetchDispatcher = Dispatchers.IO.limitedParallelism(2)
-private val coverDecoderDispatcher = Dispatchers.IO.limitedParallelism(NOVALPIE_DECODER_MAX_PARALLELISM)
 
 /** Visible cards and the just-returned first row must never wait behind speculative scrolling. */
 internal enum class NovelCoverLoadPriority {
@@ -106,7 +104,6 @@ internal fun buildNovalPieImageLoader(
         // during a fast grid fling; two queued decodes retain the same image quality and leave a
         // core available for Compose's next frame.
         .bitmapFactoryMaxParallelism(NOVALPIE_BITMAP_FACTORY_MAX_PARALLELISM)
-        .decoderDispatcher(coverDecoderDispatcher)
         .crossfade(true)
         .build()
 
