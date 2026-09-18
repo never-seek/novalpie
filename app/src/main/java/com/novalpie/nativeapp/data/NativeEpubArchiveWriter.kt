@@ -61,8 +61,10 @@ data class NativeEpubExportProgress(
     val totalImages: Int = 0,
     val completedImages: Int = 0,
     val failedImages: Int = 0,
+    val coverFailed: Boolean = false,
     val currentChapterTitle: String? = null,
     val currentImageUrl: String? = null,
+    val statusLog: String? = null,
 )
 
 /** Immutable transformed text for one source chapter; binary assets remain outside this contract. */
@@ -371,8 +373,12 @@ object NativeEpubArchiveWriter {
     private const val EPUB_MIMETYPE = "application/epub+zip"
     private const val IMAGE_TOKEN_PREFIX = "__NOVALPIE_IMAGE_"
     private const val IMAGE_TOKEN_SUFFIX = "__"
-    private const val IMAGE_OPEN_MAX_ATTEMPTS = 4
-    private const val IMAGE_RETRY_DELAY_MILLIS = 150L
+    private const val IMAGE_OPEN_MAX_ATTEMPTS = 5
+    private fun calculateImageRetryDelay(attempt: Int): Long {
+        val expDelay = 400L * (1L shl attempt.coerceIn(0, 4))
+        val jitter = (Math.random() * 250).toLong()
+        return minOf(6000L, expDelay + jitter)
+    }
     private const val DEFAULT_IMAGE_CONCURRENCY = 6
     internal const val DEFAULT_STAGED_ASSET_CACHE_MAX_BYTES = 128L * 1024L * 1024L
 
@@ -498,6 +504,7 @@ object NativeEpubArchiveWriter {
         zipCompressionLevel: Int = DEFAULT_DOWNLOAD_ZIP_COMPRESSION_LEVEL,
         stagingDirectory: File? = null,
         stagedAssetCacheMaxBytes: Long = DEFAULT_STAGED_ASSET_CACHE_MAX_BYTES,
+        allowMissingCover: Boolean = false,
         awaitIfPaused: suspend () -> Unit = {},
         onProgress: (NativeEpubExportProgress) -> Unit = {},
         reconcileSourceImages: suspend (chapterOrder: Int, body: String) -> String = { _, body -> body },
@@ -514,6 +521,7 @@ object NativeEpubArchiveWriter {
         val effectiveImageConcurrency = imageConcurrency.coerceAtLeast(1)
         var completedImages = 0
         var failedImages = 0
+        var coverFailed = false
         var nextImageNumber = 1
 
         try {
@@ -525,12 +533,27 @@ object NativeEpubArchiveWriter {
                 writeStoredText(zip, "mimetype", EPUB_MIMETYPE)
                 writeText(zip, "META-INF/container.xml", containerXml())
 
+                fun totalImageCount(): Int = images.size
+                fun completedImageCount(): Int = completedImages
+                fun failedImageCount(): Int = failedImages
+
                 val coverRecord = metadata.coverUrl
                     ?.let(::normalizeAssetUrl)
                     ?.takeIf(String::isNotBlank)
                     ?.let { coverUrl ->
                         awaitIfPaused()
                         stagedAssets.trim(protectedKeys = setOf(coverUrl))
+                        onProgress(
+                            NativeEpubExportProgress(
+                                completedChapters = chapters.size,
+                                totalImages = totalImageCount(),
+                                completedImages = completedImageCount(),
+                                failedImages = failedImageCount(),
+                                coverFailed = coverFailed,
+                                currentImageUrl = coverUrl,
+                                statusLog = "正在下载封面图片...",
+                            ),
+                        )
                         val staged = stageAsset(
                             stagedAssets = stagedAssets,
                             url = coverUrl,
@@ -540,6 +563,19 @@ object NativeEpubArchiveWriter {
                             compressImages = compressImages,
                             imageQuality = imageQuality,
                             awaitIfPaused = awaitIfPaused,
+                            onRetry = { url, attempt, max ->
+                                onProgress(
+                                    NativeEpubExportProgress(
+                                        completedChapters = chapters.size,
+                                        totalImages = totalImageCount(),
+                                        completedImages = completedImageCount(),
+                                        failedImages = failedImageCount(),
+                                        coverFailed = coverFailed,
+                                        currentImageUrl = url,
+                                        statusLog = "封面图片重试中...（$attempt/$max）",
+                                    ),
+                                )
+                            },
                         )
                         val record = writeStagedImage(
                             zip = zip,
@@ -547,7 +583,35 @@ object NativeEpubArchiveWriter {
                             path = "images/cover.${imageExtension(staged.mediaType, coverUrl)}",
                             awaitIfPaused = awaitIfPaused,
                         )
-                        if(record.path==null)throw java.io.IOException("封面获取失败，未生成缺图 EPUB；可从检查点重试")
+                        if (record.path == null) {
+                            if (!allowMissingCover) {
+                                throw java.io.IOException("封面获取失败，未生成缺图 EPUB；可从检查点重试")
+                            }
+                            coverFailed = true
+                            onProgress(
+                                NativeEpubExportProgress(
+                                    completedChapters = chapters.size,
+                                    totalImages = totalImageCount(),
+                                    completedImages = completedImageCount(),
+                                    failedImages = failedImageCount(),
+                                    coverFailed = coverFailed,
+                                    currentImageUrl = coverUrl,
+                                    statusLog = "封面图片下载失败（已重试 $IMAGE_OPEN_MAX_ATTEMPTS 次）",
+                                ),
+                            )
+                        } else {
+                            onProgress(
+                                NativeEpubExportProgress(
+                                    completedChapters = chapters.size,
+                                    totalImages = totalImageCount(),
+                                    completedImages = completedImageCount(),
+                                    failedImages = failedImageCount(),
+                                    coverFailed = coverFailed,
+                                    currentImageUrl = coverUrl,
+                                    statusLog = "封面图片下载完成",
+                                ),
+                            )
+                        }
                         stagedAssets.trim()
                         record
                     }
@@ -560,13 +624,6 @@ object NativeEpubArchiveWriter {
                         writeText(zip, "OEBPS/cover.xhtml", coverPageXhtml(metadata, cover))
                     }
                 }
-
-                // The website reports illustration progress for chapter descriptors only. The
-                // cover is a separate EPUB phase and must not make the displayed image count one
-                // larger than the source chapter image baseline.
-                fun totalImageCount(): Int = images.size
-                fun completedImageCount(): Int = completedImages
-                fun failedImageCount(): Int = failedImages
 
                 suspend fun flushChapter(title: String, body: String) {
                     awaitIfPaused()
@@ -593,16 +650,38 @@ object NativeEpubArchiveWriter {
                         stagingDirectory = stagingDirectory,
                         awaitIfPaused = awaitIfPaused,
                         nextImageNumber = { nextImageNumber++ },
-                        onImageResult = { url, succeeded ->
+                        onImageResult = { url, succeeded, errorMsg ->
                             if (succeeded) completedImages++ else failedImages++
+                            val currentTotal = totalImageCount()
+                            val currentDone = completedImageCount() + failedImageCount()
+                            val log = if (succeeded) "插图 $currentDone/$currentTotal 已完成（成功 ${completedImageCount()} / 失败 ${failedImageCount()}）"
+                            else "插图 $currentDone/$currentTotal 失败：${errorMsg ?: "获取失败"}（成功 ${completedImageCount()} / 失败 ${failedImageCount()}）"
                             onProgress(
                                 NativeEpubExportProgress(
                                     completedChapters = chapters.size,
-                                    totalImages = totalImageCount(),
+                                    totalImages = currentTotal,
                                     completedImages = completedImageCount(),
                                     failedImages = failedImageCount(),
+                                    coverFailed = coverFailed,
                                     currentChapterTitle = chapterTitle,
                                     currentImageUrl = url,
+                                    statusLog = log,
+                                )
+                            )
+                        },
+                        onImageRetry = { url, attempt, max ->
+                            val currentTotal = totalImageCount()
+                            val currentDone = completedImageCount() + failedImageCount() + 1
+                            onProgress(
+                                NativeEpubExportProgress(
+                                    completedChapters = chapters.size,
+                                    totalImages = currentTotal,
+                                    completedImages = completedImageCount(),
+                                    failedImages = failedImageCount(),
+                                    coverFailed = coverFailed,
+                                    currentChapterTitle = chapterTitle,
+                                    currentImageUrl = url,
+                                    statusLog = "插图 $currentDone/$currentTotal 重试中...（$attempt/$max）",
                                 )
                             )
                         },
@@ -615,7 +694,9 @@ object NativeEpubArchiveWriter {
                             completedImages = completedImageCount(),
                             totalImages = totalImageCount(),
                             failedImages = failedImageCount(),
+                            coverFailed = coverFailed,
                             currentChapterTitle = chapterTitle,
+                            statusLog = "第 ${chapters.size} 章《$chapterTitle》已完成",
                         )
                     )
                     stagedAssets.trim()
@@ -672,6 +753,16 @@ object NativeEpubArchiveWriter {
                 writeText(zip, "OEBPS/nav.xhtml", navigationXhtml(metadata.title, chapters))
                 writeText(zip, "OEBPS/toc.ncx", navigationNcx(metadata, chapters, coverRecord))
                 writeText(zip, "OEBPS/content.opf", packageXml(metadata, chapters, images, coverRecord))
+                onProgress(
+                    NativeEpubExportProgress(
+                        completedChapters = chapters.size,
+                        totalChapters = chapters.size,
+                        completedImages = completedImageCount(),
+                        totalImages = totalImageCount(),
+                        failedImages = failedImageCount(),
+                        statusLog = "EPUB 生成完成！",
+                    )
+                )
                 awaitIfPaused()
                 onProgress(
                     NativeEpubExportProgress(
@@ -772,7 +863,8 @@ object NativeEpubArchiveWriter {
         stagingDirectory: File?,
         awaitIfPaused: suspend () -> Unit,
         nextImageNumber: () -> Int,
-        onImageResult: (url: String, succeeded: Boolean) -> Unit,
+        onImageResult: (url: String, succeeded: Boolean, errorMsg: String?) -> Unit,
+        onImageRetry: (url: String, attempt: Int, max: Int) -> Unit = { _, _, _ -> },
     ): String {
         val matches = imageMatches(rawBody)
         if (matches.isEmpty()) return paragraphs(renderStyledText(rawBody, transformTextNode))
@@ -789,6 +881,7 @@ object NativeEpubArchiveWriter {
             imageQuality = imageQuality,
             stagingDirectory = stagingDirectory,
             awaitIfPaused = awaitIfPaused,
+            onRetry = onImageRetry,
         )
 
         val rendered = StringBuilder()
@@ -810,6 +903,7 @@ object NativeEpubArchiveWriter {
                     compressImages = compressImages,
                     imageQuality = imageQuality,
                     awaitIfPaused = awaitIfPaused,
+                    onRetry = onImageRetry,
                 )
             val record = writeStagedImage(
                 zip = zip,
@@ -819,7 +913,7 @@ object NativeEpubArchiveWriter {
             )
             imageRecords += record
             val index = imageRecords.lastIndex
-            onImageResult(url, record.path != null)
+            onImageResult(url, record.path != null, record.error)
             val token = "$IMAGE_TOKEN_PREFIX${index}$IMAGE_TOKEN_SUFFIX"
             rendered.append(token)
             cursor = match.range.last + 1
@@ -849,6 +943,7 @@ object NativeEpubArchiveWriter {
                 val styles = formatted.spanStyles.filter { it.start <= start && it.end >= end }.map { it.item }
                 val bold = styles.any { (it.fontWeight?.weight ?: 0) >= 600 }
                 val italic = styles.any { it.fontStyle == androidx.compose.ui.text.font.FontStyle.Italic }
+                val underline = styles.any { it.textDecoration?.contains(androidx.compose.ui.text.style.TextDecoration.Underline) == true }
                 val strike = styles.any { it.textDecoration?.contains(androidx.compose.ui.text.style.TextDecoration.LineThrough) == true }
                 val text = escapeXml(transform(formatted.text.substring(start, end))).replace("\r", "")
                 text.split(Regex("\n\\s*\n")).forEachIndexed { index, part ->
@@ -856,9 +951,11 @@ object NativeEpubArchiveWriter {
                     if (part.isNotEmpty()) {
                         if (bold) append("<strong>")
                         if (italic) append("<em>")
+                        if (underline) append("<u>")
                         if (strike) append("<del>")
                         append(part)
                         if (strike) append("</del>")
+                        if (underline) append("</u>")
                         if (italic) append("</em>")
                         if (bold) append("</strong>")
                     }
@@ -879,6 +976,7 @@ object NativeEpubArchiveWriter {
         imageQuality: Int = DEFAULT_DOWNLOAD_IMAGE_QUALITY,
         stagingDirectory: File?,
         awaitIfPaused: suspend () -> Unit,
+        onRetry: ((url: String, attempt: Int, max: Int) -> Unit)? = null,
     ): Map<String, StagedAsset> {
         val uniqueUrls = urls.distinct()
         if (uniqueUrls.isEmpty()) return emptyMap()
@@ -904,6 +1002,7 @@ object NativeEpubArchiveWriter {
                             compressImages = compressImages,
                             imageQuality = imageQuality,
                             awaitIfPaused = awaitIfPaused,
+                            onRetry = onRetry,
                         )
                     }
                 }
@@ -934,6 +1033,7 @@ object NativeEpubArchiveWriter {
         compressImages: Boolean = false,
         imageQuality: Int = DEFAULT_DOWNLOAD_IMAGE_QUALITY,
         awaitIfPaused: suspend () -> Unit,
+        onRetry: ((url: String, attempt: Int, max: Int) -> Unit)? = null,
     ): StagedAsset {
         // Share only successful bytes. The website retries each descriptor independently; caching
         // a transient failure would turn one bad request into missing images for every later
@@ -947,7 +1047,7 @@ object NativeEpubArchiveWriter {
             )
         }
         awaitIfPaused()
-        val staged = stageAssetUncached(url, openAsset, stagingDirectory, compressImages, imageQuality, awaitIfPaused)
+        val staged = stageAssetUncached(url, openAsset, stagingDirectory, compressImages, imageQuality, awaitIfPaused, onRetry)
         if (staged.file != null) {
             stagedAssets.put(
                 key = url,
@@ -970,6 +1070,7 @@ object NativeEpubArchiveWriter {
         compressImages: Boolean = false,
         imageQuality: Int = DEFAULT_DOWNLOAD_IMAGE_QUALITY,
         awaitIfPaused: suspend () -> Unit,
+        onRetry: ((url: String, attempt: Int, max: Int) -> Unit)? = null,
     ): StagedAsset {
         var lastFailure: Throwable? = null
         repeat(IMAGE_OPEN_MAX_ATTEMPTS) { attempt ->
@@ -1008,8 +1109,9 @@ object NativeEpubArchiveWriter {
                 temporary?.delete()
                 lastFailure = failure
                 if (attempt + 1 < IMAGE_OPEN_MAX_ATTEMPTS) {
+                    onRetry?.invoke(url, attempt + 1, IMAGE_OPEN_MAX_ATTEMPTS)
                     awaitIfPaused()
-                    delay(IMAGE_RETRY_DELAY_MILLIS)
+                    delay(calculateImageRetryDelay(attempt))
                 }
             }
         }

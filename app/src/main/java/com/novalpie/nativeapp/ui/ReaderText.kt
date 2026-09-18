@@ -358,13 +358,26 @@ private fun addReaderFormattedParagraph(
 }
 
 /**
- * The source mixes rendered HTML with plain Markdown in chapter bodies. Html.fromHtml() preserves
- * `<strong>` spans but deliberately leaves `**strong**` and `__strong__` untouched, so normalize
- * the latter after HTML span extraction and remap the existing offsets as delimiters disappear.
+ * The source mixes rendered HTML with plain Markdown and BBCode in chapter bodies. Normalize
+ * formatting marks (Markdown, BBCode, and inline HTML), remap existing span offsets across
+ * multi-pass nested styles, and eliminate raw formatting tokens from the visible text.
  */
 internal fun applyMarkdownRanges(paragraph: ReaderFormattedParagraph): ReaderFormattedParagraph {
+    var current = paragraph
+    var passes = 0
+    while (passes < 5) {
+        val next = applyStylePass(current)
+        if (next.text == current.text) break
+        current = next
+        passes++
+    }
+    return current
+}
+
+private fun applyStylePass(paragraph: ReaderFormattedParagraph): ReaderFormattedParagraph {
     val source = paragraph.text
-    if (!source.contains("**") && !source.contains("__") && !source.contains('*') && !source.contains('_') && !source.contains("~~")) return paragraph
+    if (!source.contains('*') && !source.contains('_') && !source.contains("~~") &&
+        !source.contains('[') && !source.contains('<')) return paragraph
 
     val output = StringBuilder(source.length)
     val outputOffsets = IntArray(source.length + 1)
@@ -373,14 +386,15 @@ internal fun applyMarkdownRanges(paragraph: ReaderFormattedParagraph): ReaderFor
     while (cursor < source.length) {
         outputOffsets[cursor] = output.length
         val delimiter = markdownStyleDelimiterAt(source, cursor)
-        val closingIndex = delimiter?.let { markdownStyleClosingIndex(source, cursor + it.token.length, it.token) }
-        if (delimiter == null || closingIndex == null) {
+        val closingMatch = delimiter?.let { markdownStyleClosingIndex(source, cursor + it.openLength, it.closeToken) }
+        if (delimiter == null || closingMatch == null) {
             output.append(source[cursor])
             cursor += 1
             continue
         }
 
-        val delimiterEnd = cursor + delimiter.token.length
+        val (closingIndex, closingLength) = closingMatch
+        val delimiterEnd = cursor + delimiter.openLength
         (cursor until delimiterEnd).forEach { index -> outputOffsets[index] = output.length }
         val boldStart = output.length
         var inner = delimiterEnd
@@ -390,10 +404,10 @@ internal fun applyMarkdownRanges(paragraph: ReaderFormattedParagraph): ReaderFor
             inner += 1
         }
         val boldEnd = output.length
-        (closingIndex until (closingIndex + delimiter.token.length)).forEach { index ->
+        (closingIndex until (closingIndex + closingLength)).forEach { index ->
             outputOffsets[index] = output.length
         }
-        cursor = closingIndex + delimiter.token.length
+        cursor = closingIndex + closingLength
         outputOffsets[cursor] = output.length
         markdownRanges += AnnotatedString.Range(
             item = delimiter.style,
@@ -415,28 +429,75 @@ internal fun applyMarkdownRanges(paragraph: ReaderFormattedParagraph): ReaderFor
 }
 
 private data class ReaderMarkdownStyleDelimiter(
-    val token: String,
+    val openLength: Int,
+    val closeToken: String,
     val style: SpanStyle,
 )
 
+private fun bbcodeStyleDelimiterAt(value: String, index: Int): ReaderMarkdownStyleDelimiter? {
+    if (index >= value.length || value[index] != '[' || isMarkdownEscaped(value, index)) return null
+    val closeBracket = value.indexOf(']', index)
+    if (closeBracket <= index + 1 || closeBracket - index > 10) return null
+    val tag = value.substring(index + 1, closeBracket).lowercase()
+    val style = when (tag) {
+        "b", "strong" -> SpanStyle(fontWeight = FontWeight.Bold)
+        "i", "em" -> SpanStyle(fontStyle = FontStyle.Italic)
+        "u" -> SpanStyle(textDecoration = TextDecoration.Underline)
+        "s", "del", "strike" -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+        else -> return null
+    }
+    return ReaderMarkdownStyleDelimiter(openLength = closeBracket - index + 1, closeToken = "[/$tag]", style = style)
+}
+
+private fun htmlStyleDelimiterAt(value: String, index: Int): ReaderMarkdownStyleDelimiter? {
+    if (index >= value.length || value[index] != '<' || isMarkdownEscaped(value, index)) return null
+    val closeAngle = value.indexOf('>', index)
+    if (closeAngle <= index + 1 || closeAngle - index > 60) return null
+    val fullTag = value.substring(index + 1, closeAngle).trim()
+    val tagName = fullTag.takeWhile { it.isLetter() }.lowercase()
+    val style = when (tagName) {
+        "b", "strong" -> SpanStyle(fontWeight = FontWeight.Bold)
+        "i", "em" -> SpanStyle(fontStyle = FontStyle.Italic)
+        "u" -> SpanStyle(textDecoration = TextDecoration.Underline)
+        "s", "del", "strike" -> SpanStyle(textDecoration = TextDecoration.LineThrough)
+        else -> return null
+    }
+    return ReaderMarkdownStyleDelimiter(openLength = closeAngle - index + 1, closeToken = "</$tagName>", style = style)
+}
+
 private fun markdownStyleDelimiterAt(value: String, index: Int): ReaderMarkdownStyleDelimiter? {
     if (isMarkdownEscaped(value, index)) return null
+    bbcodeStyleDelimiterAt(value, index)?.let { return it }
+    htmlStyleDelimiterAt(value, index)?.let { return it }
     return when {
-        value.startsWith("**", index) -> ReaderMarkdownStyleDelimiter("**", SpanStyle(fontWeight = FontWeight.Bold))
-        value.startsWith("__", index) -> ReaderMarkdownStyleDelimiter("__", SpanStyle(fontWeight = FontWeight.Bold))
-        value.startsWith("~~", index) -> ReaderMarkdownStyleDelimiter("~~", SpanStyle(textDecoration = TextDecoration.LineThrough))
-        value.startsWith("*", index) && !value.startsWith("**", index) -> ReaderMarkdownStyleDelimiter("*", SpanStyle(fontStyle = FontStyle.Italic))
-        value.startsWith("_", index) && !value.startsWith("__", index) -> ReaderMarkdownStyleDelimiter("_", SpanStyle(fontStyle = FontStyle.Italic))
+        value.startsWith("***", index) -> ReaderMarkdownStyleDelimiter(3, "***", SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic))
+        value.startsWith("___", index) -> ReaderMarkdownStyleDelimiter(3, "___", SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic))
+        value.startsWith("**", index) -> ReaderMarkdownStyleDelimiter(2, "**", SpanStyle(fontWeight = FontWeight.Bold))
+        value.startsWith("__", index) -> ReaderMarkdownStyleDelimiter(2, "__", SpanStyle(fontWeight = FontWeight.Bold))
+        value.startsWith("~~", index) -> ReaderMarkdownStyleDelimiter(2, "~~", SpanStyle(textDecoration = TextDecoration.LineThrough))
+        value.startsWith("*", index) && !value.startsWith("**", index) -> ReaderMarkdownStyleDelimiter(1, "*", SpanStyle(fontStyle = FontStyle.Italic))
+        value.startsWith("_", index) && !value.startsWith("__", index) -> ReaderMarkdownStyleDelimiter(1, "_", SpanStyle(fontStyle = FontStyle.Italic))
         else -> null
     }
 }
 
-private fun markdownStyleClosingIndex(value: String, start: Int, delimiter: String): Int? {
-    var candidate = value.indexOf(delimiter, start)
+private fun markdownStyleClosingIndex(value: String, start: Int, closeToken: String): Pair<Int, Int>? {
+    var candidate = value.indexOf(closeToken, start, ignoreCase = true)
     while (candidate >= 0) {
         val content = value.substring(start, candidate)
-        if (content.any { !it.isWhitespace() } && !isMarkdownEscaped(value, candidate)) return candidate
-        candidate = value.indexOf(delimiter, candidate + delimiter.length)
+        if (content.any { !it.isWhitespace() } && !isMarkdownEscaped(value, candidate)) return candidate to closeToken.length
+        candidate = value.indexOf(closeToken, candidate + closeToken.length, ignoreCase = true)
+    }
+    if (closeToken.startsWith("</") && closeToken.endsWith(">")) {
+        val tag = closeToken.removeSurrounding("</", ">")
+        val regex = Regex("</\\s*${Regex.escape(tag)}\\s*>", RegexOption.IGNORE_CASE)
+        val match = regex.find(value, start)
+        if (match != null) {
+            val content = value.substring(start, match.range.first)
+            if (content.any { !it.isWhitespace() } && !isMarkdownEscaped(value, match.range.first)) {
+                return match.range.first to match.value.length
+            }
+        }
     }
     return null
 }

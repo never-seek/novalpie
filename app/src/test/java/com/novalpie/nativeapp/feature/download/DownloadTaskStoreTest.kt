@@ -88,4 +88,19 @@ class DownloadTaskStoreTest {
         assertEquals("ticket",recovered.tasks.single().authorizationFile)
         assertTrue(base.exists())
     }
+
+    @Test fun deleteRemovesTaskFileAndBackupAndEmitsRevision() {
+        val root=temporary.newFolder()
+        val store=DownloadTaskStore(root)
+        val t=task("task-to-delete")
+        store.save(t)
+        assertTrue(File(root,"task-to-delete.json").exists())
+        val revBefore = store.revisions.value
+        val deleted = store.delete("task-to-delete")
+        assertTrue(deleted)
+        assertFalse(File(root,"task-to-delete.json").exists())
+        assertTrue(store.revisions.value > revBefore)
+        val recovered = store.recover(100)
+        assertTrue(recovered.tasks.none { it.id == "task-to-delete" })
+    }
 }

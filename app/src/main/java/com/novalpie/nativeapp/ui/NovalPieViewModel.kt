@@ -691,6 +691,10 @@ data class NativeEpubDownloadState(
     /** A failed/cancelled job can be retried from the same native detail page. */
     val canRetry: Boolean = false,
     val completedUri: String? = null,
+    val logs: List<String> = emptyList(),
+    val awaitingFailureDecision: Boolean = false,
+    val failedImageCount: Int = 0,
+    val totalImageCount: Int = 0,
 )
 
 /** Global because a card can request its original before a detail route has been opened. */
@@ -4975,6 +4979,19 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             return
         }
         NativeDownloadService.start(getApplication(),task.copy(phase=DownloadPhase.Queued,failure=null))
+    }
+    fun dismissNativeBookDownload(bookId:Long) {
+        val container=AppContainer.from(getApplication())
+        val currentTask=container.downloads.state.value.task
+        if(currentTask?.bookId==bookId&&!container.downloads.state.value.busy) {
+            container.downloads.dismiss(currentTask.id)
+        }
+        if(nativeEpubDownloadState.bookId==bookId&&!nativeEpubDownloadState.busy) {
+            nativeEpubDownloadState=NativeEpubDownloadState(bookId=bookId)
+        }
+    }
+    fun resolveNativeDownloadFailureDecision(decision: com.novalpie.nativeapp.data.DownloadFailureDecision) {
+        AppContainer.from(getApplication()).downloads.resolveFailureDecision(decision)
     }
 
     /**

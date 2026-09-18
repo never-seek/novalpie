@@ -33,8 +33,16 @@ internal class DownloadHistoryViewModel(
     private val accountId:Long,
     private val store:DownloadTaskStore,
     private val coordinator:DownloadCoordinator,
+    private val workDirectory: java.io.File? = null,
     private val start:(DownloadTask)->Unit,
 ):ViewModel() {
+    constructor(
+        accountId: Long,
+        store: DownloadTaskStore,
+        coordinator: DownloadCoordinator,
+        start: (DownloadTask) -> Unit,
+    ) : this(accountId, store, coordinator, null, start)
+
     var state by mutableStateOf(DownloadHistoryState())
         private set
     init {
@@ -60,6 +68,22 @@ internal class DownloadHistoryViewModel(
     }
     fun cancel(task:DownloadTask) {
         if(task.accountId==accountId&&coordinator.state.value.task?.id==task.id)coordinator.cancel()
+    }
+    fun deleteTask(task:DownloadTask) {
+        if(task.accountId!=accountId)return
+        if(coordinator.state.value.busy&&coordinator.state.value.task?.id==task.id)return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                store.delete(task.id)
+                workDirectory?.let { dir ->
+                    val work = java.io.File(dir, task.id).canonicalFile
+                    if (work.parentFile == dir.canonicalFile) work.deleteRecursively()
+                }
+            }
+            coordinator.dismiss(task.id)
+            val recovered = withContext(Dispatchers.IO) { store.recover(accountId) }
+            state = state.copy(entries = downloadHistoryForAccount(accountId, recovered.tasks, coordinator.state.value))
+        }
     }
     fun feedback(message:String){state=state.copy(message=message)}
     fun dispose(){viewModelScope.cancel()}

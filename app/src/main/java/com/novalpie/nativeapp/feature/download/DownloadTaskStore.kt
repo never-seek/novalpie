@@ -73,6 +73,17 @@ internal class DownloadTaskStore(directory: File) {
         catch (failure: Throwable) { atomic.failWrite(output); throw failure }
     }
 
+    @Synchronized fun delete(id: String): Boolean {
+        return runCatching {
+            val file = ownedFile(id)
+            val bak = File(file.parentFile, "${file.name}.bak")
+            bak.delete()
+            val deleted = file.delete()
+            if (deleted) changes.value++
+            deleted
+        }.getOrDefault(false)
+    }
+
     @Synchronized fun recover(accountId: Long): RecoveredDownloads {
         val tasks = mutableListOf<DownloadTask>()
         val errors = mutableListOf<String>()

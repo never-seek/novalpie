@@ -76,4 +76,26 @@ class TaskExportImageReconcilerTest {
         reconciler.prepare(StringReader(source), 999)
         assertEquals(20, reads.get())
     }
+    @Test fun mismatchedChapterFallsBackToOriginalBodyWithoutCrashing() = runBlocking {
+        val folder = temp.newFolder()
+        val reconciler = TaskExportImageReconciler(folder) { listOf("https://images.test/other.png") }
+        val body = "正文\n[图片: $url]\n[图片: $url]"
+        val reconciled = reconciler.reconcile(1, body)
+        assertEquals(body, reconciled)
+        val mismatchFile = java.io.File(folder, "1-mismatch.json")
+        assertTrue(mismatchFile.isFile)
+    }
+    @Test fun concurrentPrecheckWithoutPreexistingDirectoryDoesNotCrash() = runBlocking {
+        val uncreatedDir = java.io.File(temp.root, "uncreated-reconciliation-dir")
+        assertFalse(uncreatedDir.exists())
+        val reconciler = TaskExportImageReconciler(uncreatedDir) {
+            listOf(url)
+        }
+        val source = (1..10).joinToString("\n") { "第${it}章\n[图片: $url]\n正文\n[图片: $url]" }
+        reconciler.prepare(StringReader(source), 4)
+        assertTrue(uncreatedDir.isDirectory)
+        for (i in 1..10) {
+            assertTrue(java.io.File(uncreatedDir, "$i.json").isFile)
+        }
+    }
 }

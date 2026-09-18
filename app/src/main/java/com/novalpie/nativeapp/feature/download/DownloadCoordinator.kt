@@ -12,10 +12,25 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-internal fun interface DownloadTaskRunner {
-    suspend fun run(task:DownloadTask,control:NativeDownloadControl,checkpoint:suspend (DownloadTask)->Unit):DownloadTask
+internal interface DownloadCheckpointCallback {
+    suspend fun onCheckpoint(task: DownloadTask, log: String? = null, awaitingDecision: Boolean = false)
+    suspend operator fun invoke(task: DownloadTask) = onCheckpoint(task, null, false)
+    suspend operator fun invoke(task: DownloadTask, log: String?) = onCheckpoint(task, log, false)
+    suspend operator fun invoke(task: DownloadTask, log: String?, awaitingDecision: Boolean) = onCheckpoint(task, log, awaitingDecision)
 }
-internal data class DownloadUiState(val task:DownloadTask?=null,val busy:Boolean=false,val message:String?=null)
+
+internal fun interface DownloadTaskRunner {
+    suspend fun run(task: DownloadTask, control: NativeDownloadControl, checkpoint: DownloadCheckpointCallback): DownloadTask
+}
+internal data class DownloadUiState(
+    val task: DownloadTask? = null,
+    val busy: Boolean = false,
+    val message: String? = null,
+    val logs: List<String> = emptyList(),
+    val awaitingFailureDecision: Boolean = false,
+    val failedImageCount: Int = 0,
+    val totalImageCount: Int = 0,
+)
 
 /** One app-owned worker; progress callbacks are bound to its generation, never a page instance. */
 internal class DownloadCoordinator(
@@ -25,6 +40,7 @@ internal class DownloadCoordinator(
 ) {
     private val mutable=MutableStateFlow(DownloadUiState())
     val state=mutable.asStateFlow()
+    private val logs = mutableListOf<String>()
     private var job:Job?=null
     private var control:NativeDownloadControl?=null
     private var generation=0L
@@ -41,25 +57,61 @@ internal class DownloadCoordinator(
         control=gate
         interruptedPhase=DownloadPhase.Cancelled
         interruptedMessage="下载已取消"
-        mutable.value=DownloadUiState(task,true)
+        logs.clear()
+        logs.add("已加入下载队列...")
+        mutable.value=DownloadUiState(
+            task = task,
+            busy = true,
+            logs = logs.toList(),
+            awaitingFailureDecision = false,
+            failedImageCount = task.failedAssets,
+            totalImageCount = task.totalAssets,
+        )
         job=scope.launch {
             try {
                 persistLatest(id)
-                val completed=runner.run(task,gate) { update ->
-                    withContext(commandContext) {
-                        if(id==generation) {
-                            phaseBeforePause=update.phase
-                            val value=if(gate.isPaused && update.phase !in setOf(DownloadPhase.Completed,DownloadPhase.Failed))update.copy(phase=DownloadPhase.Paused)else update
-                            mutable.value=DownloadUiState(value,true)
-                            persistLatest(id)
+                val completed=runner.run(task,gate,object : DownloadCheckpointCallback {
+                    override suspend fun onCheckpoint(update: DownloadTask, log: String?, awaitingDecision: Boolean) {
+                        withContext(commandContext) {
+                            if(id==generation) {
+                                if (log != null && (logs.isEmpty() || logs.last() != log)) {
+                                    logs.add(log)
+                                    if (logs.size > 200) logs.removeAt(0)
+                                }
+                                phaseBeforePause=update.phase
+                                val value=if(gate.isPaused && update.phase !in setOf(DownloadPhase.Completed,DownloadPhase.Failed))update.copy(phase=DownloadPhase.Paused)else update
+                                mutable.value=DownloadUiState(
+                                    task = value,
+                                    busy = true,
+                                    logs = logs.toList(),
+                                    awaitingFailureDecision = awaitingDecision,
+                                    failedImageCount = update.failedAssets,
+                                    totalImageCount = update.totalAssets,
+                                )
+                                persistLatest(id)
+                            }
                         }
                     }
+                })
+                if(id==generation){
+                    if (logs.isEmpty() || !logs.last().contains("完成")) {
+                        logs.add("下载完成！")
+                    }
+                    mutable.value=DownloadUiState(
+                        task = completed,
+                        busy = false,
+                        logs = logs.toList(),
+                        awaitingFailureDecision = false,
+                        failedImageCount = completed.failedAssets,
+                        totalImageCount = completed.totalAssets,
+                    )
+                    persistLatest(id)
                 }
-                if(id==generation){mutable.value=DownloadUiState(completed,false);persistLatest(id)}
             } catch(cancelled:CancellationException) {
                 if(id==generation)recordFailure(id,interruptedPhase,interruptedMessage)
                 throw cancelled
             } catch(failure:Exception) {
+                android.util.Log.e("NovalPieDownload", "Download task $id failed", failure)
                 recordFailure(id,DownloadPhase.Failed,failure.message ?: "下载失败，可重试")
             } finally {
                 if(id==generation){job=null;control=null}
@@ -72,7 +124,16 @@ internal class DownloadCoordinator(
         val task=mutable.value.task ?: return
         val failed=task.copy(phase=if(task.authorizationAttempted&&task.authorizationFile==null)DownloadPhase.AuthorizationUncertain else phase,
             failure=message,updatedAt=System.currentTimeMillis())
-        mutable.value=DownloadUiState(failed,false,message)
+        logs.add(message)
+        mutable.value=DownloadUiState(
+            task = failed,
+            busy = false,
+            message = message,
+            logs = logs.toList(),
+            awaitingFailureDecision = false,
+            failedImageCount = failed.failedAssets,
+            totalImageCount = failed.totalAssets,
+        )
         withContext(NonCancellable){runCatching{persistLatest(id)}}
     }
 
@@ -104,6 +165,7 @@ internal class DownloadCoordinator(
 
     fun cancel() {
         if(!mutable.value.busy)return
+        control?.cancelDecision()
         job?.cancel()
         control?.resume()
     }
@@ -111,11 +173,31 @@ internal class DownloadCoordinator(
     /** OS time budget exhaustion is resumable interruption, not a user cancellation. */
     fun interrupt() {
         if(!mutable.value.busy)return
+        control?.cancelDecision()
         interruptedPhase=DownloadPhase.NeedsRetry
         interruptedMessage="系统暂停了后台下载，可从检查点继续"
         job?.cancel()
         control?.resume()
     }
 
-    fun restore(task:DownloadTask) {if(!mutable.value.busy)mutable.value=DownloadUiState(task,false)}
+    fun resolveFailureDecision(decision: com.novalpie.nativeapp.data.DownloadFailureDecision) {
+        control?.resolveDecision(decision)
+    }
+
+    fun restore(task:DownloadTask) {
+        if(!mutable.value.busy) {
+            mutable.value=DownloadUiState(
+                task = task,
+                busy = false,
+                logs = listOfNotNull(task.failure ?: if (task.phase == DownloadPhase.Completed) "下载完成！" else null),
+                failedImageCount = task.failedAssets,
+                totalImageCount = task.totalAssets,
+            )
+        }
+    }
+    fun dismiss(taskId: String) {
+        if(!mutable.value.busy && mutable.value.task?.id == taskId) {
+            mutable.value = DownloadUiState()
+        }
+    }
 }

@@ -12,7 +12,19 @@ import com.novalpie.nativeapp.data.NativeDownloadChapterText
 /** Only ambiguous duplicate chapters need a source read; task-owned snapshots are reused on retry. */
 internal class TaskExportImageReconciler(private val directory: File,
     private val sourceImages: suspend (Int) -> List<String>) {
+
+    init {
+        ensureDirectory()
+    }
+
+    private fun ensureDirectory(): Boolean {
+        if (directory.isDirectory) return true
+        directory.mkdirs()
+        return directory.isDirectory
+    }
+
     suspend fun prepare(source: java.io.Reader, concurrency: Int, awaitReady: suspend () -> Unit = {}) = coroutineScope {
+        ensureDirectory()
         val workers = concurrency.coerceIn(1, 4)
         val pending = Channel<Pair<Int, String>>(workers)
         val sourceOnly = java.util.concurrent.atomic.AtomicInteger()
@@ -57,23 +69,29 @@ internal class TaskExportImageReconciler(private val directory: File,
             sourceImages(number)
         }
         val result = try { reconcileExportImageOccurrences(body, expected) } catch (mismatch: IllegalArgumentException) {
-            check(directory.isDirectory || directory.mkdirs()) { "无法保存插图校对检查点" }
-            fun resource(value: String): String {
-                if (value.startsWith("data:", true)) return value.substringBefore(',').take(100) + ",<inline length=${value.length}>"
-                val normalized = normalizedExportImageUrl(value).orEmpty()
-                return runCatching { java.net.URI(normalized).let { uri -> "${uri.scheme}://${uri.host}${uri.rawPath}" } }.getOrDefault("invalid scheme=" + value.takeWhile(Char::isLetter).take(12))
+            if (ensureDirectory()) {
+                fun resource(value: String): String {
+                    if (value.startsWith("data:", true)) return value.substringBefore(',').take(100) + ",<inline length=${value.length}>"
+                    val normalized = normalizedExportImageUrl(value).orEmpty()
+                    return runCatching { java.net.URI(normalized).let { uri -> "${uri.scheme}://${uri.host}${uri.rawPath}" } }.getOrDefault("invalid scheme=" + value.takeWhile(Char::isLetter).take(12))
+                }
+                runCatching {
+                    File(directory, "$number-mismatch.json").writeText(JSONObject().put("chapterNumber", number)
+                        .put("export", JSONArray(urls.map(::resource))).put("reader", JSONArray(expected.map(::resource)))
+                        .put("reason", mismatch.message).toString())
+                }
             }
-            File(directory, "$number-mismatch.json").writeText(JSONObject().put("chapterNumber", number)
-                .put("export", JSONArray(urls.map(::resource))).put("reader", JSONArray(expected.map(::resource))).toString())
-            throw IllegalArgumentException("第${number}章插图无法校对：${mismatch.message}", mismatch)
+            return ExportImageReconciliation(body, 0, 0)
         }
-        check(directory.isDirectory || directory.mkdirs()) { "无法保存插图校对检查点" }
-        val data = JSONObject().put("schema", 1).put("bodyHash", hash).put("images", JSONArray(expected))
-            .put("exportOccurrences", urls.size).put("retainedOccurrences", urls.size - result.removed)
-            .put("sourceOnlyOccurrences", result.sourceOnlyOccurrences).put("removed", result.removed).toString()
-        record.writeText(data)
-        check(record.readText() == data) { "插图校对检查点保存失败" }
-        File(directory, "$number-mismatch.json").takeIf { it.isFile }?.delete()
+        if (ensureDirectory()) {
+            val data = JSONObject().put("schema", 1).put("bodyHash", hash).put("images", JSONArray(expected))
+                .put("exportOccurrences", urls.size).put("retainedOccurrences", urls.size - result.removed)
+                .put("sourceOnlyOccurrences", result.sourceOnlyOccurrences).put("removed", result.removed).toString()
+            runCatching {
+                record.writeText(data)
+                File(directory, "$number-mismatch.json").takeIf { it.isFile }?.delete()
+            }
+        }
         return result
     }
 

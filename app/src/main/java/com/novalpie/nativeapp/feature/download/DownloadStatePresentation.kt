@@ -13,10 +13,15 @@ internal fun nativeDownloadStateFromTask(task: DownloadTask, live: DownloadUiSta
         progress = com.novalpie.nativeapp.data.NativeEpubExportProgress(
             completedChapters = task.completedChapters, completedImages = task.completedAssets,
             totalChapters = task.totalChapters, totalImages = task.totalAssets, failedImages = task.failedAssets,
+            statusLog = live.logs.lastOrNull(),
         ),
         message = downloadStatusText(live),
         canRetry = !live.busy && task.phase in setOf(DownloadPhase.Failed, DownloadPhase.NeedsRetry, DownloadPhase.Cancelled, DownloadPhase.Paused),
         completedUri = task.destinationUri.takeIf { task.phase == DownloadPhase.Completed && !live.busy },
+        logs = live.logs,
+        awaitingFailureDecision = live.awaitingFailureDecision,
+        failedImageCount = live.failedImageCount,
+        totalImageCount = live.totalImageCount,
     )
 
 internal fun nativeDownloadCompletedState(task: DownloadTask): NativeEpubDownloadState =

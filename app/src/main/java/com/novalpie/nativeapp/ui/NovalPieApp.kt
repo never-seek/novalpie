@@ -1016,6 +1016,8 @@ fun NovalPieApp(
                       onToggleDownloadPause = { viewModel.toggleNativeBookDownloadPause(route.bookId) },
                      onCancelDownload = { viewModel.cancelNativeBookDownload(route.bookId) },
                     onRetryDownload = { viewModel.retryNativeBookDownload(route.bookId) },
+                    onDismissDownload = { viewModel.dismissNativeBookDownload(route.bookId) },
+                    onResolveDownloadFailureDecision = viewModel::resolveNativeDownloadFailureDecision,
                     onRequestNewChapter = viewModel::requestBookDetailNewChapters,
                     onPreviewBookCover = viewModel::previewBookCover,
                     onSearchAuthor = viewModel::openBookDetailAuthorSearch,
@@ -6026,6 +6028,8 @@ private fun BookDetailScreen(
     onToggleDownloadPause: () -> Unit,
     onCancelDownload: () -> Unit,
     onRetryDownload: () -> Unit,
+    onDismissDownload: () -> Unit = {},
+    onResolveDownloadFailureDecision: (com.novalpie.nativeapp.data.DownloadFailureDecision) -> Unit = {},
     onRequestNewChapter: () -> Unit,
     onPreviewBookCover: (NovelCard) -> Unit,
     onSearchAuthor: (String) -> Unit,
@@ -6239,6 +6243,8 @@ private fun BookDetailScreen(
                 onToggleDownloadPause = onToggleDownloadPause,
                 onCancelDownload = onCancelDownload,
                 onRetryDownload = onRetryDownload,
+                onDismissDownload = onDismissDownload,
+                onResolveDownloadFailureDecision = onResolveDownloadFailureDecision,
                 requestNewChapterVisible = bookDetailShowsRequestNewChapter(
                     hasAuthToken = hasAuthToken,
                     platform = (state.book as LoadResult.Success).value.platform,
@@ -10400,6 +10406,8 @@ private fun BookDetailBottomActionBar(
     onToggleDownloadPause: () -> Unit,
     onCancelDownload: () -> Unit,
     onRetryDownload: () -> Unit,
+    onDismissDownload: () -> Unit = {},
+    onResolveDownloadFailureDecision: (com.novalpie.nativeapp.data.DownloadFailureDecision) -> Unit = {},
     requestNewChapterVisible: Boolean,
     requestNewChapterLoading: Boolean,
     onRequestNewChapter: () -> Unit,
@@ -10413,6 +10421,14 @@ private fun BookDetailBottomActionBar(
     var menuExpanded by remember(bookId) { mutableStateOf(false) }
     var downloadChoiceFormat by remember(bookId) { mutableStateOf<NativeBookDownloadFormat?>(null) }
     var downloadApplyReplacementRules by remember(bookId) { mutableStateOf(false) }
+    var showDownloadProgressDialog by remember(bookId) { mutableStateOf(false) }
+
+    LaunchedEffect(downloadStateForBook?.awaitingFailureDecision) {
+        if (downloadStateForBook?.awaitingFailureDecision == true) {
+            showDownloadProgressDialog = true
+        }
+    }
+
     val nativeDownloadsVisible = bookDetailAllowsNativeEpubDownload(hasAuthToken, allowDownload)
     val menuActions = bookDetailMenuActions(
         requestNewChapterVisible = requestNewChapterVisible,
@@ -10427,10 +10443,12 @@ private fun BookDetailBottomActionBar(
         shadowElevation = 4.dp,
     ) {
         Column {
-            if (downloadStateForBook?.busy == true) {
+            if (downloadStateForBook?.busy == true || downloadStateForBook?.awaitingFailureDecision == true) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(NovalPieRadius.sm))
+                        .clickable { showDownloadProgressDialog = true }
                         .padding(
                             start = NovalPieSpacing.screenHorizontal,
                             end = NovalPieSpacing.xs,
@@ -10438,19 +10456,38 @@ private fun BookDetailBottomActionBar(
                         ),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    LinearProgressIndicator(modifier = Modifier.weight(1f))
+                    if (downloadStateForBook.awaitingFailureDecision) {
+                        Text(
+                            text = "⚠️ 部分插图失败，点击处理",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.weight(1f))
+                    }
                     TextButton(
-                        onClick = onToggleDownloadPause,
+                        onClick = { showDownloadProgressDialog = true },
                     ) {
-                        Text(if (downloadStateForBook.paused) "继续" else "暂停")
+                        Text("查看详情")
+                    }
+                    if (!downloadStateForBook.awaitingFailureDecision) {
+                        TextButton(
+                            onClick = onToggleDownloadPause,
+                        ) {
+                            Text(if (downloadStateForBook.paused) "继续" else "暂停")
+                        }
                     }
                     TextButton(onClick = onCancelDownload) { Text("取消") }
                 }
             }
-            if (downloadStateForBook?.message != null) {
+            if (downloadStateForBook?.message != null && downloadStateForBook.busy != true) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(NovalPieRadius.sm))
+                        .clickable { showDownloadProgressDialog = true }
                         .padding(
                             start = NovalPieSpacing.screenHorizontal,
                             end = NovalPieSpacing.xs,
@@ -10480,6 +10517,10 @@ private fun BookDetailBottomActionBar(
                             downloadStateForBook.format == NativeBookDownloadFormat.Epub, true) }
                             .onFailure { Toast.makeText(context, "文件不可用，请到“我的→下载记录”查看", Toast.LENGTH_LONG).show() }
                     }) { Text("分享") }
+                }
+                TextButton(onClick = { showDownloadProgressDialog = true }) { Text("详情") }
+                if (!downloadStateForBook.busy) {
+                    TextButton(onClick = onDismissDownload) { Text("清除") }
                 }
                 }
             }
@@ -10714,6 +10755,7 @@ private fun BookDetailBottomActionBar(
                     onClick = {
                         val applyRules = downloadApplyReplacementRules
                         downloadChoiceFormat = null
+                        showDownloadProgressDialog = true
                         startBackgroundTask {
                             if (format == NativeBookDownloadFormat.Epub) onDownloadEpub(applyRules)
                             else onDownloadTxt(applyRules)
@@ -10723,6 +10765,31 @@ private fun BookDetailBottomActionBar(
             },
             dismissButton = {
                 TextButton(onClick = { downloadChoiceFormat = null }) { Text("取消") }
+            },
+        )
+    }
+    if (showDownloadProgressDialog && downloadStateForBook != null) {
+        com.novalpie.nativeapp.feature.download.NativeDownloadProgressDialog(
+            bookTitle = bookTitle,
+            downloadState = downloadStateForBook,
+            onDismiss = { showDownloadProgressDialog = false },
+            onTogglePause = onToggleDownloadPause,
+            onCancel = onCancelDownload,
+            onRetry = onRetryDownload,
+            onResolveDecision = onResolveDownloadFailureDecision,
+            onOpenFile = {
+                downloadStateForBook.completedUri?.let { uri ->
+                    runCatching { com.novalpie.nativeapp.feature.download.openDownloadedFile(context, uri, bookTitle,
+                        downloadStateForBook.format == NativeBookDownloadFormat.Epub, false) }
+                        .onFailure { Toast.makeText(context, "文件已移走或没有可用阅读器，请到“我的→下载记录”查看", Toast.LENGTH_LONG).show() }
+                }
+            },
+            onShareFile = {
+                downloadStateForBook.completedUri?.let { uri ->
+                    runCatching { com.novalpie.nativeapp.feature.download.openDownloadedFile(context, uri, bookTitle,
+                        downloadStateForBook.format == NativeBookDownloadFormat.Epub, true) }
+                        .onFailure { Toast.makeText(context, "文件不可用，请到“我的→下载记录”查看", Toast.LENGTH_LONG).show() }
+                }
             },
         )
     }

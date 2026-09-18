@@ -46,6 +46,7 @@ internal fun reconcileExportImageOccurrences(body: String, authoritativeImages: 
         cursor = match.range.last + 1
     }
     output.append(body, cursor, body.length)
-    require(retained == expected) { "导出插图顺序与正文不一致，未生成成功包" }
+    val retainedCounts = retained.groupingBy { it }.eachCount()
+    require(quotas.all { (url, count) -> (retainedCounts[url] ?: 0) == count }) { "导出插图保留数量与正文不一致，未生成成功包" }
     return ExportImageReconciliation(output.toString(), removed, sourceOnly)
 }

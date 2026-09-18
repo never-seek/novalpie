@@ -137,6 +137,30 @@ class ReaderTextTest {
     }
 
     @Test
+    fun formattedReaderParagraphsSupportBoldItalicAndNestedStylesWithoutRawMarkers() {
+        val paragraph = applyMarkdownRanges(ReaderFormattedParagraph("前 ***粗斜体*** 中 **_粗斜体2_** 后"))
+        assertEquals("前 粗斜体 中 粗斜体2 后", paragraph.text)
+        val firstStyles = paragraph.spanStyles.filter { it.start <= 2 && it.end >= 5 }.map { it.item }
+        assertTrue(firstStyles.any { it.fontWeight == FontWeight.Bold })
+        assertTrue(firstStyles.any { it.fontStyle == FontStyle.Italic })
+        val secondStyles = paragraph.spanStyles.filter { it.start <= 8 && it.end >= 12 }.map { it.item }
+        assertTrue(secondStyles.any { it.fontWeight == FontWeight.Bold })
+        assertTrue(secondStyles.any { it.fontStyle == FontStyle.Italic })
+    }
+
+    @Test
+    fun formattedReaderParagraphsSupportBbcodeAndHtmlTags() {
+        val paragraph = applyMarkdownRanges(
+            ReaderFormattedParagraph("前 [b]粗体[/b] [i]斜体[/i] [u]下划线[/u] [s]删除线[/s] <b>HTML粗体</b> <i>HTML斜体</i> 后")
+        )
+        assertEquals("前 粗体 斜体 下划线 删除线 HTML粗体 HTML斜体 后", paragraph.text)
+        assertTrue(paragraph.spanStyles.any { it.item.fontWeight == FontWeight.Bold })
+        assertTrue(paragraph.spanStyles.any { it.item.fontStyle == FontStyle.Italic })
+        assertTrue(paragraph.spanStyles.any { it.item.textDecoration == TextDecoration.Underline })
+        assertTrue(paragraph.spanStyles.any { it.item.textDecoration == TextDecoration.LineThrough })
+    }
+
+    @Test
     fun readerBlocksPreserveTextAndIllustrationsInOrder() {
         val blocks = readerBlocksFromContent(
             """

@@ -43,4 +43,10 @@ class ExportImageReconciliationTest {
         assertEquals(1, result.sourceOnlyOccurrences)
         assertEquals("前[图片: $a]中[图片: $b]后[图片: $extra]\n", result.body)
     }
+    @Test fun sourceOrderDifferentFromAuthoritativeOrderPreservesSourceTextOrder() {
+        val body = "B[图片: $b]A[图片: $a]B_dup[图片: $b]A_dup[图片: $a]"
+        val result = reconcileExportImageOccurrences(body, listOf(a, b))
+        assertEquals(2, result.removed)
+        assertEquals("B[图片: $b]A[图片: $a]B_dupA_dup", result.body)
+    }
 }

@@ -67,6 +67,11 @@ internal suspend fun copyNativeDownloadFilePausable(
     return copied
 }
 
+enum class DownloadFailureDecision {
+    RetryWithNewNetwork,
+    PackageAnyway,
+}
+
 /**
  * A cooperative pause gate for long native downloads.
  *
@@ -76,6 +81,7 @@ internal suspend fun copyNativeDownloadFilePausable(
  */
 internal class NativeDownloadControl {
     private val pausedState = MutableStateFlow(false)
+    private var decisionDeferred: kotlinx.coroutines.CompletableDeferred<DownloadFailureDecision>? = null
 
     val isPaused: Boolean
         get() = pausedState.value
@@ -92,6 +98,22 @@ internal class NativeDownloadControl {
         currentCoroutineContext().ensureActive()
         pausedState.first { paused -> !paused }
         currentCoroutineContext().ensureActive()
+    }
+
+    fun requestDecision(): kotlinx.coroutines.CompletableDeferred<DownloadFailureDecision> {
+        val deferred = kotlinx.coroutines.CompletableDeferred<DownloadFailureDecision>()
+        decisionDeferred = deferred
+        return deferred
+    }
+
+    fun resolveDecision(decision: DownloadFailureDecision) {
+        decisionDeferred?.complete(decision)
+        decisionDeferred = null
+    }
+
+    fun cancelDecision() {
+        decisionDeferred?.cancel()
+        decisionDeferred = null
     }
 }
 
