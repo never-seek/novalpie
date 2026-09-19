@@ -640,7 +640,6 @@ object NativeEpubArchiveWriter {
                         writeText(zip, "OEBPS/cover.xhtml", coverPageXhtml(metadata, cover))
                     }
                 }
-                writeText(zip, "OEBPS/intro.xhtml", introPageXhtml(metadata))
 
                 suspend fun flushChapter(title: String, body: String) {
                     awaitIfPaused()
@@ -767,7 +766,7 @@ object NativeEpubArchiveWriter {
 
                 if (chapters.isEmpty()) throw IllegalArgumentException("EPUB 正文不能为空")
                 writeText(zip, "OEBPS/Styles/style.css", stylesheet())
-                writeText(zip, "OEBPS/nav.xhtml", navigationXhtml(metadata.title, chapters, coverRecord?.path != null))
+                writeText(zip, "OEBPS/nav.xhtml", navigationXhtml(metadata.title, chapters))
                 writeText(zip, "OEBPS/toc.ncx", navigationNcx(metadata, chapters, coverRecord))
                 writeText(zip, "OEBPS/content.opf", packageXml(metadata, chapters, images, coverRecord))
                 onProgress(
@@ -1291,8 +1290,8 @@ object NativeEpubArchiveWriter {
         }
         val coverSpineItem = cover?.path?.let { "    <itemref idref=\"cover-page\"/>" }.orEmpty()
         val coverGuide = cover?.path?.let {
-            "  <guide><reference type=\"cover\" title=\"封面\" href=\"cover.xhtml\"/><reference type=\"text\" title=\"作品简介\" href=\"intro.xhtml\"/></guide>"
-        } ?: "  <guide><reference type=\"text\" title=\"作品简介\" href=\"intro.xhtml\"/></guide>"
+            "  <guide><reference type=\"cover\" title=\"封面\" href=\"cover.xhtml\"/></guide>"
+        }.orEmpty()
         val dcSubjects = metadata.tags
             .map { it.trim() }
             .filter { it.isNotBlank() }
@@ -1307,6 +1306,17 @@ object NativeEpubArchiveWriter {
             }
             "\n    <dc:source>${escapeXml(label)}</dc:source>"
         }.orEmpty()
+        val extraMeta = buildList {
+            metadata.originalTitle?.trim()?.takeIf { it.isNotBlank() && it != metadata.title.trim() }?.let {
+                add("    <meta name=\"original-title\" content=\"${escapeXml(it)}\"/>")
+            }
+            metadata.status?.trim()?.takeIf { it.isNotBlank() }?.let {
+                add("    <meta name=\"status\" content=\"${escapeXml(it)}\"/>")
+            }
+            metadata.wordCount?.takeIf { it > 0 }?.let {
+                add("    <meta name=\"word-count\" content=\"$it\"/>")
+            }
+        }.joinToString("\n").let { if (it.isNotBlank()) "\n$it" else "" }
 
         return """<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="book-id">
@@ -1316,14 +1326,13 @@ object NativeEpubArchiveWriter {
     <dc:creator>${escapeXml(metadata.author)}</dc:creator>
     <dc:language>${escapeXml(metadata.language.ifBlank { "zh" })}</dc:language>
     <dc:publisher>${escapeXml(metadata.publisher)}</dc:publisher>
-    <dc:description>${escapeXml(metadata.description)}</dc:description>$dcSubjects$dcSource
+    <dc:description>${escapeXml(metadata.description)}</dc:description>$dcSubjects$dcSource$extraMeta
 ${cover?.path?.let { "    <meta name=\"cover\" content=\"cover-image\"/>" }.orEmpty()}
   </metadata>
   <manifest>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml"/>
     <item id="style" href="Styles/style.css" media-type="text/css"/>
-    <item id="intro-page" href="intro.xhtml" media-type="application/xhtml+xml"/>
 $chapterManifest
 $coverPageManifest
 $coverManifest
@@ -1331,7 +1340,6 @@ $imageManifest
   </manifest>
   <spine toc="ncx">
 $coverSpineItem
-    <itemref idref="intro-page"/>
 $spine
   </spine>
 $coverGuide
@@ -1346,7 +1354,6 @@ $coverGuide
     ): String {
         val entries = buildList {
             if (cover?.path != null) add("封面" to "cover.xhtml")
-            add("作品简介" to "intro.xhtml")
             chapters.forEach { chapter -> add(chapter.title to "chapter-${chapter.index}.xhtml") }
         }
         val navPoints = entries.mapIndexed { index, (label, href) ->
@@ -1383,85 +1390,9 @@ $navPoints
 </body></html>"""
     }
 
-    private fun introPageXhtml(metadata: NativeEpubMetadata): String {
-        val fields = buildList {
-            metadata.originalTitle?.trim()?.takeIf { it.isNotBlank() && it != metadata.title.trim() }?.let {
-                add("<p class=\"intro-field\"><span class=\"intro-label\">原名：</span><span class=\"intro-value\">${escapeXml(it)}</span></p>")
-            }
-            metadata.author.trim().takeIf { it.isNotBlank() }?.let {
-                add("<p class=\"intro-field\"><span class=\"intro-label\">作者：</span><span class=\"intro-value\">${escapeXml(it)}</span></p>")
-            }
-            metadata.platform?.trim()?.takeIf { it.isNotBlank() }?.let {
-                val label = when {
-                    it.equals("novelPia", ignoreCase = true) -> "NovelPia"
-                    it.equals("upload", ignoreCase = true) -> "上传"
-                    else -> it
-                }
-                add("<p class=\"intro-field\"><span class=\"intro-label\">来源：</span><span class=\"intro-value\">${escapeXml(label)}</span></p>")
-            }
-            metadata.status?.trim()?.takeIf { it.isNotBlank() }?.let {
-                add("<p class=\"intro-field\"><span class=\"intro-label\">状态：</span><span class=\"intro-value\">${escapeXml(it)}</span></p>")
-            }
-            metadata.wordCount?.takeIf { it > 0 }?.let { count ->
-                val formatted = if (count >= 10_000) {
-                    val w = count / 10000.0
-                    val rounded = "%.1f".format(Locale.US, w).removeSuffix(".0")
-                    "$rounded 万字"
-                } else {
-                    "$count 字"
-                }
-                add("<p class=\"intro-field\"><span class=\"intro-label\">字数：</span><span class=\"intro-value\">${escapeXml(formatted)}</span></p>")
-            }
-            val cleanTags = metadata.tags.map { it.trim() }.filter { it.isNotBlank() }.distinct()
-            if (cleanTags.isNotEmpty()) {
-                val tagChips = cleanTags.joinToString(" ") { tag ->
-                    "<span class=\"intro-tag\">${escapeXml(tag)}</span>"
-                }
-                add("<p class=\"intro-field intro-tags-field\"><span class=\"intro-label\">标签：</span><span class=\"intro-tags\">$tagChips</span></p>")
-            }
-        }
-
-        val metaHtml = if (fields.isNotEmpty()) {
-            """<div class="intro-meta">
-${fields.joinToString("\n")}
-</div>"""
-        } else {
-            ""
-        }
-
-        val descriptionContent = metadata.description.trim()
-        val descHtml = if (descriptionContent.isNotBlank()) {
-            paragraphs(descriptionContent)
-        } else {
-            "<p class=\"intro-empty\">暂无简介</p>"
-        }
-
-        return """<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml">
-<head><meta charset="UTF-8"/><title>书籍信息</title><link rel="stylesheet" type="text/css" href="Styles/style.css"/></head>
-<body class="intro-page">
-<h1 class="intro-title">${escapeXml(metadata.title)}</h1>
-$metaHtml
-<hr class="intro-divider"/>
-<div class="intro-description">
-<h2 class="intro-desc-heading">作品简介</h2>
-$descHtml
-</div>
-</body></html>"""
-    }
-
-    private fun navigationXhtml(
-        title: String,
-        chapters: List<ChapterRecord>,
-        hasCover: Boolean,
-    ): String {
-        val entries = buildList {
-            if (hasCover) add("封面" to "cover.xhtml")
-            add("作品简介" to "intro.xhtml")
-            chapters.forEach { chapter -> add(chapter.title to "chapter-${chapter.index}.xhtml") }
-        }
-        val links = entries.joinToString("\n") { (label, href) ->
-            "      <li><a href=\"$href\">${escapeXml(label)}</a></li>"
+    private fun navigationXhtml(title: String, chapters: List<ChapterRecord>): String {
+        val links = chapters.joinToString("\n") { chapter ->
+            "      <li><a href=\"chapter-${chapter.index}.xhtml\">${escapeXml(chapter.title)}</a></li>"
         }
         return """<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
@@ -1486,21 +1417,7 @@ p { margin: 0 0 0.9em; text-indent: 2em; }
 .cover-page { margin: 0; padding: 1.2em; text-align: center; }
 .cover-image { display: block; max-width: 100%; max-height: 78vh; height: auto; margin: 0 auto 1.5em; }
 .cover-page h1 { margin: 0.5em 0 0.25em; }
-.cover-author { text-indent: 0; color: #666; }
-.intro-page { margin: 0; padding: 1.2em; }
-.intro-title { text-align: center; font-size: 1.4em; margin-bottom: 0.8em; font-weight: bold; }
-.intro-meta { margin: 1em 0; line-height: 1.6; }
-.intro-field { text-indent: 0; margin: 0.4em 0; }
-.intro-label { font-weight: bold; color: #555; }
-.intro-value { color: #222; }
-.intro-tags-field { text-indent: 0; }
-.intro-tags { display: inline; }
-.intro-tag { display: inline-block; padding: 0.1em 0.5em; margin: 0.15em 0.25em 0.15em 0; border: 1px solid #ccc; border-radius: 4px; font-size: 0.85em; color: #444; background-color: #f7f7f7; text-indent: 0; }
-.intro-divider { border: none; border-top: 1px solid #ddd; margin: 1.5em 0 1.2em; }
-.intro-description { margin-top: 1em; }
-.intro-desc-heading { font-size: 1.15em; font-weight: bold; margin: 0 0 0.8em; text-align: left; }
-.intro-description p { text-indent: 2em; margin: 0 0 0.8em; }
-.intro-empty { color: #888; font-style: italic; }"""
+.cover-author { text-indent: 0; color: #666; }"""
 
     private fun mediaTypeForPath(path: String): String = when (path.substringAfterLast('.', "").lowercase(Locale.US)) {
         "webp" -> "image/webp"

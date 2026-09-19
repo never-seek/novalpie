@@ -857,7 +857,7 @@ class NativeEpubArchiveWriterTest {
     }
 
     @Test
-    fun generatesVisibleIntroPageWithAllBookAttributesTagsAndFormattedDescription() = runBlocking {
+    fun storesBookAttributesTagsAndDescriptionInEpubMetadataWithoutInjectingIntroChapterIntoBody() = runBlocking {
         val output = ByteArrayOutputStream()
         val metadata = NativeEpubMetadata(
             title = "无限神魔",
@@ -885,34 +885,31 @@ class NativeEpubArchiveWriterTest {
             }
         }
 
-        val intro = entries.getValue("OEBPS/intro.xhtml").toString(Charsets.UTF_8)
-        assertTrue("简介页包含书名", intro.contains("无限神魔"))
-        assertTrue("简介页包含原名", intro.contains("Infinite Gods"))
-        assertTrue("简介页包含作者", intro.contains("玄幻大师"))
-        assertTrue("简介页包含来源", intro.contains("NovelPia"))
-        assertTrue("简介页包含状态", intro.contains("连载中"))
-        assertTrue("简介页包含字数", intro.contains("12.5 万字"))
-        assertTrue("简介页包含标签奇幻", intro.contains("奇幻"))
-        assertTrue("简介页包含标签穿越", intro.contains("穿越"))
-        assertTrue("简介页包含标签后宫", intro.contains("后宫"))
-        assertTrue("简介页包含段落1", intro.contains("<p>第一段简介描述。</p>"))
-        assertTrue("简介页包含段落2", intro.contains("<p>第二段剧情梗概。</p>"))
+        assertFalse("简介不应作为独立正文章节写入EPUB", entries.containsKey("OEBPS/intro.xhtml"))
+        val chapter = entries.getValue("OEBPS/chapter-1.xhtml").toString(Charsets.UTF_8)
+        assertTrue("第1章正文包含正文内容", chapter.contains("正文文字内容。"))
 
         val opf = entries.getValue("OEBPS/content.opf").toString(Charsets.UTF_8)
+        assertTrue("OPF包含书名", opf.contains("<dc:title>无限神魔</dc:title>"))
+        assertTrue("OPF包含作者", opf.contains("<dc:creator>玄幻大师</dc:creator>"))
+        assertTrue("OPF包含简介描述", opf.contains("<dc:description>第一段简介描述。\n\n第二段剧情梗概。</dc:description>"))
         assertTrue("OPF包含标签奇幻", opf.contains("<dc:subject>奇幻</dc:subject>"))
         assertTrue("OPF包含标签穿越", opf.contains("<dc:subject>穿越</dc:subject>"))
         assertTrue("OPF包含标签后宫", opf.contains("<dc:subject>后宫</dc:subject>"))
         assertTrue("OPF包含来源", opf.contains("<dc:source>NovelPia</dc:source>"))
-        assertTrue("OPF包含intro-page manifest", opf.contains("id=\"intro-page\" href=\"intro.xhtml\""))
-        assertTrue("OPF包含intro-page spine", opf.contains("<itemref idref=\"intro-page\"/>"))
-        assertTrue("OPF包含guide text作品简介", opf.contains("<reference type=\"text\" title=\"作品简介\" href=\"intro.xhtml\"/>"))
+        assertTrue("OPF包含原名元数据", opf.contains("<meta name=\"original-title\" content=\"Infinite Gods\"/>"))
+        assertTrue("OPF包含连载状态元数据", opf.contains("<meta name=\"status\" content=\"连载中\"/>"))
+        assertTrue("OPF包含字数元数据", opf.contains("<meta name=\"word-count\" content=\"125000\"/>"))
+        assertFalse("OPF清单不应包含intro-page", opf.contains("intro-page"))
+        assertFalse("OPF阅读顺序不应包含intro-page", opf.contains("<itemref idref=\"intro-page\"/>"))
 
         val nav = entries.getValue("OEBPS/nav.xhtml").toString(Charsets.UTF_8)
-        assertTrue("导航包含作品简介链接", nav.contains("<li><a href=\"intro.xhtml\">作品简介</a></li>"))
+        assertFalse("目录导航不应包含简介章节", nav.contains("intro.xhtml"))
+        assertTrue("目录导航包含第1章", nav.contains("chapter-1.xhtml"))
 
         val ncx = entries.getValue("OEBPS/toc.ncx").toString(Charsets.UTF_8)
-        assertTrue("NCX包含作品简介", ncx.contains("<text>作品简介</text>"))
-        assertTrue("NCX包含intro.xhtml目标", ncx.contains("src=\"intro.xhtml\""))
+        assertFalse("NCX目录不应包含简介章节", ncx.contains("intro.xhtml"))
+        assertTrue("NCX包含第1章", ncx.contains("chapter-1.xhtml"))
     }
 
     @Test
@@ -960,6 +957,6 @@ class NativeEpubArchiveWriterTest {
         assertTrue(coverPage.contains("src=\"images/cover.webp\""))
         val opf = entries.getValue("OEBPS/content.opf").toString(Charsets.UTF_8)
         assertTrue(opf.contains("id=\"cover-image\" href=\"images/cover.webp\""))
-        assertTrue(opf.contains("id=\"intro-page\" href=\"intro.xhtml\""))
+        assertFalse("OPF不包含intro-page", opf.contains("intro-page"))
     }
 }
