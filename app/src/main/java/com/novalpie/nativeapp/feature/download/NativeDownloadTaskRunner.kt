@@ -136,8 +136,43 @@ internal class NativeDownloadTaskRunner(
                 var passFailedImages = 0
                 var passFailedCover = false
                 save(current.get(), "正在处理图片并打包...")
+                val bookDetail = metadata ?: runCatching { api.bookDetail(task.bookId) }.getOrNull()
+                val primaryCover = bookDetail?.fullCoverUrl?.trim()?.takeIf { it.isNotBlank() }
+                    ?: bookDetail?.coverUrl?.trim()?.takeIf { it.isNotBlank() }
+                    ?: runCatching { api.bookCoverPhoto(task.bookId) }.getOrNull()
+
+                val fallbackCovers = buildList {
+                    bookDetail?.coverUrl?.trim()?.takeIf { it.isNotBlank() && it != primaryCover }?.let(::add)
+                    bookDetail?.fullCoverUrl?.trim()?.takeIf { it.isNotBlank() && it != primaryCover }?.let(::add)
+                    if (primaryCover == null) {
+                        runCatching { api.bookCoverPhoto(task.bookId) }.getOrNull()?.let(::add)
+                    }
+                }.distinct()
+
+                val resolvedTitle = bookDetail?.title?.trim()?.takeIf { it.isNotBlank() && it != "Untitled" } ?: task.title
+                val resolvedAuthor = bookDetail?.author?.trim()?.takeIf { it.isNotBlank() } ?: "未知作者"
+                val resolvedDescription = bookDetail?.description?.trim().orEmpty()
+                val resolvedTags = bookDetail?.tags.orEmpty()
+                val resolvedOriginalTitle = bookDetail?.originalTitle?.trim()?.takeIf { it.isNotBlank() && it != resolvedTitle }
+                val resolvedStatus = bookDetail?.status?.trim()?.takeIf { it.isNotBlank() }
+                val resolvedWordCount = bookDetail?.wordCount?.takeIf { it > 0 }
+                val resolvedPlatform = bookDetail?.platform?.trim()?.takeIf { it.isNotBlank() }
+
+                val epubMetadata = NativeEpubMetadata(
+                    title = resolvedTitle,
+                    author = resolvedAuthor,
+                    description = resolvedDescription,
+                    coverUrl = primaryCover,
+                    fallbackCoverUrls = fallbackCovers,
+                    tags = resolvedTags,
+                    originalTitle = resolvedOriginalTitle,
+                    status = resolvedStatus,
+                    wordCount = resolvedWordCount,
+                    platform = resolvedPlatform,
+                )
+
                 finished.outputStream().use {output->source.reader(Charsets.UTF_8).use {reader->
-                    NativeEpubArchiveWriter.write(output,NativeEpubMetadata(task.title,metadata?.author ?: "未知作者",metadata?.description.orEmpty(),coverUrl=metadata?.coverUrl),reader,
+                    NativeEpubArchiveWriter.write(output, epubMetadata, reader,
                         openAsset={url->openResource(assets,url,control,resourceLocks)},
                         transformChapter={number,title,body->transformed?.transform(number,title,body)?.toNativeDownloadText() ?: NativeDownloadChapterText(title,body)},
                         reconcileSourceImages=imageReconciler::reconcile,

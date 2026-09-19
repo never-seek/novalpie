@@ -855,4 +855,111 @@ class NativeEpubArchiveWriterTest {
         )
         assertEquals(imageUrls.map { it.toByteArray().toList() }, imageEntries.map { it.second.toList() })
     }
+
+    @Test
+    fun generatesVisibleIntroPageWithAllBookAttributesTagsAndFormattedDescription() = runBlocking {
+        val output = ByteArrayOutputStream()
+        val metadata = NativeEpubMetadata(
+            title = "无限神魔",
+            author = "玄幻大师",
+            description = "第一段简介描述。\n\n第二段剧情梗概。",
+            tags = listOf("奇幻", "穿越", "后宫"),
+            originalTitle = "Infinite Gods",
+            status = "连载中",
+            wordCount = 125000L,
+            platform = "novelPia",
+        )
+
+        NativeEpubArchiveWriter.write(
+            output = output,
+            metadata = metadata,
+            source = StringReader("第1章 开端\n正文文字内容。"),
+            openAsset = { error("no images") },
+        )
+
+        val entries = linkedMapOf<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(output.toByteArray())).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                entries[entry.name] = zip.readBytes()
+            }
+        }
+
+        val intro = entries.getValue("OEBPS/intro.xhtml").toString(Charsets.UTF_8)
+        assertTrue("简介页包含书名", intro.contains("无限神魔"))
+        assertTrue("简介页包含原名", intro.contains("Infinite Gods"))
+        assertTrue("简介页包含作者", intro.contains("玄幻大师"))
+        assertTrue("简介页包含来源", intro.contains("NovelPia"))
+        assertTrue("简介页包含状态", intro.contains("连载中"))
+        assertTrue("简介页包含字数", intro.contains("12.5 万字"))
+        assertTrue("简介页包含标签奇幻", intro.contains("奇幻"))
+        assertTrue("简介页包含标签穿越", intro.contains("穿越"))
+        assertTrue("简介页包含标签后宫", intro.contains("后宫"))
+        assertTrue("简介页包含段落1", intro.contains("<p>第一段简介描述。</p>"))
+        assertTrue("简介页包含段落2", intro.contains("<p>第二段剧情梗概。</p>"))
+
+        val opf = entries.getValue("OEBPS/content.opf").toString(Charsets.UTF_8)
+        assertTrue("OPF包含标签奇幻", opf.contains("<dc:subject>奇幻</dc:subject>"))
+        assertTrue("OPF包含标签穿越", opf.contains("<dc:subject>穿越</dc:subject>"))
+        assertTrue("OPF包含标签后宫", opf.contains("<dc:subject>后宫</dc:subject>"))
+        assertTrue("OPF包含来源", opf.contains("<dc:source>NovelPia</dc:source>"))
+        assertTrue("OPF包含intro-page manifest", opf.contains("id=\"intro-page\" href=\"intro.xhtml\""))
+        assertTrue("OPF包含intro-page spine", opf.contains("<itemref idref=\"intro-page\"/>"))
+        assertTrue("OPF包含guide text作品简介", opf.contains("<reference type=\"text\" title=\"作品简介\" href=\"intro.xhtml\"/>"))
+
+        val nav = entries.getValue("OEBPS/nav.xhtml").toString(Charsets.UTF_8)
+        assertTrue("导航包含作品简介链接", nav.contains("<li><a href=\"intro.xhtml\">作品简介</a></li>"))
+
+        val ncx = entries.getValue("OEBPS/toc.ncx").toString(Charsets.UTF_8)
+        assertTrue("NCX包含作品简介", ncx.contains("<text>作品简介</text>"))
+        assertTrue("NCX包含intro.xhtml目标", ncx.contains("src=\"intro.xhtml\""))
+    }
+
+    @Test
+    fun recoversCoverFromFallbackCandidatesWhenPrimaryCoverFails() = runBlocking {
+        val primaryUrl = "https://images.example.test/broken-primary.jpg"
+        val fallbackUrl = "https://images.example.test/working-fallback.webp"
+        val webpBytes = byteArrayOf(0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50)
+        val requestedUrls = mutableListOf<String>()
+        val output = ByteArrayOutputStream()
+
+        NativeEpubArchiveWriter.write(
+            output = output,
+            metadata = NativeEpubMetadata(
+                title = "容灾测试",
+                author = "测试作者",
+                coverUrl = primaryUrl,
+                fallbackCoverUrls = listOf(fallbackUrl),
+            ),
+            source = StringReader("第1章 正文\n正文内容。"),
+            openAsset = { url ->
+                requestedUrls += url
+                if (url.contains("broken-primary")) {
+                    throw java.io.IOException("primary cover CDN 502 Bad Gateway")
+                }
+                NativeEpubAsset(
+                    mediaType = "image/webp",
+                    input = ByteArrayInputStream(webpBytes),
+                )
+            },
+            allowMissingCover = false,
+        )
+
+        val entries = linkedMapOf<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(output.toByteArray())).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                entries[entry.name] = zip.readBytes()
+            }
+        }
+
+        assertTrue("应首先尝试主封面", requestedUrls.first().contains("broken-primary"))
+        assertTrue("主封面失败后应尝试备选封面", requestedUrls.contains(fallbackUrl))
+        assertArrayEquals("备选封面应成功写入EPUB", webpBytes, entries.getValue("OEBPS/images/cover.webp"))
+        val coverPage = entries.getValue("OEBPS/cover.xhtml").toString(Charsets.UTF_8)
+        assertTrue(coverPage.contains("src=\"images/cover.webp\""))
+        val opf = entries.getValue("OEBPS/content.opf").toString(Charsets.UTF_8)
+        assertTrue(opf.contains("id=\"cover-image\" href=\"images/cover.webp\""))
+        assertTrue(opf.contains("id=\"intro-page\" href=\"intro.xhtml\""))
+    }
 }

@@ -93,4 +93,70 @@ class NativeDownloadTaskRunnerTest {
             assertEquals(1,sources.get())
         } finally {server.shutdown()}
     }
+
+    @Test
+    fun epubDownloadBundlesCoverAndFullMetadataAttributesIntoResultArchive() = runBlocking {
+        val server = MockWebServer(); server.start()
+        val jpegBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0, 16, 0x4A, 0x46, 0x49, 0x46) + ByteArray(32)
+        val source = "第1章 旅程\n这是正文文字。"
+        val detail = """{
+            "id": 2,
+            "title": "真实书名",
+            "author": "测试大师",
+            "platform": "novelPia",
+            "status": "已完结",
+            "description": "这是正品简介内容。",
+            "tags": ["恋爱", "日常"],
+            "full_cover_url": "/covers/high-res.jpg"
+        }"""
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl?.encodedPath) {
+                "/api/novels/2/detail" -> MockResponse().setBody(detail)
+                "/covers/high-res.jpg" -> MockResponse().setHeader("Content-Type", "image/jpeg").setBody(okio.Buffer().write(jpegBytes))
+                "/api/downloads" -> MockResponse().setBody("""{"success":true,"file_name":"test.txt"}""")
+                "/api/downloads/test.txt" -> MockResponse().setBody(source)
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        try {
+            val app = ApplicationProvider.getApplicationContext<Application>()
+            var publishedBytes: ByteArray? = null
+            val runner = NativeDownloadTaskRunner(app, NovalPieApi(baseUrl = server.url("/").toString().trimEnd('/'))) { _, file, _ ->
+                publishedBytes = file.readBytes()
+                "content://downloads/complete"
+            }
+            val task = DownloadTask(UUID.randomUUID().toString(), 1, 2, "占位标题", DownloadFormat.Epub)
+            val completed = runner.run(task, NativeDownloadControl()) {}
+            assertEquals(DownloadPhase.Completed, completed.phase)
+            assertNotNull(publishedBytes)
+
+            val entries = linkedMapOf<String, ByteArray>()
+            java.util.zip.ZipInputStream(publishedBytes!!.inputStream()).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    entries[entry.name] = zip.readBytes()
+                }
+            }
+
+            assertTrue("包含封面图片", entries.containsKey("OEBPS/images/cover.jpg"))
+            assertArrayEquals(jpegBytes, entries.getValue("OEBPS/images/cover.jpg"))
+            val intro = entries.getValue("OEBPS/intro.xhtml").toString(Charsets.UTF_8)
+            assertTrue("简介页包含标题", intro.contains("真实书名"))
+            assertTrue("简介页包含作者", intro.contains("测试大师"))
+            assertTrue("简介页包含状态", intro.contains("已完结"))
+            assertTrue("简介页包含来源", intro.contains("NovelPia"))
+            assertTrue("简介页包含标签恋爱", intro.contains("恋爱"))
+            assertTrue("简介页包含标签日常", intro.contains("日常"))
+            assertTrue("简介页包含正品简介", intro.contains("这是正品简介内容。"))
+
+            val opf = entries.getValue("OEBPS/content.opf").toString(Charsets.UTF_8)
+            assertTrue("OPF包含恋爱标签", opf.contains("<dc:subject>恋爱</dc:subject>"))
+            assertTrue("OPF包含日常标签", opf.contains("<dc:subject>日常</dc:subject>"))
+            assertTrue("OPF包含正品简介", opf.contains("<dc:description>这是正品简介内容。</dc:description>"))
+            assertTrue("OPF包含封面引用", opf.contains("id=\"cover-image\" href=\"images/cover.jpg\""))
+            assertTrue("OPF包含简介页引用", opf.contains("id=\"intro-page\" href=\"intro.xhtml\""))
+        } finally {
+            server.shutdown()
+        }
+    }
 }
