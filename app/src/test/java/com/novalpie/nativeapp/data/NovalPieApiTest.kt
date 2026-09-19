@@ -631,6 +631,20 @@ class NovalPieApiTest {
     }
 
     @Test
+    fun checkinCurrentUserGracefullyHandlesServerAlreadyCheckedInResponse() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(400)
+                .setHeader("content-type", "application/json")
+                .setBody("""{"message":"今日已签到"}""")
+        )
+        val action = api.checkinCurrentUser()
+        assertFalse(action.success)
+        assertEquals("今日已签到", action.message)
+        assertEquals("/api/users/me/checkins", server.takeRequest().path)
+    }
+
+    @Test
     fun publicUserProfileAndActivityUseWebsiteEndpointsAndNormalizeNestedTargets() = runBlocking {
         server.enqueue(
             MockResponse().setHeader("content-type", "application/json").setBody(

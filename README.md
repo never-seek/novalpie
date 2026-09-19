@@ -5,7 +5,7 @@
 [![UI Toolkit](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4.svg?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![Architecture](https://img.shields.io/badge/Architecture-Clean%20%2B%20MVI%2FMVVM-blue.svg)](docs/beta7/architecture-and-migration.md)
 [![Release](https://img.shields.io/badge/Release-v2.0.0--native--beta7-orange.svg)](https://github.com/never-seek/novalpie/releases/tag/v2.0.0-native-beta7)
-[![Tests](https://img.shields.io/badge/Tests-1244%20Passing%20(0%20Failures)-brightgreen.svg)](docs/beta7/STATUS.md)
+[![Tests](https://img.shields.io/badge/Tests-1259%20Passing%20(0%20Failures)-brightgreen.svg)](docs/beta7/STATUS.md)
 
 NovalPie 2.0 是专为 [novalpie.cc](https://novalpie.cc) 社区量身打造的高性能、现代原生 Android 客户端。
 
@@ -100,7 +100,7 @@ NovalPie 2.0 经历了持续的高强度迭代与架构重塑，以下为历代�
 | **Beta 4** | 2026-08-24 | 书架密度、论坛富文本与超大文件校验 | 书架支持 2/3/4 列网格；论坛富文本解析与 `[bookid:ID]` 原生书籍卡片；超大 EPUB 原子发布流程，避免半成品残留。 | 610 Tests，Lint Clean |
 | **Beta 5** | 2026-08-29 | EPUB 2/3 双标准与阅读排版规范 | EPUB 同时输出 `toc.ncx` 与 `nav.xhtml` 双导航；支持 Markdown 混合粗体与排版宽度调节；阅读进度双向云同步；书籍详情原生操作表。 | 753 Tests，0 Failures |
 | **Beta 6** | 2026-09-01 | 双轨规则替换快照与系统级后台听书 | 落地公共规则单书启停与逐条屏蔽；导出支持原文/替换快照选择；系统级前台服务后台 TTS（支持锁屏与线控）；段落级精确断点续读。 | 818 Tests，MuMu 1.5GB 实测 |
-| **Beta 7** | **2026-09-18 (当前最新)** | **下载监控面板、指数退避重试、二选一决策、压缩控制与高刷优化** | **1:1 沉浸式下载监控大面板 + 控制台滚屏日志；5 次指数退避抖动重试；失败二选一决策卡片（全成功免打扰，死图直接打包）；插图等比压缩与 ZIP 等级调节；超长篇小说超时根治；90~144Hz 真机高刷自适应；短章节无限滚动哨兵修复；装扮卡片尺寸对齐。** | **1,244 Tests 全部通过，0 Failures，Lint 0 Error** |
+| **Beta 7** | **2026-09-19 (当前最新)** | **下载监控面板、指数退避重试、二选一决策、压缩控制、高刷优化与自动化签到/安全验证增强** | **1:1 沉浸式下载监控大面板 + 控制台滚屏日志；5 次指数退避抖动重试；失败二选一决策卡片（全成功免打扰，死图直接打包）；插图等比压缩与纯体积导向 ZIP 压缩等级描述规范；登录验证界面 Turnstile 探测加固与非阻塞快速提取杜绝假死；双轨端点全自动背景签到与本地偏好保障；超长篇小说超时根治；90~144Hz 真机高刷自适应；短章节无限滚动哨兵修复；装扮卡片尺寸对齐。** | **1,259 Tests 全部通过，0 Failures，Lint 0 Error** |
 
 ---
 
@@ -129,10 +129,10 @@ NovalPie 2.0 经历了持续的高强度迭代与架构重塑，以下为历代�
 
 ### 当前最新发布：Beta 7 (`v2.0.0-native-beta7`)
 
-- **发布日期**：2026-09-18
+- **发布日期**：2026-09-19
 - **安装包文件名**：`NovalPie-native-2.0.0-beta7-debug.apk`
-- **文件体积**：`21,582,835` 字节 (~20.58 MB)
-- **SHA-256 校验码**：`747A3D217FA1375E091703BCE14BBB1CC8693B897C89B989554DCE6DA58F42C3`
+- **文件体积**：`24,446,509` 字节 (~23.31 MB)
+- **SHA-256 校验码**：`BE9B59478F0C3F3C7213C6BE1A10333A7762A046DDECD11B68FBD934A8DC10CB`
 - **官方发布页**：[GitHub Releases / v2.0.0-native-beta7](https://github.com/never-seek/novalpie/releases/tag/v2.0.0-native-beta7)
 
 ### 安装说明与兼容性

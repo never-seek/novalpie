@@ -2044,10 +2044,26 @@ private fun ProfileDownloadSettingsCard(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("ZIP 压缩等级", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.weight(1f))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("ZIP 压缩等级", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            when (zipCompressionLevel) {
+                                0 -> "仅存储不压缩，ZIP 文件体积最大"
+                                in 1..4 -> "轻度压缩，ZIP 文件体积较大"
+                                in 5..8 -> "标准压缩，ZIP 文件体积适中"
+                                else -> "极限压缩，ZIP 文件体积最小"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Text(
-                        if (zipCompressionLevel == 0) "0 (不压缩 STORE)" else "$zipCompressionLevel (DEFLATE 压缩)",
+                        when (zipCompressionLevel) {
+                            0 -> "0 (仅存储 · 体积最大)"
+                            in 1..4 -> "$zipCompressionLevel (体积较大)"
+                            in 5..8 -> "$zipCompressionLevel (体积适中)"
+                            else -> "9 (极限压缩 · 体积最小)"
+                        },
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                     )
@@ -2061,7 +2077,12 @@ private fun ProfileDownloadSettingsCard(
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    listOf(0 to "0 (极速)", 1 to "1 (快速)", 6 to "6 (标准)", 9 to "9 (极限)").forEach { (lvl, label) ->
+                    listOf(
+                        0 to "0 (仅存储/体积最大)",
+                        1 to "1 (轻度压缩/体积较大)",
+                        6 to "6 (标准压缩/体积适中)",
+                        9 to "9 (极限压缩/体积最小)"
+                    ).forEach { (lvl, label) ->
                         FilterChip(
                             selected = zipCompressionLevel == lvl,
                             onClick = { onZipCompressionLevelChange(lvl) },

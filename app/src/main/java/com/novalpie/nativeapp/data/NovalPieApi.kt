@@ -1349,12 +1349,25 @@ class NovalPieApi(
     }
 
     suspend fun checkinCurrentUser(): UserCheckinAction = withContext(Dispatchers.IO) {
-        val source = unwrapObject(post("/api/users/me/checkins", JSONObject()), "data", "result")
-        UserCheckinAction(
-            success = source.firstBooleanOrNull("success", "ok") ?: true,
-            message = source.firstStringOrNull("message", "msg", "detail"),
-            points = source.longOrNull("points") ?: source.longOrNull("point")
-        )
+        try {
+            val source = unwrapObject(post("/api/users/me/checkins", JSONObject()), "data", "result")
+            UserCheckinAction(
+                success = source.firstBooleanOrNull("success", "ok") ?: true,
+                message = source.firstStringOrNull("message", "msg", "detail"),
+                points = source.longOrNull("points") ?: source.longOrNull("point")
+            )
+        } catch (e: NovalPieApiException) {
+            val msg = e.serverMessage.orEmpty()
+            if (msg.contains("已签到") || msg.contains("already", ignoreCase = true)) {
+                UserCheckinAction(
+                    success = false,
+                    message = msg.ifBlank { "今日已签到" },
+                    points = null
+                )
+            } else {
+                throw e
+            }
+        }
     }
 
     suspend fun favoriteGroups(previewLimit: Int = 6): List<FavoriteGroup> = withContext(Dispatchers.IO) {

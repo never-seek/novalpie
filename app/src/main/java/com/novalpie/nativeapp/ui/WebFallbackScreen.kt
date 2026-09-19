@@ -136,13 +136,18 @@ internal fun loadUrlAfterProxyReady(
 
     runCatching {
         val controller = ProxyController.getInstance()
+        var executed = false
         val loadWhenReady = Runnable {
-            webView.post {
-                if (webViewMatchesRequest(webView.tag, webStateKey, url)) {
-                    webView.loadUrl(url)
+            if (!executed) {
+                executed = true
+                webView.post {
+                    if (webViewMatchesRequest(webView.tag, webStateKey, url)) {
+                        webView.loadUrl(url)
+                    }
                 }
             }
         }
+        webView.postDelayed({ loadWhenReady.run() }, 1500L)
         val proxyUrl = webViewProxyUrl(settings, useEmulatorFallback)
         if (proxyUrl != null) {
             val config = ProxyConfig.Builder()

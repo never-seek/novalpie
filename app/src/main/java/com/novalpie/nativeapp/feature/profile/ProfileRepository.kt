@@ -15,6 +15,7 @@ internal interface ProfileRepository {
     suspend fun reward(): UserQuizRewardStatus
     suspend fun save(profile: UserProfile): UserProfile
     suspend fun checkin(): UserCheckinAction
+    suspend fun checkinSettings(): UserCheckinSettings = UserCheckinSettings()
     suspend fun verifyAdult(year: Int): UserCheckinAction
     suspend fun equip(itemId: Long, equip: Boolean): UserCheckinAction
     suspend fun purchase(itemId: Long): ShopPurchaseResult
@@ -30,8 +31,20 @@ internal class WebsiteProfileRepository(private val api: NovalPieApi) : ProfileR
     override suspend fun inventory() = api.currentUserInventory()
     override suspend fun shop() = api.shopItems()
     override suspend fun reward() = api.currentUserQuizRewardStatus()
-    override suspend fun save(profile: UserProfile) = api.updateCurrentUser(profile)
+    override suspend fun save(profile: UserProfile): UserProfile {
+        val updated = api.updateCurrentUser(profile)
+        if (profile.showCheckin != null || profile.autoCheckin != null) {
+            runCatching {
+                api.updateCurrentUserCheckinSettings(
+                    showCheckin = profile.showCheckin ?: true,
+                    autoCheckin = profile.autoCheckin ?: false
+                )
+            }
+        }
+        return updated
+    }
     override suspend fun checkin() = api.checkinCurrentUser()
+    override suspend fun checkinSettings() = api.userCheckinSettings()
     override suspend fun verifyAdult(year: Int) = api.verifyCurrentUserAdult(year)
     override suspend fun equip(itemId: Long, equip: Boolean) = api.setCurrentUserEquipment(itemId, if (equip) "equip" else "unequip")
     override suspend fun purchase(itemId: Long) = api.purchaseShopItem(itemId)

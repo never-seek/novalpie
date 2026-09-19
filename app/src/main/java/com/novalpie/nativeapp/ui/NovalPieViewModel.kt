@@ -1,6 +1,7 @@
 package com.novalpie.nativeapp.ui
 
 import android.app.Application
+import android.content.Context
 import android.content.ContentValues
 import android.content.ContentUris
 import android.content.Intent
@@ -171,6 +172,7 @@ import java.io.OutputStreamWriter
 import java.nio.charset.Charset
 import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.ConcurrentLinkedQueue
 
 enum class BottomTab(val title: String) {
@@ -1219,7 +1221,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                         is AppRoute.UserProfileDetail->loadUserProfile(route.userId)
                         is AppRoute.Reader->loadReaderReplacementRules(route.bookId)
                         else->Unit
-                    }}
+                    }
+                    if (!next.first.isNullOrBlank()) {
+                        triggerAutoCheckinIfConfigured()
+                    }
+                }
             }
         }
         viewModelScope.launch {
@@ -1247,6 +1253,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         startupReaderSession?.let { session ->
             loadReader(session.bookId, session.chapterId, restoreViewport = true)
         } ?: loadHome()
+        triggerAutoCheckinIfConfigured()
     }
 
     fun updateBookshelfQuery(value: String) {
@@ -2489,9 +2496,15 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         downloadSettingsStore.save(
             current.copy(zipCompressionLevel = normalized),
         )
+        val desc = when (normalized) {
+            0 -> "仅存储/体积最大"
+            in 1..4 -> "轻度压缩/体积较大"
+            in 5..8 -> "标准压缩/体积适中"
+            else -> "极限压缩/体积最小"
+        }
         profileState = profileState.copy(
             downloadZipCompressionLevel = normalized,
-            actionMessage = if (normalized == 0) "ZIP压缩级别已设为 0 (不压缩)" else "ZIP压缩级别已设为 ${normalized}",
+            actionMessage = "ZIP压缩级别已设为 $normalized ($desc)",
         )
     }
 
@@ -2508,6 +2521,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun updateProfileAutoCheckin(value: Boolean) {
+        val token = authToken?.takeIf { it.isNotBlank() }
+        val profile = token?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0) }
+        val account = profile?.id?.toString() ?: profile?.name?.takeIf { it.isNotBlank() } ?: "current_user"
+        val prefs = getApplication<Application>().getSharedPreferences("novalpie_auto_checkin", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("auto_checkin_pref_$account", value).apply()
         profileFeature.edit { it.copy(autoCheckin = value, actionMessage = null) }
     }
 
@@ -2518,11 +2536,66 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         )
     }
 
-    fun saveProfile() = profileFeature.save()
+    fun saveProfile() {
+        val targetAutoCheckin = profileState.autoCheckin
+        val token = authToken?.takeIf { it.isNotBlank() }
+        val profile = token?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0) }
+        val account = profile?.id?.toString() ?: profile?.name?.takeIf { it.isNotBlank() } ?: "current_user"
+        val prefs = getApplication<Application>().getSharedPreferences("novalpie_auto_checkin", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("auto_checkin_pref_$account", targetAutoCheckin).apply()
+        profileFeature.save()
+        if (targetAutoCheckin) {
+            triggerAutoCheckinIfConfigured(knownAutoCheckin = true)
+        }
+    }
 
     fun checkinCurrentUser() {
         if (authToken.isNullOrBlank()) { profileState = profileState.copy(actionMessage = "请先登录后再签到"); return }
         profileFeature.checkin()
+    }
+
+    fun triggerAutoCheckinIfConfigured(knownAutoCheckin: Boolean? = null) {
+        val token = authToken?.takeIf { it.isNotBlank() } ?: return
+        val profile = decodeAuthTokenProfile(token, nowEpochSeconds = 0)
+        val account = profile?.id?.toString() ?: profile?.name?.takeIf { it.isNotBlank() } ?: "current_user"
+        val chinaToday = String.format(Locale.US, "%tF", Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai")))
+        val deviceToday = String.format(Locale.US, "%tF", Calendar.getInstance())
+        val lastCheckedKey = "last_auto_checkin_${account}"
+        val prefs = getApplication<Application>().getSharedPreferences("novalpie_auto_checkin", Context.MODE_PRIVATE)
+        val lastRecorded = prefs.getString(lastCheckedKey, null)
+        if (lastRecorded == chinaToday || lastRecorded == deviceToday) {
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                val isAutoCheckin = knownAutoCheckin == true ||
+                    prefs.getBoolean("auto_checkin_pref_$account", false) ||
+                    profileState.autoCheckin ||
+                    runCatching { api.currentUser().autoCheckin == true }.getOrDefault(false) ||
+                    runCatching { api.userCheckinSettings().autoCheckin }.getOrDefault(false)
+                if (isAutoCheckin) {
+                    val year = Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai")).get(Calendar.YEAR)
+                    val records = withContext(Dispatchers.IO) {
+                        runCatching { api.userCheckinRecords(startDate = "$year-01-01", endDate = "$year-12-31") }.getOrDefault(emptyList())
+                    }
+                    val alreadyCheckedIn = records.any { it.date == chinaToday || it.date == deviceToday }
+                    if (!alreadyCheckedIn) {
+                        val result = withContext(Dispatchers.IO) { api.checkinCurrentUser() }
+                        if (result.success || result.message?.contains("已签到") == true || result.message?.contains("already", ignoreCase = true) == true) {
+                            prefs.edit().putString(lastCheckedKey, chinaToday).apply()
+                            if (result.success) {
+                                profileState = profileState.copy(actionMessage = result.message ?: "今日已自动签到成功")
+                            }
+                            if (currentRoute == AppRoute.Profile) {
+                                loadProfile()
+                            }
+                        }
+                    } else {
+                        prefs.edit().putString(lastCheckedKey, chinaToday).apply()
+                    }
+                }
+            }
+        }
     }
 
     fun verifyCurrentUserAdult() {
@@ -4341,7 +4414,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     fun cancelAuthCaptcha() {
         authState = authState.copy(pendingCaptchaAction = null, actionMessage = null)
-        if (currentRoute == AppRoute.AuthCaptcha) goBack()
+        if (currentRoute == AppRoute.AuthCaptcha) {
+            if (!goBack()) {
+                navigator.replaceAll(listOf(AppRoute.Home, AppRoute.Auth(AuthPage.Login)))
+            }
+        }
     }
 
     fun completeAuthCaptcha(token: String) {
@@ -4349,9 +4426,22 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             authState = authState.copy(actionMessage = "安全验证未返回有效令牌，请重试")
             return
         }
-        val action = authState.pendingCaptchaAction ?: return
+        val action = authState.pendingCaptchaAction
+        if (action == null) {
+            authState = authState.copy(captchaToken = normalized, actionMessage = "安全验证已完成")
+            if (currentRoute == AppRoute.AuthCaptcha) {
+                if (!goBack()) {
+                    navigator.replaceAll(listOf(AppRoute.Home, AppRoute.Auth(AuthPage.Login)))
+                }
+            }
+            return
+        }
         authState = authState.copy(captchaToken = normalized, pendingCaptchaAction = null, actionMessage = null)
-        if (currentRoute == AppRoute.AuthCaptcha) goBack()
+        if (currentRoute == AppRoute.AuthCaptcha) {
+            if (!goBack()) {
+                navigator.replaceAll(listOf(AppRoute.Home, AppRoute.Auth(AuthPage.Login)))
+            }
+        }
         executeAuthCaptchaAction(action)
     }
 
@@ -4386,6 +4476,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             authState = state.copy(actionMessage = "请先完成源站安全验证")
             return
         }
+        authState = state.copy(captchaToken = null)
         when (action) {
             AuthCaptchaAction.PasswordLogin -> runAuthSession("登录") {
                 api.loginPassword(state.loginUsername, state.loginPassword, captchaToken)

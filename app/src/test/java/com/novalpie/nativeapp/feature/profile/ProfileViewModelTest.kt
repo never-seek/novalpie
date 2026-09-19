@@ -79,4 +79,73 @@ class ProfileViewModelTest {
         save.complete(UserProfile(1, "旧账号新名字")); runCurrent()
         assertTrue(model.state.profile is LoadResult.Idle)
     }
+
+    @Test fun autoCheckinTriggersAutomaticallyWhenConfiguredAndNotCheckedInToday() = runTest {
+        var checkinCalled = false
+        val model = ProfileViewModel(object : Repository() {
+            override suspend fun profile() = UserProfile(1, "本人", autoCheckin = true)
+            override suspend fun checkinRecords(year: Int) = emptyList<UserCheckinRecord>()
+            override suspend fun checkin(): UserCheckinAction {
+                checkinCalled = true
+                return UserCheckinAction(true, "自动签到成功", points = 10)
+            }
+        }, scope = backgroundScope)
+        model.load(UserProfile(1, "本人", autoCheckin = true), true); runCurrent()
+        assertTrue(checkinCalled)
+        assertEquals("自动签到成功", model.state.actionMessage)
+    }
+
+    @Test fun autoCheckinDoesNotTriggerIfAlreadyCheckedInToday() = runTest {
+        var checkinCalled = false
+        val today = String.format(java.util.Locale.US, "%tF", java.util.Calendar.getInstance())
+        val model = ProfileViewModel(object : Repository() {
+            override suspend fun profile() = UserProfile(1, "本人", autoCheckin = true)
+            override suspend fun checkinRecords(year: Int) = listOf(UserCheckinRecord(today, 10))
+            override suspend fun checkin(): UserCheckinAction {
+                checkinCalled = true
+                return UserCheckinAction(true)
+            }
+        }, scope = backgroundScope)
+        model.load(UserProfile(1, "本人", autoCheckin = true), true); runCurrent()
+        assertFalse(checkinCalled)
+    }
+
+    @Test fun checkinHandledGracefullyWhenAlreadyCheckedInOnServer() = runTest {
+        val model = ProfileViewModel(object : Repository() {
+            override suspend fun checkin() = UserCheckinAction(false, "今日已签到")
+        }, scope = backgroundScope)
+        model.checkin()
+        runCurrent()
+        assertEquals("今日已签到", model.state.actionMessage)
+        assertFalse(model.state.checkingIn)
+    }
+
+    @Test fun checkinHandledGracefullyWhenExceptionThrownWithAlreadyCheckedIn() = runTest {
+        val model = ProfileViewModel(object : Repository() {
+            override suspend fun checkin(): UserCheckinAction {
+                throw java.io.IOException("NovalPie API 400: /api/users/me/checkins - 今日已签到")
+            }
+        }, scope = backgroundScope)
+        model.checkin()
+        runCurrent()
+        assertEquals("今日已签到", model.state.actionMessage)
+        assertFalse(model.state.checkingIn)
+    }
+
+    @Test fun autoCheckinTriggersWhenProfileAutoCheckinNullButCheckinSettingsAutoCheckinTrue() = runTest {
+        var checkinCalled = false
+        val model = ProfileViewModel(object : Repository() {
+            override suspend fun profile() = UserProfile(1, "本人", autoCheckin = null)
+            override suspend fun checkinSettings() = UserCheckinSettings(autoCheckin = true)
+            override suspend fun checkinRecords(year: Int) = emptyList<UserCheckinRecord>()
+            override suspend fun checkin(): UserCheckinAction {
+                checkinCalled = true
+                return UserCheckinAction(true, "自动签到成功", points = 10)
+            }
+        }, scope = backgroundScope)
+        model.load(UserProfile(1, "本人"), true); runCurrent()
+        assertTrue(checkinCalled)
+        assertEquals("自动签到成功", model.state.actionMessage)
+        assertTrue(model.state.autoCheckin)
+    }
 }

@@ -10,6 +10,7 @@ import com.novalpie.nativeapp.ui.*
 import kotlinx.coroutines.*
 import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
 
 /** Independent account surface. Repository operations never mutate another feature's state. */
 internal class ProfileViewModel(
@@ -23,10 +24,10 @@ internal class ProfileViewModel(
     private var generation = 0L
     private var environment = 0L
     private var editRevision = 0L
-    private var draftDirty = false
     private var heroRevision = 0L
     private var inventoryRevision = 0L
     private var activityRevision = 0L
+    private var draftDirty = false
     private var request: Job? = null
     private var tokenProfile: UserProfile? = null
     private var hideSpoilers = true
@@ -50,9 +51,29 @@ internal class ProfileViewModel(
             val profile = async { attempt { repository.profile() } }
             val year = Calendar.getInstance().get(Calendar.YEAR)
             val today = String.format(Locale.US, "%tF", Calendar.getInstance())
-            launch { val result = profile.await(); if (serial == generation && hero == heroRevision) { applyHero(result); publish() } }
+            val chinaToday = String.format(Locale.US, "%tF", Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai")))
+            launch {
+                val profResult = profile.await()
+                if (serial == generation && hero == heroRevision) {
+                    val enriched = if (profResult.isSuccess) {
+                        Result.success(enrichProfileWithCheckinSettings(profResult.getOrThrow()))
+                    } else profResult
+                    applyHero(enriched)
+                    publish()
+                }
+            }
             launch { val result = attempt { repository.checkinStats() }; if (serial == generation) state = currentUserProfileWithLoadedCheckinStats(state, result, today) }
-            launch { val result = attempt { repository.checkinRecords(year) }; if (serial == generation) state = currentUserProfileWithLoadedCheckinRecords(state, result, today) }
+            launch {
+                val result = attempt { repository.checkinRecords(year) }
+                if (serial == generation) {
+                    state = currentUserProfileWithLoadedCheckinRecords(state, result, today)
+                    val prof = profile.await().getOrNull()?.let { enrichProfileWithCheckinSettings(it) }
+                    val records = result.getOrNull().orEmpty()
+                    if (prof?.autoCheckin == true && records.none { it.date == today || it.date == chinaToday }) {
+                        checkin(isAuto = true)
+                    }
+                }
+            }
             launch {
                 val result = attempt {
                     val id = identity?.id ?: profile.await().getOrThrow().id ?: error("缺少用户ID")
@@ -141,15 +162,40 @@ internal class ProfileViewModel(
         }
     }
 
-    fun checkin() {
+    fun checkin(isAuto: Boolean = false) {
         if (state.checkingIn) return
         val account = environment
-        state = state.copy(checkingIn = true, actionMessage = "正在签到…")
+        state = state.copy(checkingIn = true, actionMessage = if (isAuto) "正在自动签到…" else "正在签到…")
         work.launch {
-            val result = attempt { repository.checkin().also { check(it.success) { it.message ?: "签到未完成" } } }
+            val result = attempt { repository.checkin() }
             if (account != environment) return@launch
-            state = state.copy(checkingIn = false, actionMessage = result.fold({ it.message ?: "签到成功" }, { apiFailureMessage("签到", it) }))
-            if (result.isSuccess) refreshAfterWrite(account, refreshCheckin = true)
+            result.fold(
+                onSuccess = { action ->
+                    val alreadyDone = !action.success && (action.message?.contains("已签到") == true || action.message?.contains("already", ignoreCase = true) == true)
+                    state = state.copy(
+                        checkingIn = false,
+                        actionMessage = when {
+                            action.success -> if (isAuto) (action.message ?: "自动签到成功") else (action.message ?: "签到成功")
+                            alreadyDone -> action.message ?: "今日已签到"
+                            else -> action.message ?: "签到未完成"
+                        }
+                    )
+                    if (action.success || alreadyDone) refreshAfterWrite(account, refreshCheckin = true)
+                },
+                onFailure = { error ->
+                    val alreadyDone = error.message?.contains("已签到") == true ||
+                        error.message?.contains("already", ignoreCase = true) == true
+                    state = state.copy(
+                        checkingIn = false,
+                        actionMessage = when {
+                            alreadyDone -> "今日已签到"
+                            isAuto -> null
+                            else -> apiFailureMessage("签到", error)
+                        }
+                    )
+                    if (alreadyDone) refreshAfterWrite(account, refreshCheckin = true)
+                }
+            )
         }
     }
 
@@ -183,9 +229,16 @@ internal class ProfileViewModel(
     private suspend fun refreshAfterWrite(account: Long, refreshInventory: Boolean = false, refreshShop: Boolean = false, refreshCheckin: Boolean = false) = supervisorScope {
         val hero = ++heroRevision
         val inventory = if (refreshInventory) ++inventoryRevision else inventoryRevision
-        launch { val result = attempt { repository.profile() }; if (account == environment && hero == heroRevision) {
-            if (result.isSuccess) { applyHero(result); publish() } else refreshFailed()
-        } }
+        launch {
+            val result = attempt { repository.profile() }
+            if (account == environment && hero == heroRevision) {
+                if (result.isSuccess) {
+                    val enriched = Result.success(enrichProfileWithCheckinSettings(result.getOrThrow()))
+                    applyHero(enriched)
+                    publish()
+                } else refreshFailed()
+            }
+        }
         if (refreshInventory) launch { val result = attempt { repository.inventory() }; if (account == environment && inventory == inventoryRevision) {
             state = currentUserProfileWithLoadedInventory(state, result); if (result.isFailure) refreshFailed(); publish()
         } }
@@ -197,6 +250,14 @@ internal class ProfileViewModel(
             launch { val result = attempt { repository.checkinRecords(year) }; if (account == environment) { state = currentUserProfileWithLoadedCheckinRecords(state, result, today); if (result.isFailure) refreshFailed() } }
             launch { val result = attempt { repository.reward() }; if (account == environment) state = state.copy(quizReward = result.asLoad("奖励状态")) }
         }
+    }
+    private suspend fun enrichProfileWithCheckinSettings(profile: UserProfile): UserProfile {
+        if (profile.autoCheckin != null) return profile
+        val settings = attempt { repository.checkinSettings() }.getOrNull() ?: return profile
+        return profile.copy(
+            autoCheckin = settings.autoCheckin,
+            showCheckin = profile.showCheckin ?: settings.showCheckin
+        )
     }
     private fun refreshFailed() { state = state.copy(actionMessage = "操作已提交成功，部分资料刷新失败；请刷新查看，不要重复提交") }
     fun environmentChanged() { environment++; generation++; heroRevision++; inventoryRevision++; draftDirty = false; editRevision = 0; tokenProfile = null; work.coroutineContext.cancelChildren(); state = ProfileState(booksGridColumns = state.booksGridColumns, downloadImageConcurrency = state.downloadImageConcurrency, downloadCompressImages = state.downloadCompressImages, downloadImageQuality = state.downloadImageQuality, downloadZipCompressionLevel = state.downloadZipCompressionLevel) }

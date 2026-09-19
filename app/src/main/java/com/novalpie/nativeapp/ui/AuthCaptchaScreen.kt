@@ -55,6 +55,13 @@ fun AuthCaptchaScreen(
     val latestOnToken by rememberUpdatedState(onToken)
     var attempt by remember { mutableIntStateOf(0) }
     val webStateKey = "${proxySettings.summary()}:captcha:$attempt"
+    var tokenDelivered by remember(webStateKey) { mutableStateOf(false) }
+    val dispatchToken: (String) -> Unit = { token ->
+        if (!tokenDelivered) {
+            tokenDelivered = true
+            latestOnToken(token)
+        }
+    }
     var sourceNotice by remember(webStateKey) { mutableStateOf<String?>(null) }
     var pageLoading by remember(webStateKey) { mutableStateOf(true) }
     LaunchedEffect(webStateKey, pageLoading) {
@@ -93,21 +100,41 @@ fun AuthCaptchaScreen(
                         tag = captchaWebViewStateMarker(webStateKey)
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
                         settings.loadsImagesAutomatically = true
                         settings.blockNetworkImage = false
                         settings.allowFileAccess = false
                         settings.allowContentAccess = false
+                        settings.useWideViewPort = true
+                        settings.loadWithOverviewMode = true
+                        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                        val defaultUa = settings.userAgentString
+                        if (defaultUa != null) {
+                            settings.userAgentString = defaultUa
+                                .replace("; wv", "")
+                                .replace(Regex("""Version/\d+\.\d+\s*"""), "")
+                        }
+                        val cookieManager = android.webkit.CookieManager.getInstance()
+                        cookieManager.setAcceptCookie(true)
+                        cookieManager.setAcceptThirdPartyCookies(this, true)
+                        addJavascriptInterface(CaptchaJavascriptBridge(dispatchToken), "NovalPieCaptchaBridge")
                         installCaptchaAnonymousSourceGuard(this)
                         if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
-                            var delivered = false
                             WebViewCompat.addWebMessageListener(this, "NovalPieCaptcha", setOf(CAPTCHA_SOURCE_ORIGIN)) { _, message, origin, mainFrame, _ ->
                                 val token = message.data?.trim().orEmpty()
-                                if (!delivered && mainFrame && origin.scheme == "https" && origin.host == "novalpie.cc" && token.length in 20..16384) {
-                                    delivered = true
-                                    latestOnToken(token)
+                                if (mainFrame && origin.scheme == "https" && origin.host == "novalpie.cc" && token.length in 20..16384) {
+                                    dispatchToken(token)
                                 }
                             }
-                        } else sourceNotice = "系统 WebView 太旧，无法安全回填验证结果；请更新 Android System WebView 后重试。"
+                        }
+                        webChromeClient = object : android.webkit.WebChromeClient() {
+                            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                                super.onProgressChanged(view, newProgress)
+                                if (newProgress >= 100) {
+                                    pageLoading = false
+                                }
+                            }
+                        }
                         webViewClient = captchaWebViewClient(
                             onSourceNotice = { sourceNotice = it },
                             onPageLoadingChanged = { pageLoading = it }
@@ -124,6 +151,7 @@ fun AuthCaptchaScreen(
                 onRelease = { webView ->
                     webView.tag = null
                     webView.stopLoading()
+                    webView.removeJavascriptInterface("NovalPieCaptchaBridge")
                     if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) WebViewCompat.removeWebMessageListener(webView, "NovalPieCaptcha")
                     webView.destroy()
                 },
@@ -190,6 +218,22 @@ internal fun installCaptchaAnonymousSourceGuard(webView: WebView): Boolean {
  * remains a fallback for old WebViews that cannot install that guard. Native auth is never read or
  * changed by either path.
  */
+private class CaptchaJavascriptBridge(private val onTokenReceived: (String) -> Unit) {
+    @Volatile
+    private var delivered = false
+
+    @android.webkit.JavascriptInterface
+    fun postMessage(token: String?) {
+        val trimmed = token?.trim().orEmpty()
+        if (!delivered && trimmed.length in 20..16384) {
+            delivered = true
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                onTokenReceived(trimmed)
+            }
+        }
+    }
+}
+
 internal fun captchaWebViewClient(
     onSourceNotice: (String?) -> Unit,
     onPageLoadingChanged: (Boolean) -> Unit
@@ -204,6 +248,7 @@ internal fun captchaWebViewClient(
 
         override fun onPageCommitVisible(view: WebView, url: String?) {
             onPageLoadingChanged(false)
+            view.evaluateJavascript(CAPTCHA_TOKEN_POLL, null)
         }
 
         @Suppress("DEPRECATION")
@@ -235,6 +280,7 @@ internal fun captchaWebViewClient(
         override fun onPageFinished(view: WebView, url: String?) {
             super.onPageFinished(view, url)
             onPageLoadingChanged(false)
+            view.evaluateJavascript(CAPTCHA_TOKEN_POLL, null)
             val uri = url?.let { raw -> runCatching { Uri.parse(raw) }.getOrNull() } ?: return
             if (!uri.host.equals("novalpie.cc", ignoreCase = true)) return
             // Nuxt performs the guest-route redirect with history APIs after this callback. Probe
@@ -246,6 +292,12 @@ internal fun captchaWebViewClient(
                     when (rawState?.trim()) {
                         "\"login\"" -> {
                             onSourceNotice(null)
+                            onPageLoadingChanged(false)
+                            view.evaluateJavascript(CAPTCHA_TOKEN_POLL, null)
+                        }
+
+                        "\"challenge\"" -> {
+                            onSourceNotice("正在进行安全验证…")
                             onPageLoadingChanged(false)
                             view.evaluateJavascript(CAPTCHA_TOKEN_POLL, null)
                         }
@@ -323,7 +375,12 @@ internal const val CAPTCHA_ANONYMOUS_SOURCE_GUARD = """
 private const val CAPTCHA_PAGE_SETTLE_PROBE = """
 (function () {
   var path = String(location.pathname || '').replace(/\/+$/, '') || '/';
-  return path === '/login' ? 'login' : 'other';
+  if (path === '/login') return 'login';
+  if (path.indexOf('/cdn-cgi/') !== -1 || path.indexOf('challenge') !== -1) return 'challenge';
+  var title = String(document.title || '').toLowerCase();
+  if (title.indexOf('moment') !== -1 || title.indexOf('challenge') !== -1 || title.indexOf('cloudflare') !== -1) return 'challenge';
+  if (document.querySelector('iframe[src*="cloudflare"], iframe[src*="turnstile"], .cf-turnstile, #challenge-stage')) return 'challenge';
+  return 'other';
 })()
 """
 
@@ -332,30 +389,94 @@ private const val CAPTCHA_TOKEN_POLL = """
   if (window.__novalpieCaptchaPollInstalled) return true;
   window.__novalpieCaptchaPollInstalled = true;
   var delivered = '';
-  function valueOfCaptchaResponse() {
-    var selectors = [
-      'input[name="cf-turnstile-response"]',
-      'textarea[name="cf-turnstile-response"]',
-      'textarea[name="g-recaptcha-response"]',
-      'textarea[name="h-captcha-response"]',
-      'input[name*="turnstile"]'
-    ];
-    for (var i = 0; i < selectors.length; i++) {
-      var element = document.querySelector(selectors[i]);
-      var value = element && element.value ? String(element.value).trim() : '';
-      if (value.length >= 20) return value;
+
+  function emitToken(token) {
+    var trimmed = token ? String(token).trim() : '';
+    if (trimmed && trimmed.length >= 20 && trimmed !== delivered) {
+      delivered = trimmed;
+      if (window.NovalPieCaptcha && typeof window.NovalPieCaptcha.postMessage === 'function') {
+        window.NovalPieCaptcha.postMessage(trimmed);
+      }
+      if (window.NovalPieCaptchaBridge && typeof window.NovalPieCaptchaBridge.postMessage === 'function') {
+        window.NovalPieCaptchaBridge.postMessage(trimmed);
+      }
     }
+  }
+
+  function hookProvider(name) {
+    try {
+      var p = window[name];
+      if (p && typeof p.render === 'function' && !p.__novalpieHooked) {
+        p.__novalpieHooked = true;
+        var origRender = p.render;
+        p.render = function (container, options) {
+          if (options && typeof options.callback === 'function') {
+            var origCb = options.callback;
+            options.callback = function (t) {
+              emitToken(t);
+              return origCb.apply(this, arguments);
+            };
+          }
+          return origRender.apply(this, arguments);
+        };
+      }
+    } catch (e) {}
+  }
+
+  var selector = 'input[name="cf-turnstile-response"], textarea[name="cf-turnstile-response"], input[name="cf_challenge_response"], textarea[name="g-recaptcha-response"], textarea[name="h-captcha-response"], input[name*="turnstile"], textarea[name*="turnstile"]';
+
+  function valueOfCaptchaResponse() {
+    try {
+      if (window.turnstile && typeof window.turnstile.getResponse === 'function') {
+        var tr = window.turnstile.getResponse();
+        if (tr && String(tr).trim().length >= 20) return String(tr).trim();
+      }
+    } catch (e) {}
+    try {
+      if (window.grecaptcha && typeof window.grecaptcha.getResponse === 'function') {
+        var gr = window.grecaptcha.getResponse();
+        if (gr && String(gr).trim().length >= 20) return String(gr).trim();
+      }
+    } catch (e) {}
+    try {
+      if (window.hcaptcha && typeof window.hcaptcha.getResponse === 'function') {
+        var hr = window.hcaptcha.getResponse();
+        if (hr && String(hr).trim().length >= 20) return String(hr).trim();
+      }
+    } catch (e) {}
+
+    try {
+      var el = document.querySelector(selector);
+      if (el && el.value && String(el.value).trim().length >= 20) {
+        return String(el.value).trim();
+      }
+    } catch (e) {}
+
+    try {
+      var containers = document.querySelectorAll('.cf-turnstile, [data-sitekey]');
+      for (var c = 0; c < containers.length; c++) {
+        var sr = containers[c].shadowRoot;
+        if (sr) {
+          var sel = sr.querySelector(selector);
+          if (sel && sel.value && String(sel.value).trim().length >= 20) {
+            return String(sel.value).trim();
+          }
+        }
+      }
+    } catch (e) {}
+
     return '';
   }
+
   function emit() {
+    hookProvider('turnstile');
+    hookProvider('grecaptcha');
+    hookProvider('hcaptcha');
     var token = valueOfCaptchaResponse();
-    if (token && token !== delivered && window.NovalPieCaptcha) {
-      delivered = token;
-      window.NovalPieCaptcha.postMessage(token);
-    }
+    if (token) emitToken(token);
   }
+
   setInterval(emit, 350);
-  new MutationObserver(emit).observe(document.documentElement, { childList: true, subtree: true, attributes: true });
   emit();
   return true;
 })()
