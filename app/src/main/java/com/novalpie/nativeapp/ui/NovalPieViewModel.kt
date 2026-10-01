@@ -2021,10 +2021,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Appends the next source chapter to the current reader window for website-style scrolling. */
-    fun loadNextReaderChapter() = loadContinuousReaderChapter(1)
-    fun loadPreviousReaderChapter() = loadContinuousReaderChapter(-1)
+    fun loadNextReaderChapter(fromChapterId: Long? = null) = loadContinuousReaderChapter(1, fromChapterId)
+    fun loadPreviousReaderChapter(fromChapterId: Long? = null) = loadContinuousReaderChapter(-1, fromChapterId)
 
-    private fun loadContinuousReaderChapter(direction: Int) {
+    private fun loadContinuousReaderChapter(direction: Int, fromChapterId: Long? = null) {
         val route = currentRoute as? AppRoute.Reader ?: return
         val state = readerState
         if (
@@ -2039,7 +2039,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             return
         }
         val loadedIds = state.chapterContents.map { it.chapterId }.toSet().ifEmpty { setOf(state.chapterId) }
-        val edgeId = (if (direction < 0) state.chapterContents.firstOrNull() else state.chapterContents.lastOrNull())?.chapterId ?: state.chapterId
+        val edgeId = fromChapterId ?: (if (direction < 0) state.chapterContents.firstOrNull() else state.chapterContents.lastOrNull())?.chapterId ?: state.chapterId
         if (direction > 0 && state.chapterContents.size >= com.novalpie.nativeapp.feature.reader.text.READER_CONTINUOUS_WINDOW_SIZE &&
             state.chapterContents.firstOrNull()?.chapterId == (state.visibleChapterId ?: state.chapterId)) return
         // An empty/incomplete catalog is not evidence that this is the last chapter. Refresh only
@@ -2050,6 +2050,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             refreshReaderCatalog()
             return
         }
+        if (direction > 0 && !readerInfiniteScrollCanAppendNext(edgeId, chapters, loadedIds)) return
+        if (direction < 0 && !readerInfiniteScrollCanPrependPrevious(edgeId, chapters, loadedIds)) return
         val next = if (direction < 0) adjacentReaderChapters(edgeId, chapters).previous
             else nextReaderChapterForInfiniteScroll(edgeId, chapters, loadedIds)
         if (next == null) {

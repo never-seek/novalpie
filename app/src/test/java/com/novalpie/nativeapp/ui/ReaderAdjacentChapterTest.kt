@@ -181,4 +181,73 @@ class ReaderAdjacentChapterTest {
         assertEquals(10L, currentChapter?.targetChapterId)
         assertEquals(20L, afterRouteReplacement?.targetChapterId)
     }
+
+    @Test
+    fun infiniteScrollCanAppendNextPreventsDuplicateTriggerFromSkippingAhead() {
+        // When chapter 20 is already loaded, a trigger from chapter 10 must NOT request chapter 30.
+        assertFalse(
+            readerInfiniteScrollCanAppendNext(
+                triggerChapterId = 10L,
+                chapters = chapters,
+                loadedChapterIds = setOf(10L, 20L),
+            )
+        )
+
+        // Chapter 20's next is chapter 30, which is not loaded yet -> allowed.
+        assertTrue(
+            readerInfiniteScrollCanAppendNext(
+                triggerChapterId = 20L,
+                chapters = chapters,
+                loadedChapterIds = setOf(10L, 20L),
+            )
+        )
+
+        // Null triggerId is allowed as fallback.
+        assertTrue(
+            readerInfiniteScrollCanAppendNext(
+                triggerChapterId = null,
+                chapters = chapters,
+                loadedChapterIds = setOf(10L, 20L),
+            )
+        )
+
+        // When all chapters loaded or at catalog end, cannot append.
+        assertFalse(
+            readerInfiniteScrollCanAppendNext(
+                triggerChapterId = 30L,
+                chapters = chapters,
+                loadedChapterIds = setOf(10L, 20L, 30L),
+            )
+        )
+    }
+
+    @Test
+    fun infiniteScrollCanPrependPreviousPreventsDuplicateTriggerFromSkippingBack() {
+        // When chapter 10 is already loaded, a prepend trigger from chapter 20 must NOT request earlier chapters.
+        assertFalse(
+            readerInfiniteScrollCanPrependPrevious(
+                triggerChapterId = 20L,
+                chapters = chapters,
+                loadedChapterIds = setOf(10L, 20L),
+            )
+        )
+
+        // Chapter 30's previous is 20, which is not loaded in {30} -> allowed.
+        assertTrue(
+            readerInfiniteScrollCanPrependPrevious(
+                triggerChapterId = 30L,
+                chapters = chapters,
+                loadedChapterIds = setOf(30L),
+            )
+        )
+
+        // First chapter has no previous -> cannot prepend.
+        assertFalse(
+            readerInfiniteScrollCanPrependPrevious(
+                triggerChapterId = 10L,
+                chapters = chapters,
+                loadedChapterIds = setOf(10L),
+            )
+        )
+    }
 }

@@ -877,12 +877,41 @@ internal fun readerNextChapterPrefetchStartIndex(
     totalItemCount: Int,
     itemsAfterSentinel: Int = 0,
     lookAheadItems: Int = 3,
-): Int = (
-    totalItemCount.coerceAtLeast(0) -
-        itemsAfterSentinel.coerceAtLeast(0) -
-        1 - // sentinel
-        lookAheadItems.coerceAtLeast(1)
-    ).coerceAtLeast(0)
+    lastChapterStartIndex: Int = 0,
+): Int = maxOf(
+    lastChapterStartIndex.coerceAtLeast(0),
+    (
+        totalItemCount.coerceAtLeast(0) -
+            itemsAfterSentinel.coerceAtLeast(0) -
+            1 - // sentinel
+            lookAheadItems.coerceAtLeast(1)
+    ).coerceAtLeast(0),
+)
+
+/**
+ * Prefetching the next chapter should only occur when the reader is actively reading
+ * the last loaded chapter in the continuous window.
+ */
+internal fun readerContinuousPrefetchEligible(
+    activeChapterId: Long,
+    lastLoadedChapterId: Long,
+): Boolean = activeChapterId > 0L && activeChapterId == lastLoadedChapterId
+
+/**
+ * Sentinel and boundary triggers should only load the next chapter when the reader is actively
+ * viewing the last loaded chapter in the continuous window, or when the user has reached the
+ * terminal scroll boundary where forward scrolling is no longer possible.
+ */
+internal fun readerContinuousBoundaryEligible(
+    activeChapterId: Long,
+    lastLoadedChapterId: Long,
+    canScrollForward: Boolean = true,
+    lastLoadedChapterVisible: Boolean = false,
+): Boolean =
+    activeChapterId > 0L && (
+        activeChapterId == lastLoadedChapterId ||
+        (!canScrollForward && lastLoadedChapterVisible)
+    )
 
 /** Lightweight form for scroll observers after the body boundary has been calculated once. */
 internal fun readerShouldPrefetchNextChapter(
@@ -1095,6 +1124,8 @@ internal fun readerContinuousScrollCanRequestNext(
     nextChapterError: String?,
     nextChapterWaitingForCatalog: Boolean,
     nextChapterExhausted: Boolean,
+    currentSentinelKey: String? = null,
+    lastHandledSentinelKey: String? = null,
 ): Boolean =
     readerContinuousScrollCanTrigger(continuousScrollEnabled, hasReadableBody) &&
         boundaryReached &&
@@ -1102,7 +1133,8 @@ internal fun readerContinuousScrollCanRequestNext(
         !loadingNextChapter &&
         nextChapterError == null &&
         !nextChapterWaitingForCatalog &&
-        !nextChapterExhausted
+        !nextChapterExhausted &&
+        (currentSentinelKey == null || currentSentinelKey != lastHandledSentinelKey)
 
 /** Legacy preferences must never restore the removed radial-card gesture. */
 internal fun readerUsesRadialMenu(showRadialMenu: Boolean): Boolean = false

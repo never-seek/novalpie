@@ -40,6 +40,36 @@ internal fun nextReaderChapterForInfiniteScroll(
 }
 
 /**
+ * Verifies whether an infinite-scroll append request should proceed for a specific trigger chapter.
+ * If the immediate successor of [triggerChapterId] is already present in [loadedChapterIds],
+ * the trigger is redundant and must not skip ahead to subsequent chapters.
+ */
+internal fun readerInfiniteScrollCanAppendNext(
+    triggerChapterId: Long?,
+    chapters: List<Chapter>,
+    loadedChapterIds: Set<Long>,
+): Boolean {
+    if (triggerChapterId == null) return true
+    val nextInCatalog = adjacentReaderChapters(triggerChapterId, chapters).next ?: return false
+    return nextInCatalog.id !in loadedChapterIds
+}
+
+/**
+ * Verifies whether an infinite-scroll prepend request should proceed for a specific trigger chapter.
+ * If the immediate predecessor of [triggerChapterId] is already present in [loadedChapterIds],
+ * the trigger is redundant and must not skip backwards to earlier chapters.
+ */
+internal fun readerInfiniteScrollCanPrependPrevious(
+    triggerChapterId: Long?,
+    chapters: List<Chapter>,
+    loadedChapterIds: Set<Long>,
+): Boolean {
+    if (triggerChapterId == null) return true
+    val prevInCatalog = adjacentReaderChapters(triggerChapterId, chapters).previous ?: return false
+    return prevInCatalog.id !in loadedChapterIds
+}
+
+/**
  * A successful but empty/partial catalog cannot prove that the current chapter is the final one.
  * Keeping this check separate prevents the reader from converting a transient catalog response
  * into a permanent end-of-book state.

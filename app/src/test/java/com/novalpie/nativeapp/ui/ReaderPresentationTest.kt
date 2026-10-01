@@ -883,6 +883,123 @@ class ReaderPresentationTest {
     }
 
     @Test
+    fun readerPrefetchGuardsAgainstPrematureTriggerOnEarlierChapters() {
+        // When second chapter (index starting at 7) is appended to total 14 items:
+        // Prefetch start index must not drop below the start of the last loaded chapter (7).
+        val prefetchStart = readerNextChapterPrefetchStartIndex(
+            totalItemCount = 14,
+            lastChapterStartIndex = 7,
+        )
+        assertTrue(prefetchStart >= 7)
+
+        // Reading chapter 10 while chapter 20 is loaded: not eligible for prefetch.
+        assertFalse(readerContinuousPrefetchEligible(activeChapterId = 10L, lastLoadedChapterId = 20L))
+        // Reading chapter 20 when chapter 20 is the last loaded chapter: eligible for prefetch.
+        assertTrue(readerContinuousPrefetchEligible(activeChapterId = 20L, lastLoadedChapterId = 20L))
+        // Invalid chapter IDs are never eligible.
+        assertFalse(readerContinuousPrefetchEligible(activeChapterId = 0L, lastLoadedChapterId = 0L))
+        assertFalse(readerContinuousPrefetchEligible(activeChapterId = -1L, lastLoadedChapterId = 20L))
+    }
+
+    @Test
+    fun readerBoundaryEligiblePreventsShortChapterCascadeWhileEarlierChapterIsActive() {
+        // While user is actively reading chapter 10, but chapter 20 is already loaded:
+        // Forward scroll is still possible -> boundary trigger must NOT be eligible.
+        assertFalse(
+            readerContinuousBoundaryEligible(
+                activeChapterId = 10L,
+                lastLoadedChapterId = 20L,
+                canScrollForward = true,
+                lastLoadedChapterVisible = true,
+            )
+        )
+
+        // Once the user has reached/activated chapter 20 -> boundary trigger is eligible.
+        assertTrue(
+            readerContinuousBoundaryEligible(
+                activeChapterId = 20L,
+                lastLoadedChapterId = 20L,
+                canScrollForward = true,
+                lastLoadedChapterVisible = true,
+            )
+        )
+
+        // If the list cannot scroll forward and the last loaded chapter is visible
+        // (e.g. content is shorter than the viewport) -> boundary trigger is eligible.
+        assertTrue(
+            readerContinuousBoundaryEligible(
+                activeChapterId = 10L,
+                lastLoadedChapterId = 20L,
+                canScrollForward = false,
+                lastLoadedChapterVisible = true,
+            )
+        )
+
+        // If list cannot scroll forward but last chapter is not visible -> not eligible.
+        assertFalse(
+            readerContinuousBoundaryEligible(
+                activeChapterId = 10L,
+                lastLoadedChapterId = 20L,
+                canScrollForward = false,
+                lastLoadedChapterVisible = false,
+            )
+        )
+    }
+
+    @Test
+    fun continuousScrollCanRequestNextEnforcesSentinelDeduplication() {
+        val sentinelKey = "reader-body-end-sentinel-10-1"
+        // First encounter of sentinelKey -> allowed
+        assertTrue(
+            readerContinuousScrollCanRequestNext(
+                continuousScrollEnabled = true,
+                hasReadableBody = true,
+                boundaryReached = true,
+                catalogReady = true,
+                loadingNextChapter = false,
+                nextChapterError = null,
+                nextChapterWaitingForCatalog = false,
+                nextChapterExhausted = false,
+                currentSentinelKey = sentinelKey,
+                lastHandledSentinelKey = null,
+            )
+        )
+
+        // Same sentinelKey already handled -> blocked from retriggering
+        assertFalse(
+            readerContinuousScrollCanRequestNext(
+                continuousScrollEnabled = true,
+                hasReadableBody = true,
+                boundaryReached = true,
+                catalogReady = true,
+                loadingNextChapter = false,
+                nextChapterError = null,
+                nextChapterWaitingForCatalog = false,
+                nextChapterExhausted = false,
+                currentSentinelKey = sentinelKey,
+                lastHandledSentinelKey = sentinelKey,
+            )
+        )
+
+        // New sentinelKey for next chapter -> allowed
+        val nextSentinelKey = "reader-body-end-sentinel-20-2"
+        assertTrue(
+            readerContinuousScrollCanRequestNext(
+                continuousScrollEnabled = true,
+                hasReadableBody = true,
+                boundaryReached = true,
+                catalogReady = true,
+                loadingNextChapter = false,
+                nextChapterError = null,
+                nextChapterWaitingForCatalog = false,
+                nextChapterExhausted = false,
+                currentSentinelKey = nextSentinelKey,
+                lastHandledSentinelKey = sentinelKey,
+            )
+        )
+    }
+
+    @Test
     fun readerUsesNormalTapToolbarsWithoutRestoringTheRetiredRadialMenu() {
         assertFalse(readerUsesRadialMenu(showRadialMenu = false))
         assertFalse(readerUsesRadialMenu(showRadialMenu = true))

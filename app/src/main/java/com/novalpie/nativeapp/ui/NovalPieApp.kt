@@ -6331,8 +6331,8 @@ internal fun ReaderScreen(
     onRetryCatalog: () -> Unit,
     onOpenReader: (Long, Long) -> Unit,
     onOpenReaderAtPosition: (Long, Long, ReaderChapterEntryPosition) -> Unit,
-    onLoadNextChapter: () -> Unit,
-    onLoadPreviousChapter: () -> Unit = {},
+    onLoadNextChapter: (Long?) -> Unit,
+    onLoadPreviousChapter: (Long?) -> Unit = {},
     onVisibleChapterChanged: (Long, String?) -> Unit,
     onViewportAnchorChanged: (ReaderViewportAnchor) -> Unit,
     onToggleFavorite: () -> Unit,
@@ -6442,6 +6442,7 @@ internal fun ReaderScreen(
     // in-flight append can replace the observer at exactly the chapter boundary. A newly appended
     // chapter gets a new sentinel key and therefore a fresh boundary flag.
     val continuousBoundaryReached = remember { mutableStateOf(false) }
+    var lastHandledSentinelKey by remember(state.bookId, state.chapterId) { mutableStateOf<String?>(null) }
     val readerScope = rememberCoroutineScope()
     val context = LocalContext.current
     val readerView = LocalView.current
@@ -6592,6 +6593,7 @@ internal fun ReaderScreen(
         lastReaderChromeTapXFraction = -1f
         lastReaderChromeTapYFraction = -1f
         continuousBoundaryReached.value = false
+        lastHandledSentinelKey = null
         visibleReaderChapterId = state.chapterId.takeIf { it > 0L }
         visibleProgress.value = state.chapterId to 0f
         pendingChapterEntryPosition = state.entryPosition
@@ -6733,29 +6735,49 @@ internal fun ReaderScreen(
             continuousBoundaryReached.value = false
             return@LaunchedEffect
         }
+        continuousBoundaryReached.value = false
         snapshotFlow {
             if (!hasReadableBody || preparingBody) false else {
                 val visibleItems = listState.layoutInfo.visibleItemsInfo
                 val bodyEndVisible = visibleItems.any { item -> item.key == readerEndSentinelKey }
                 val lastVisibleItemIndex = visibleItems.maxOfOrNull { it.index } ?: -1
+                val lastLoadedChapterId = chapterContents.lastOrNull()?.chapterId ?: state.chapterId
+                val lastLoadedChapterVisible = visibleItems.any { item ->
+                    latestReaderBodyLayout.locationsByKey[item.key?.toString()]?.chapterId == lastLoadedChapterId
+                }
+                val boundaryEligible = readerContinuousBoundaryEligible(
+                    activeChapterId = activeChapterId,
+                    lastLoadedChapterId = lastLoadedChapterId,
+                    canScrollForward = listState.canScrollForward,
+                    lastLoadedChapterVisible = lastLoadedChapterVisible,
+                )
+                val prefetchEligible = readerContinuousPrefetchEligible(activeChapterId, lastLoadedChapterId)
+                val lastChapterStartIndex = latestReaderBodyLayout.itemLocations.indexOfFirst { it.chapterId == lastLoadedChapterId }.coerceAtLeast(0)
                 val prefetchStartIndex = readerNextChapterPrefetchStartIndex(
                     totalItemCount = listState.layoutInfo.totalItemsCount,
                     // Every chapter's comments are now part of its own body group, before the
                     // sentinel. The next chapter therefore follows body -> comments -> body.
                     itemsAfterSentinel = 0,
+                    lastChapterStartIndex = lastChapterStartIndex,
                 )
                 // Begin the idempotent read shortly before the marker. This hides normal network
                 // latency while retaining the marker as a fallback for very short chapters.
-                bodyEndVisible || readerShouldPrefetchNextChapter(
+                (boundaryEligible && bodyEndVisible) || (prefetchEligible && readerShouldPrefetchNextChapter(
                     lastVisibleItemIndex = lastVisibleItemIndex,
                     prefetchStartIndex = prefetchStartIndex,
-                )
+                ))
             }
         }.collect { nextBoundaryReached ->
             // The sentinel is immediately after the article body and before the potentially
             // very large comments block. Watching LazyColumn's last item made comments block
             // continuous reading until their entire section had been traversed.
             continuousBoundaryReached.value = nextBoundaryReached
+        }
+    }
+
+    LaunchedEffect(state.nextChapterError, state.nextChapterWaitingForCatalog) {
+        if (state.nextChapterError != null || !state.nextChapterWaitingForCatalog) {
+            lastHandledSentinelKey = null
         }
     }
 
@@ -6771,6 +6793,8 @@ internal fun ReaderScreen(
         chapterContents.size,
         preparingBody,
         state.visibleChapterId,
+        readerEndSentinelKey,
+        lastHandledSentinelKey,
     ) {
         if (preparingBody) return@LaunchedEffect
         val catalogReady = state.chapters is LoadResult.Success
@@ -6784,14 +6808,14 @@ internal fun ReaderScreen(
                 nextChapterError = state.nextChapterError,
                 nextChapterWaitingForCatalog = state.nextChapterWaitingForCatalog,
                 nextChapterExhausted = state.nextChapterExhausted,
+                currentSentinelKey = readerEndSentinelKey,
+                lastHandledSentinelKey = lastHandledSentinelKey,
             )
         ) {
-            // Keep the boundary armed until a successful append replaces this sentinel. The
-            // ViewModel can first refresh a partial catalog before it knows the next chapter;
-            // consuming the signal here would leave the reader at the chapter end after that
-            // refresh, because no second visibility transition is guaranteed. Loading, error and
-            // confirmed-end states already gate this effect, so retaining the signal cannot spin.
-            onLoadNextChapter()
+            lastHandledSentinelKey = readerEndSentinelKey
+            continuousBoundaryReached.value = false
+            val targetEdgeId = chapterContents.lastOrNull()?.chapterId ?: state.chapterId
+            onLoadNextChapter(targetEdgeId)
         }
     }
 
@@ -7369,7 +7393,7 @@ internal fun ReaderScreen(
                                     readerBodyLayout.chapters.firstOrNull()?.chapter?.let { first ->
                                         latestVisibleChapterChanged(first.chapterId, first.title)
                                     }
-                                    onLoadPreviousChapter()
+                                    onLoadPreviousChapter(readerBodyLayout.chapters.firstOrNull()?.chapter?.chapterId ?: state.chapterId)
                                 }, enabled = !state.loadingPreviousChapter && !state.loadingNextChapter) {
                                     Text(if (state.loadingPreviousChapter) "正在加载上一章…" else "加载上一章")
                                 }
@@ -7406,7 +7430,12 @@ internal fun ReaderScreen(
                             chapters = chapters,
                             chapterContents = chapterContents,
                             onRetryCatalog = onRetryCatalog,
-                            onRetryNextChapter = onLoadNextChapter,
+                            onRetryNextChapter = {
+                                lastHandledSentinelKey = null
+                                continuousBoundaryReached.value = false
+                                val targetEdgeId = chapterContents.lastOrNull()?.chapterId ?: state.chapterId
+                                onLoadNextChapter(targetEdgeId)
+                            },
                         )
                     }
                 }
