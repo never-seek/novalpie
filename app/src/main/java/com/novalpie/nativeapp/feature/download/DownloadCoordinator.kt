@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 internal interface DownloadCheckpointCallback {
+    val supportsUserDecisions:Boolean get()=false
     suspend fun onCheckpoint(task: DownloadTask, log: String? = null, awaitingDecision: Boolean = false)
     suspend operator fun invoke(task: DownloadTask) = onCheckpoint(task, null, false)
     suspend operator fun invoke(task: DownloadTask, log: String?) = onCheckpoint(task, log, false)
@@ -71,6 +72,7 @@ internal class DownloadCoordinator(
             try {
                 persistLatest(id)
                 val completed=runner.run(task,gate,object : DownloadCheckpointCallback {
+                    override val supportsUserDecisions=true
                     override suspend fun onCheckpoint(update: DownloadTask, log: String?, awaitingDecision: Boolean) {
                         withContext(commandContext) {
                             if(id==generation) {
@@ -95,7 +97,7 @@ internal class DownloadCoordinator(
                 })
                 if(id==generation){
                     if (logs.isEmpty() || !logs.last().contains("完成")) {
-                        logs.add("下载完成！")
+                        logs.add(if(completed.integrityIssues.isEmpty())"下载完成！"else "文件已保存，仍有完整性提示，请查看")
                     }
                     mutable.value=DownloadUiState(
                         task = completed,
@@ -189,7 +191,7 @@ internal class DownloadCoordinator(
             mutable.value=DownloadUiState(
                 task = task,
                 busy = false,
-                logs = listOfNotNull(task.failure ?: if (task.phase == DownloadPhase.Completed) "下载完成！" else null),
+                logs = listOfNotNull(task.failure ?: if(task.phase==DownloadPhase.Completed)downloadStatusText(DownloadUiState(task=task))else null),
                 failedImageCount = task.failedAssets,
                 totalImageCount = task.totalAssets,
             )

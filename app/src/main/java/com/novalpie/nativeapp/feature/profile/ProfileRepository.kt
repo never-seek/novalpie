@@ -3,6 +3,8 @@ package com.novalpie.nativeapp.feature.profile
 import com.novalpie.nativeapp.data.NovalPieApi
 import com.novalpie.nativeapp.model.*
 
+internal class ProfileSavePartialFailure(val confirmedProfile:UserProfile,message:String,cause:Throwable?=null):java.io.IOException(message,cause)
+
 internal interface ProfileRepository {
     suspend fun profile(): UserProfile
     suspend fun checkinStats(): UserCheckinStats
@@ -34,12 +36,14 @@ internal class WebsiteProfileRepository(private val api: NovalPieApi) : ProfileR
     override suspend fun save(profile: UserProfile): UserProfile {
         val updated = api.updateCurrentUser(profile)
         if (profile.showCheckin != null || profile.autoCheckin != null) {
-            runCatching {
-                api.updateCurrentUserCheckinSettings(
-                    showCheckin = profile.showCheckin ?: true,
-                    autoCheckin = profile.autoCheckin ?: false
-                )
-            }
+            try {
+                val action=api.updateCurrentUserCheckinSettings(showCheckin=profile.showCheckin,autoCheckin=profile.autoCheckin)
+                if(!action.success)throw ProfileSavePartialFailure(updated.copy(showCheckin=null,autoCheckin=null),
+                    "资料已保存，但签到设置未保存：${action.message ?: "服务器拒绝"}。签到草稿保留，请核对后重试。")
+            }catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled}
+            catch(partial:ProfileSavePartialFailure){throw partial}
+            catch(error:Exception){throw ProfileSavePartialFailure(updated.copy(showCheckin=null,autoCheckin=null),
+                "资料已保存，但签到设置结果未确认；草稿保留，请刷新核对，不要重复提交其他资料。",error)}
         }
         return updated
     }

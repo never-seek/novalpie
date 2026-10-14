@@ -77,6 +77,7 @@ class ReaderTtsDeviceTest {
             assertEquals(0,failure.get())
         } finally {
             instrumentation.runOnMainSync { engine.stop();engine.shutdown() }
+            File(app.cacheDir,"beta7-tts-chinese-smoke.wav").delete() // This test's own synthetic audio only.
         }
     }
 }

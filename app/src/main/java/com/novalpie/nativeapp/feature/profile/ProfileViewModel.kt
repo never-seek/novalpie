@@ -18,6 +18,8 @@ internal class ProfileViewModel(
     initial: ProfileState = ProfileState(),
     scope: CoroutineScope? = null,
     private val onProfile: (UserProfile) -> Unit = {},
+    private val checkinReceipts:CheckinReceiptStore=MemoryCheckinReceiptStore(),
+    private val nowMillis:()->Long=System::currentTimeMillis,
 ) : ViewModel() {
     private val parent = scope ?: viewModelScope
     private val work = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
@@ -31,6 +33,13 @@ internal class ProfileViewModel(
     private var request: Job? = null
     private var tokenProfile: UserProfile? = null
     private var hideSpoilers = true
+    private val localCheckinReceipts=mutableMapOf<Pair<Long,String>,CheckinReceipt>()
+    private fun receipt(accountId:Long,date:String)=localCheckinReceipts[accountId to date] ?: checkinReceipts.get(accountId,date)
+    private fun saveReceipt(accountId:Long,date:String,value:CheckinReceipt) {
+        localCheckinReceipts[accountId to date]=value
+        checkinReceipts.put(accountId,date,value)
+    }
+    private fun ownerId():Long?=tokenProfile?.id ?: (state.profile as? LoadResult.Success)?.value?.id
     var state by mutableStateOf(initial)
         private set
     fun present(transform: (ProfileState) -> ProfileState) { state = transform(state) }
@@ -49,9 +58,8 @@ internal class ProfileViewModel(
             loadingMoreActivities = false, activityPageMessage = null)
         request = work.launch { supervisorScope {
             val profile = async { attempt { repository.profile() } }
-            val year = Calendar.getInstance().get(Calendar.YEAR)
-            val today = String.format(Locale.US, "%tF", Calendar.getInstance())
-            val chinaToday = String.format(Locale.US, "%tF", Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai")))
+            val today=checkinSiteDay(nowMillis())
+            val year=today.take(4).toInt()
             launch {
                 val profResult = profile.await()
                 if (serial == generation && hero == heroRevision) {
@@ -69,9 +77,10 @@ internal class ProfileViewModel(
                     state = currentUserProfileWithLoadedCheckinRecords(state, result, today)
                     val prof = profile.await().getOrNull()?.let { enrichProfileWithCheckinSettings(it) }
                     val records = result.getOrNull().orEmpty()
-                    if (prof?.autoCheckin == true && records.none { it.date == today || it.date == chinaToday }) {
-                        checkin(isAuto = true)
-                    }
+                    if(serial!=generation)return@launch
+                    val id=prof?.id ?: identity?.id
+                    if(id!=null&&records.any{it.date==today})runCatching{saveReceipt(id,today,CheckinReceipt.Confirmed)}
+                    if(prof?.autoCheckin==true&&id!=null&&records.none{it.date==today})checkin(isAuto=true,expectedOwner=id)
                 }
             }
             launch {
@@ -133,8 +142,16 @@ internal class ProfileViewModel(
                 heroRevision++
                 applyHero(result)
             }
+            val partial=result.exceptionOrNull() as? ProfileSavePartialFailure
+            if(partial!=null) {
+                heroRevision++
+                draftDirty=true
+                val current=(state.profile as? LoadResult.Success)?.value
+                val confirmed=partial.confirmedProfile.copy(showCheckin=current?.showCheckin,autoCheckin=current?.autoCheckin)
+                state=state.copy(profile=LoadResult.Success(confirmed))
+            }
             state = state.copy(saving = false, actionMessage = result.fold(
-                { if (draftDirty) "本次资料已保存，后续修改尚未保存" else "资料已保存" }, { apiFailureMessage("保存资料", it) }))
+                { if (draftDirty) "本次资料已保存，后续修改尚未保存" else "资料已保存" }, { if(it is ProfileSavePartialFailure)it.message else apiFailureMessage("保存资料",it) }))
             publish()
         }
     }
@@ -162,40 +179,50 @@ internal class ProfileViewModel(
         }
     }
 
-    fun checkin(isAuto: Boolean = false) {
-        if (state.checkingIn) return
-        val account = environment
-        state = state.copy(checkingIn = true, actionMessage = if (isAuto) "正在自动签到…" else "正在签到…")
+    fun checkin(isAuto:Boolean=false,expectedOwner:Long?=ownerId()) {
+        if(state.checkingIn)return
+        val knownId=expectedOwner?.takeIf{it>0}
+        val date=checkinSiteDay(nowMillis())
+        val existing=knownId?.let {receipt(it,date)}
+        if(existing==CheckinReceipt.Confirmed) {
+            if(!isAuto)state=state.copy(actionMessage="今日已签到")
+            return
+        }
+        if(existing!=null&&existing!=CheckinReceipt.Confirmed&&isAuto) {
+            state=state.copy(actionMessage=if(existing==CheckinReceipt.Rejected)"上次自动签到未成功，未自动重发；可手动重试"else "签到请求结果未确认，未自动重发；请刷新记录后核对")
+            return
+        }
+        val account=environment
+        state=state.copy(checkingIn=true,actionMessage=if(isAuto)"正在自动签到…"else "正在签到…")
         work.launch {
-            val result = attempt { repository.checkin() }
-            if (account != environment) return@launch
-            result.fold(
-                onSuccess = { action ->
-                    val alreadyDone = !action.success && (action.message?.contains("已签到") == true || action.message?.contains("already", ignoreCase = true) == true)
-                    state = state.copy(
-                        checkingIn = false,
-                        actionMessage = when {
-                            action.success -> if (isAuto) (action.message ?: "自动签到成功") else (action.message ?: "签到成功")
-                            alreadyDone -> action.message ?: "今日已签到"
-                            else -> action.message ?: "签到未完成"
-                        }
-                    )
-                    if (action.success || alreadyDone) refreshAfterWrite(account, refreshCheckin = true)
-                },
-                onFailure = { error ->
-                    val alreadyDone = error.message?.contains("已签到") == true ||
-                        error.message?.contains("already", ignoreCase = true) == true
-                    state = state.copy(
-                        checkingIn = false,
-                        actionMessage = when {
-                            alreadyDone -> "今日已签到"
-                            isAuto -> null
-                            else -> apiFailureMessage("签到", error)
-                        }
-                    )
-                    if (alreadyDone) refreshAfterWrite(account, refreshCheckin = true)
-                }
-            )
+            val userId=knownId ?: attempt {repository.profile().id?.takeIf{it>0} ?: error("缺少签到账号ID，请刷新资料后重试")}.getOrElse {
+                if(account==environment)state=state.copy(checkingIn=false,actionMessage=apiFailureMessage("签到账号",it))
+                return@launch
+            }
+            if(account!=environment)return@launch
+            val previous=receipt(userId,date)
+            if(previous==CheckinReceipt.Confirmed || previous!=null&&previous!=CheckinReceipt.Confirmed&&isAuto) {
+                state=state.copy(checkingIn=false,actionMessage=if(previous==CheckinReceipt.Confirmed)"今日已签到"else "签到请求结果未确认，未自动重发；请刷新记录后核对")
+                return@launch
+            }
+            // Persist an attempted write before POST. A refresh/process restart cannot blindly replay an unknown write.
+            val persisted=attempt {saveReceipt(userId,date,CheckinReceipt.Attempted)}
+            if(persisted.isFailure){state=state.copy(checkingIn=false,actionMessage=persisted.exceptionOrNull()?.message);return@launch}
+            val result=attempt {repository.checkin()}
+            if(account!=environment||ownerId()!=null&&ownerId()!=userId)return@launch
+            val already=checkinAlreadyCompletedMessage(result.getOrNull()?.message ?: result.exceptionOrNull()?.message)
+            val confirmed=result.getOrNull()?.success==true||already
+            if(confirmed)runCatching {saveReceipt(userId,date,CheckinReceipt.Confirmed)}
+            else if(result.isSuccess || (result.exceptionOrNull() as? com.novalpie.nativeapp.data.NovalPieApiException)?.statusCode in listOf(400,401,403,404,422)) {
+                runCatching {saveReceipt(userId,date,CheckinReceipt.Rejected)}
+            }
+            state=state.copy(checkingIn=false,actionMessage=when {
+                already->result.getOrNull()?.message ?: "今日已签到"
+                result.getOrNull()?.success==true->result.getOrNull()?.message ?: if(isAuto)"自动签到成功"else "签到成功"
+                result.isSuccess->result.getOrNull()?.message ?: "签到未完成"
+                else->if(isAuto)"签到请求结果未确认，未自动重发；请刷新记录后核对"else apiFailureMessage("签到",result.exceptionOrNull()!!)
+            })
+            if(confirmed)refreshAfterWrite(account,refreshCheckin=true)
         }
     }
 
@@ -244,8 +271,8 @@ internal class ProfileViewModel(
         } }
         if (refreshShop) launch { val result = attempt { repository.shop() }; if (account == environment) { state = state.copy(shopItems = result.asLoad("商店")); if (result.isFailure) refreshFailed() } }
         if (refreshCheckin) {
-            val year = Calendar.getInstance().get(Calendar.YEAR)
-            val today = String.format(Locale.US, "%tF", Calendar.getInstance())
+            val today=checkinSiteDay(nowMillis())
+            val year=today.take(4).toInt()
             launch { val result = attempt { repository.checkinStats() }; if (account == environment) { state = currentUserProfileWithLoadedCheckinStats(state, result, today); if (result.isFailure) refreshFailed() } }
             launch { val result = attempt { repository.checkinRecords(year) }; if (account == environment) { state = currentUserProfileWithLoadedCheckinRecords(state, result, today); if (result.isFailure) refreshFailed() } }
             launch { val result = attempt { repository.reward() }; if (account == environment) state = state.copy(quizReward = result.asLoad("奖励状态")) }

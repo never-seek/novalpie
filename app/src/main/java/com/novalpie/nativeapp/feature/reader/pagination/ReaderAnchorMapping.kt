@@ -2,6 +2,20 @@ package com.novalpie.nativeapp.feature.reader.pagination
 
 import com.novalpie.nativeapp.feature.reader.text.readerSpokenTextRange
 import kotlin.math.abs
+import com.novalpie.nativeapp.feature.reader.tts.ReaderSpeechFocus
+import com.novalpie.nativeapp.feature.reader.tts.readerSpeechDisplayRange
+import com.novalpie.nativeapp.model.ChineseVariant
+
+internal fun readerAnchorForSpeech(document:ChapterDocument,focus:ReaderSpeechFocus,
+    variant:ChineseVariant=ChineseVariant.Original,wordSpacing:Float=0f):ReaderAnchor? {
+    if(document.chapterId!=focus.chapterId)return null
+    val paragraphs=document.blocks.filterIsInstance<ChapterDocumentBlock.Paragraph>().filterNot {it.heading}
+    val targets=paragraphs.mapNotNull { block ->
+        readerSpeechDisplayRange(block.text.text,focus,document.chapterId,block.id,variant,wordSpacing)
+            ?.let {ReaderAnchor(document.bookId,document.chapterId,block.id,it.first)}
+    }
+    return targets.singleOrNull()
+}
 
 /** Used on document changes, never on a scroll frame. Stable text wins over a shifted list ID. */
 internal fun remapReaderAnchor(anchor:ReaderAnchor,before:ChapterDocument?,after:ChapterDocument):ReaderAnchor {

@@ -12,22 +12,38 @@ internal class DownloadPackageCheckpoint(private val directory:File) {
     private val receipt=File(directory,"package.complete")
     suspend fun record(task:DownloadTask,file:File,sourceDigest:String,control:NativeDownloadControl) {
         val data=JSONObject().put("task",task.id).put("format",task.format.name).put("source",sourceDigest)
-            .put("exportPipeline", 4)
+            .put("exportPipeline", 6)
             .put("rules",rulesDigest(task)).put("bytes",file.length()).put("sha256",digest(file,control))
+            .put("integrityIssues",DownloadIntegrityJson.encode(task.integrityIssues))
         receipt.writeText(data.toString())
+    }
+
+    /** Called only after reusable() validated the exact bytes. New GETs cannot repair old bytes. */
+    fun integrityIssuesForReuse(task:DownloadTask):List<DownloadIntegrityIssue> {
+        val data=JSONObject(receipt.readText())
+        return if(data.has("integrityIssues")) DownloadIntegrityJson.decode(data.getJSONArray("integrityIssues"))
+            else task.integrityIssues // Existing pipeline-6 packages retain their task disclosure.
     }
     suspend fun reusable(task:DownloadTask,file:File,sourceDigest:String,control:NativeDownloadControl):Boolean {
         if(!file.isFile||file.length()==0L||!receipt.isFile)return false
         val data=runCatching{JSONObject(receipt.readText())}.getOrNull() ?: return false
-        return (task.format != DownloadFormat.Epub || data.optInt("exportPipeline") == 4) && data.optString("task")==task.id&&data.optString("format")==task.format.name&&data.optString("source")==sourceDigest&&
+        return data.optInt("exportPipeline")==6 && data.optString("task")==task.id&&data.optString("format")==task.format.name&&data.optString("source")==sourceDigest&&
             data.optString("rules")==rulesDigest(task)&&data.optLong("bytes")==file.length()&&data.optString("sha256")==digest(file,control)
+    }
+
+    /** Fingerprint was computed by record()/reusable(); publisher verifies emitted bytes against it. */
+    fun publicationFingerprint(task:DownloadTask,file:File,sourceDigest:String):PublicationFingerprint {
+        val data=JSONObject(receipt.readText())
+        require(data.optString("task")==task.id&&data.optString("format")==task.format.name&&data.optString("source")==sourceDigest&&
+            data.optString("rules")==rulesDigest(task)&&data.optLong("bytes")==file.length()) {"下载打包检查点与发布文件不一致"}
+        return PublicationFingerprint(data.getLong("bytes"),data.getString("sha256")).also {require(it.sha256.matches(Regex("[a-f0-9]{64}")))}
     }
 
     /** One-time adoption for a pre-checkpoint package that reached Saving before failing. */
     suspend fun adoptVerifiedLegacy(task:DownloadTask,file:File,sourceDigest:String,control:NativeDownloadControl):Boolean {
         // Old image-bearing archives were checked only against export markers, not the reader.
         // Rebuild them from retained source/assets; text-only CRC adoption remains safe.
-        if (task.totalAssets > 0 || task.completedAssets > 0) return false
+        if (task.applyReplacement || task.totalAssets > 0 || task.completedAssets > 0) return false
         if(receipt.exists()||task.format!=DownloadFormat.Epub||task.completedChapters<=0||task.totalChapters!=task.completedChapters||
             task.failedAssets!=0||task.totalAssets!=task.completedAssets||!file.isFile)return false
         val valid=try {
@@ -40,7 +56,7 @@ internal class DownloadPackageCheckpoint(private val directory:File) {
                     control.awaitIfPaused()
                     val entry=entries.nextElement()
                     if(entry.name.matches(Regex("OEBPS/chapter-\\d+\\.xhtml")))chapters++
-                    if(entry.name.startsWith("OEBPS/images/image-"))images++
+                    if(entry.name.startsWith("OEBPS/images/"))return false // Even an old cover's original format/alpha is unproven.
                     if(entry.isDirectory)continue
                     val crc=CRC32();var bytes=0L
                     zip.getInputStream(entry).use{input->while(true){control.awaitIfPaused();val n=input.read(buffer);if(n<0)break;crc.update(buffer,0,n);bytes+=n}}

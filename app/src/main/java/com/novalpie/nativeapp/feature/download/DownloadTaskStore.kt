@@ -35,6 +35,9 @@ internal data class DownloadTask(
     val totalAssets:Int=0,
     val failedAssets:Int=0,
     val sourceOnlyImages: Int = 0,
+    val integrityIssues:List<DownloadIntegrityIssue> = emptyList(),
+    val acknowledgedIntegrityKeys:Set<String> = emptySet(),
+    val integrityDecisionPending:Boolean=false,
 ) {
     val mayAuthorizeAgain: Boolean get() = !authorizationAttempted && authorizationFile == null &&
         phase !in setOf(DownloadPhase.AuthorizationUncertain,DownloadPhase.Completed,DownloadPhase.Cancelled)
@@ -65,6 +68,9 @@ internal class DownloadTaskStore(directory: File) {
             .put("completed_chapters", task.completedChapters).put("completed_assets", task.completedAssets)
             .put("total_chapters",task.totalChapters).put("total_assets",task.totalAssets).put("failed_assets",task.failedAssets)
             .put("source_only_images", task.sourceOnlyImages)
+            .put("integrity_issues",DownloadIntegrityJson.encode(task.integrityIssues))
+            .put("integrity_accepted",org.json.JSONArray(task.acknowledgedIntegrityKeys.toList()))
+            .put("integrity_decision_pending",task.integrityDecisionPending)
             .put("destination_uri", task.destinationUri ?: JSONObject.NULL).put("failure", task.failure ?: JSONObject.NULL)
             .put("created_at", task.createdAt).put("updated_at", task.updatedAt).toString().toByteArray(Charsets.UTF_8)
         val atomic = AtomicFile(file)
@@ -116,6 +122,9 @@ internal class DownloadTaskStore(directory: File) {
                     createdAt=value.getLong("created_at"),updatedAt=value.getLong("updated_at"),
                     totalChapters=value.optInt("total_chapters"),totalAssets=value.optInt("total_assets"),failedAssets=value.optInt("failed_assets"),
                     sourceOnlyImages=value.optInt("source_only_images"),
+                    integrityIssues=DownloadIntegrityJson.decode(value.optJSONArray("integrity_issues")),
+                    acknowledgedIntegrityKeys=value.optJSONArray("integrity_accepted")?.let {a->(0 until a.length()).map{a.getString(it)}.toSet()}.orEmpty(),
+                    integrityDecisionPending=false,
                 )
             } catch (_: Exception) {
                 // A corrupt/newer record stays on disk for recovery, never becomes an empty task.

@@ -68,11 +68,13 @@ internal fun NativeDownloadProgressDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     val headerIcon = when {
+                        downloadState.integrityNotices.isNotEmpty()->Icons.Filled.Warning
                         downloadState.completedUri != null -> Icons.Filled.DownloadDone
                         downloadState.awaitingFailureDecision -> Icons.Filled.Warning
                         else -> Icons.Filled.Download
                     }
                     val headerTint = when {
+                        downloadState.integrityNotices.isNotEmpty()->MaterialTheme.colorScheme.error
                         downloadState.completedUri != null -> Color(0xFF2E7D32)
                         downloadState.awaitingFailureDecision -> MaterialTheme.colorScheme.error
                         else -> MaterialTheme.colorScheme.primary
@@ -156,14 +158,7 @@ internal fun NativeDownloadProgressDialog(
                 }
 
                 // Progress Status Header & Percentage
-                val statusTitle = when {
-                    downloadState.completedUri != null -> "EPUB 生成完成！"
-                    downloadState.awaitingFailureDecision -> "⚠️ 插图下载完成，部分失败"
-                    downloadState.paused -> "下载已暂停"
-                    downloadState.busy -> if (totalImages > 0) "正在处理插图并打包..." else "正在生成章节文本..."
-                    downloadState.message != null -> downloadState.message
-                    else -> "准备下载..."
-                }
+                val statusTitle=nativeDownloadDialogStatus(downloadState)
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -208,12 +203,22 @@ internal fun NativeDownloadProgressDialog(
                         )
                     }
                     if (downloadState.format != NativeBookDownloadFormat.Txt && totalImages > 0) {
-                        val successCount = (completedImages - failedImages).coerceAtLeast(0)
+                        val successCount=completedImages.coerceAtLeast(0)
                         Text(
                             text = "插图: $completedImages / $totalImages (成功 $successCount / 失败 $failedImages)",
                             style = MaterialTheme.typography.labelSmall,
                             color = if (failedImages > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+
+                if(downloadState.integrityNotices.isNotEmpty()) {
+                    Surface(color=MaterialTheme.colorScheme.errorContainer,shape=RoundedCornerShape(8.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(10.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                            Text("完整性提示",fontWeight=FontWeight.SemiBold,color=MaterialTheme.colorScheme.onErrorContainer)
+                            downloadState.integrityNotices.take(4).forEach {notice->Text(notice,style=MaterialTheme.typography.bodySmall)}
+                            if(downloadState.integrityNotices.size>4)Text("另有${downloadState.integrityNotices.size-4}项，请在下载记录查看",style=MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
 
@@ -298,14 +303,15 @@ internal fun NativeDownloadProgressDialog(
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
-                                    text = "有 ${downloadState.failedImageCount} 张插图重试后仍下载失败",
+                                    text=if(downloadState.integrityDecisionPending)"来源信息未能确认"else "有 ${downloadState.failedImageCount} 张插图重试后仍下载失败",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onErrorContainer,
                                 )
                             }
                             Text(
-                                text = "您可以切换 Wi-Fi/移动网络或节点后重试失败插图；或直接完成打包（缺图处保留占位）。",
+                                text=if(downloadState.integrityDecisionPending)"可重试来源核对，或明确选择保留导出原文继续；不会自动删除无法确认的插图，保存后仍保留提示。"
+                                    else "您可以切换 Wi-Fi/移动网络或节点后重试失败插图；或直接完成打包（缺图处保留占位）。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
@@ -330,7 +336,7 @@ internal fun NativeDownloadProgressDialog(
                                         contentColor = MaterialTheme.colorScheme.onError,
                                     ),
                                 ) {
-                                    Text("直接打包", maxLines = 1)
+                                    Text(if(downloadState.integrityDecisionPending)"保留原文继续"else "直接打包",maxLines=1)
                                 }
                             }
                         }

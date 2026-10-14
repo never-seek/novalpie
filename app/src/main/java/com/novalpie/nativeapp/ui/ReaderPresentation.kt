@@ -289,6 +289,15 @@ internal fun readerStateAfterCoreContent(
     contentFromCache = contentFromCache,
 )
 
+/** A late rejection removes only that body's optimistic cache, not a separately authorized successor. */
+internal fun readerStateAfterChapterDenied(current:ReaderState,chapterId:Long,error:LoadResult.Error):ReaderState {
+    val remaining=current.chapterContents.filterNot {it.chapterId==chapterId}
+    val fallback=remaining.firstOrNull {it.chapterId==current.visibleChapterId} ?: remaining.firstOrNull()
+    return current.copy(content=fallback?.let {LoadResult.Success(it.content)} ?: error,
+        chapterContents=remaining,contentFromCache=fallback?.fromCache ?: false,
+        visibleChapterId=fallback?.chapterId)
+}
+
 internal data class ReaderTextLayout(
     val fontSizeSp: Int,
     val lineHeightSp: Float,
@@ -716,7 +725,7 @@ internal data class ReaderBodyLayout(
 // Exposed only in the Compose semantics tree for integration checks, not spoken by accessibility.
 internal val ReaderWindowChapterIds = androidx.compose.ui.semantics.SemanticsPropertyKey<List<Long>>("ReaderWindowChapterIds")
 
-internal data class ReaderBodyTextLocation(val chapterId:Long,val itemIndex:Int,val text:String)
+internal data class ReaderBodyTextLocation(val chapterId:Long,val itemIndex:Int,val text:String,val blockId:String?=null)
 
 internal data class ReaderBodyLayoutChapter(
     val chapter: com.novalpie.nativeapp.model.ReaderChapterContent,
@@ -762,7 +771,7 @@ internal fun readerBodyLayoutFromPreparedChapters(chapters: List<ReaderBodyLayou
             if (!chapter.title.isNullOrBlank()) addBodyItem("reader-title-${chapter.chapterId}")
             chapterLayout.visibleBlocks.forEachIndexed { index, block ->
                 if (block is ReaderContentBlock.Text || (block is ReaderContentBlock.Image && options.showImages)) {
-                    if (block is ReaderContentBlock.Text) textLocations += ReaderBodyTextLocation(chapter.chapterId,size,block.value)
+                    if (block is ReaderContentBlock.Text) textLocations += ReaderBodyTextLocation(chapter.chapterId,size,block.value,"${chapter.chapterId}:p:$index")
                     addBodyItem(if (block is ReaderContentBlock.Text) "reader-text-${chapter.chapterId}-$index"
                         else "reader-image-${chapter.chapterId}-${(block as ReaderContentBlock.Image).url}-$index")
                 }
@@ -786,8 +795,14 @@ internal fun readerViewportAnchorForBodyKey(layout: ReaderBodyLayout, key: Any?,
 /** Uses the parsed document index; TTS following must not reparse HTML on the main thread. */
 internal fun readerBodyItemIndexForText(layout:ReaderBodyLayout,target:String,chapterId:Long):Int? {
     val query=target.trim().takeIf(String::isNotBlank) ?: return null
-    return layout.textLocations.firstOrNull { it.chapterId==chapterId &&
-        (it.text.contains(query) || query.contains(it.text.take(24))) }?.itemIndex
+    return layout.textLocations.filter { it.chapterId==chapterId &&
+        (it.text.contains(query) || query.contains(it.text.take(24))) }.singleOrNull()?.itemIndex
+}
+
+internal fun readerBodyItemIndexForSpeechFocus(layout:ReaderBodyLayout,focus:com.novalpie.nativeapp.feature.reader.tts.ReaderSpeechFocus):Int? {
+    val position=focus.position ?: return readerBodyItemIndexForText(layout,focus.text,focus.chapterId)
+    return layout.textLocations.firstOrNull { it.chapterId==focus.chapterId && it.blockId==position.blockId &&
+        (position.sourceText==null || it.text==position.sourceText) }?.itemIndex
 }
 
 /** O(1) global LazyColumn index to the persisted chapter-local viewport anchor. */
@@ -1209,9 +1224,9 @@ internal const val READER_CHROME_TAP_TARGET_TOLERANCE = 0.08f
 
 internal fun chapterCommentMetricLabels(comment: ChapterComment): List<String> =
     listOf(
-        "赞 ${comment.likeCount ?: 0}",
-        "踩 ${comment.dislikeCount ?: 0}",
-        "表情 ${comment.reactionCount ?: 0}",
+        "赞 ${comment.displayLikeCount ?: 0}",
+        "踩 ${comment.displayDislikeCount ?: 0}",
+        "表情 ${comment.displayReactionCount ?: 0}",
         "打赏 ${comment.awardPoints ?: 0}",
         "回复"
     )

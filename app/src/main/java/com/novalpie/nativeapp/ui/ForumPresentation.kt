@@ -47,7 +47,7 @@ internal sealed interface ForumTextSegment {
     /** The source forum uses [fold:title]...[/fold] for collapsible rich-content blocks. */
     data class Fold(val title: String, val content: String) : ForumTextSegment
     /** The source uses ||...|| for content hidden by the review-feed spoiler switch. */
-    data class Spoiler(val value: String) : ForumTextSegment
+    data class Spoiler(val value: String, val richContent: String? = null, val bold:Boolean=false) : ForumTextSegment
 }
 
 internal data class ForumRichParagraph(val segments: List<ForumTextSegment>) {
@@ -237,7 +237,7 @@ internal fun forumPostFeedItem(post: ForumPost): ForumFeedItem =
         pinned = post.pinned,
         featured = post.featured,
         authorId = post.authorId,
-        excerpt = post.excerpt,
+        excerpt = post.richExcerpt ?: post.excerpt,
         authorAvatarUrl = post.authorAvatarUrl,
         authorAvatarFrameUrl = post.authorAvatarFrameUrl,
         authorBadges = post.authorBadges,
@@ -357,7 +357,8 @@ private fun forumLinksFromRichParagraphs(paragraphs: List<ForumRichParagraph>): 
         paragraph.segments.flatMap { segment ->
             when (segment) {
                 is ForumTextSegment.Link -> listOf(segment.url)
-                is ForumTextSegment.Fold -> forumLinksFromRichParagraphs(forumRichParagraphs(segment.content))
+                // Fold/spoiler descendants are rendered only by their own revealed container.
+                // Pulling their links into an unconditional preview leaks hidden content.
                 else -> emptyList()
             }
         }
@@ -366,6 +367,7 @@ private fun forumLinksFromRichParagraphs(paragraphs: List<ForumRichParagraph>): 
 internal fun forumRichParagraphs(raw: String): List<ForumRichParagraph> =
     forumMarkupParagraphs(raw)
         .map(::forumRichParagraph)
+        .flatMap(::forumSplitRichSpoilers)
         .filter { paragraph ->
             paragraph.segments.isNotEmpty() &&
                 (
@@ -376,6 +378,18 @@ internal fun forumRichParagraphs(raw: String): List<ForumRichParagraph> =
                         paragraph.codeBlock != null
                     )
         }
+
+/** Block media inside a spoiler stays in its own revealable container even beside ordinary text. */
+private fun forumSplitRichSpoilers(paragraph:ForumRichParagraph):List<ForumRichParagraph> {
+    if(paragraph.segments.none {it is ForumTextSegment.Spoiler && it.richContent!=null})return listOf(paragraph)
+    val result=mutableListOf<ForumRichParagraph>();val inline=mutableListOf<ForumTextSegment>()
+    fun flush(){if(inline.isNotEmpty()){result+=ForumRichParagraph(inline.toList());inline.clear()}}
+    paragraph.segments.forEach {segment->
+        if(segment is ForumTextSegment.Spoiler && segment.richContent!=null){flush();result+=ForumRichParagraph(listOf(segment))}
+        else inline+=segment
+    }
+    flush();return result
+}
 
 /**
  * Extracts only valid source sharing markers after HTML sanitisation and paragraph processing, so
@@ -393,6 +407,7 @@ private fun forumBookReferenceIdsFromParagraphs(paragraphs: List<ForumRichParagr
             when (segment) {
                 is ForumTextSegment.BookReference -> listOf(segment.bookId)
                 is ForumTextSegment.Fold -> forumBookReferenceIdsFromParagraphs(forumRichParagraphs(segment.content))
+                is ForumTextSegment.Spoiler -> segment.richContent?.let {forumBookReferenceIdsFromParagraphs(forumRichParagraphs(it))}.orEmpty()
                 else -> emptyList()
             }
         }
@@ -407,14 +422,8 @@ internal fun forumFeedExcerptText(raw: String, maxCharacters: Int = 640): String
     val limit = maxCharacters.coerceAtLeast(1)
     // Never cut a fold between its opening and closing markers. Compact complete fold bodies to
     // their closed title form before applying the feed character budget.
-    val foldSafeRaw = raw.replace(forumFoldBlockRegex) { match ->
-        "[fold:${match.groupValues[1]}][/fold]"
-    }.replace(forumUnclosedFoldBlockRegex) { match ->
-        // The source review endpoint may already return a character-limited excerpt, so its
-        // closing marker is absent. Treat the remaining body as an opaque collapsed block rather
-        // than allowing [fold:...] and the hidden text to leak into the card preview.
-        "[fold:${match.groupValues[1]}][/fold]"
-    }
+    val protected=forumProtectScopes(raw)
+    val foldSafeRaw=protected.restore(protected.masked, collapseFolds=true)
     if (foldSafeRaw.length <= limit) return foldSafeRaw
 
     var cutoff = limit
@@ -487,7 +496,8 @@ private fun appendForumInlineToken(target: MutableList<ForumTextSegment>, token:
             token.drop(2)
         }
         val value = spoilerBody.let(::forumInlineText).trim()
-        if (value.isNotBlank()) target += ForumTextSegment.Spoiler(value)
+        val rich=spoilerBody.takeIf {forumBlockWidgetRegex.containsMatchIn(it) || forumInlineTokenRegex.containsMatchIn(it) || it.contains("[fold:",true) || it.contains('`')}
+        if (value.isNotBlank() || rich!=null) target += ForumTextSegment.Spoiler(value, richContent=rich)
         return
     }
 
@@ -540,6 +550,10 @@ private fun appendForumInlineToken(target: MutableList<ForumTextSegment>, token:
 
     forumStyledHtmlTagRegex.matchEntire(token)?.let { styled ->
         val innerMarkup = styled.groupValues[2]
+        if(styled.groupValues[1].equals("code",true)) {
+            target+=ForumTextSegment.InlineCode(forumInlineText(innerMarkup))
+            return
+        }
         // Source posts sometimes wrap a Markdown link in an HTML decoration tag, for example
         // `<u>[#1173](https://novalpie.cc/forum/1173)</u>`. Flattening the wrapper before the
         // Markdown pass leaves raw link syntax on screen and loses its click target. Preserve the
@@ -551,7 +565,9 @@ private fun appendForumInlineToken(target: MutableList<ForumTextSegment>, token:
         // control characters leak into the native UI. Preserve every parsed nested segment (not
         // only links) so the inner text remains semantic and actionable.
         if (nestedSegments.any { it !is ForumTextSegment.Plain }) {
-            target += nestedSegments
+            target += nestedSegments.map {segment->
+                if(segment is ForumTextSegment.Spoiler && styled.groupValues[1].lowercase() in setOf("strong","b"))segment.copy(bold=true)else segment
+            }
             return
         }
         val value = forumInlineText(innerMarkup).trim()
@@ -567,8 +583,14 @@ private fun appendForumInlineToken(target: MutableList<ForumTextSegment>, token:
     }
 
     if (token.startsWith("**") || token.startsWith("__")) {
-        val value = token.drop(2).dropLast(2).let(::forumInlineText).trim()
-        if (value.isNotBlank()) target += ForumTextSegment.Bold(value)
+        val inner=token.drop(2).dropLast(2)
+        val parsed=forumRichParagraph(inner).segments
+        if(parsed.any {it is ForumTextSegment.Spoiler || it is ForumTextSegment.Link || it is ForumTextSegment.InlineCode}) {
+            target+=parsed.map {if(it is ForumTextSegment.Spoiler)it.copy(bold=true)else it}
+        } else {
+            val value=forumInlineText(inner).trim()
+            if(value.isNotBlank())target+=ForumTextSegment.Bold(value)
+        }
         return
     }
 
@@ -620,36 +642,113 @@ private fun appendForumPlainSegment(target: MutableList<ForumTextSegment>, raw: 
 }
 
 private fun forumMarkupParagraphs(raw: String): List<String> {
-    val prepared = forumNormalizeBbCodeLinks(
-        forumNormalizeHtmlDetails(forumDecodeHtmlEntities(raw.trim()))
-    )
+    val protected=forumProtectScopes(raw.trim())
+    val prepared = forumNormalizeBbCodeLinks(protected.masked)
         .replace(forumUnsafeBlockRegex, "")
         .replace(forumLineBreakRegex, "\n")
         .replace(forumBlockEndTagRegex, "\n\n")
         .replace(forumBlockStartTagRegex, "")
 
     if (prepared.isBlank()) return emptyList()
-    val codeBlocks = mutableListOf<String>()
-    val codeMasked = prepared.replace(forumCodeFenceRegex) { match ->
-        codeBlocks += match.value
-        "\n\n__NOVALPIE_CODE_${codeBlocks.lastIndex}__\n\n"
-    }
-    val foldBlocks = mutableListOf<String>()
-    val foldMasked = codeMasked.replace(forumFoldBlockRegex) { match ->
-        foldBlocks += match.value
-        "\n\n__NOVALPIE_FOLD_${foldBlocks.lastIndex}__\n\n"
-    }
-    return foldMasked
+    return prepared
         .split(Regex("\\n{2,}"))
         .map { paragraph -> paragraph.lines().joinToString("\n") { line -> line.trim() }.trim() }
         .filter(String::isNotBlank)
         .flatMap(::forumSeparateBlockWidgets)
-        .map { paragraph ->
-            forumRestoreCodePlaceholder(
-                forumRestoreFoldPlaceholder(paragraph, foldBlocks),
-                codeBlocks,
-            )
+        .map { protected.restore(it) }
+}
+
+private data class ForumProtectedValue(val token:String,val raw:String,val foldTitle:String?=null)
+private data class ForumProtectedScopes(val masked:String,val values:List<ForumProtectedValue>) {
+    fun restore(value:String,collapseFolds:Boolean=false):String {
+        var result=value
+        // Outer scopes were masked after inner code/escapes. Restore outer first, then every
+        // embedded inner token, not just paragraphs consisting solely of a placeholder.
+        values.asReversed().forEach { entry->
+            result=result.replace(entry.token,if(collapseFolds && entry.foldTitle!=null)"[fold:${entry.foldTitle}][/fold]"else entry.raw)
         }
+        return result
+    }
+}
+
+/** Opaque scopes are protected BEFORE HTML cleanup, paragraph splitting or widget extraction. */
+private fun forumProtectScopes(raw:String):ForumProtectedScopes {
+    var prefix="\uE000${java.util.UUID.randomUUID()}_"
+    while(raw.contains(prefix))prefix="\uE000${java.util.UUID.randomUUID()}_"
+    val values=mutableListOf<ForumProtectedValue>()
+    fun protect(value:String,foldTitle:String?=null,block:Boolean=false):String {
+        val token="$prefix${values.size}\uE001"
+        values+=ForumProtectedValue(token,value,foldTitle)
+        return if(block)"\n\n$token\n\n"else token
+    }
+    val codes=StringBuilder();var i=0
+    while(i<raw.length) {
+        if(raw[i]=='<') {
+            val pre=Regex("""<pre\b[^>]*>(.*?)</pre\s*>""",setOf(RegexOption.IGNORE_CASE,RegexOption.DOT_MATCHES_ALL)).matchAt(raw,i)
+            if(pre!=null) {
+                var body=pre.groupValues[1]
+                val code=Regex("""^\s*<code\b[^>]*>(.*?)</code\s*>\s*$""",setOf(RegexOption.IGNORE_CASE,RegexOption.DOT_MATCHES_ALL)).matchEntire(body)
+                if(code!=null)body=code.groupValues[1]
+                body=forumDecodeHtmlEntities(body)
+                val ticks="`".repeat(maxOf(3,(Regex("`+").findAll(body).maxOfOrNull {it.value.length} ?: 0)+1))
+                codes.append(protect("$ticks\n$body\n$ticks",block=true));i=pre.range.last+1;continue
+            }
+            val code=Regex("""<code\b[^>]*>.*?</code\s*>""",setOf(RegexOption.IGNORE_CASE,RegexOption.DOT_MATCHES_ALL)).matchAt(raw,i)
+            if(code!=null){codes.append(protect(code.value));i=code.range.last+1;continue}
+        }
+        val fence=if((raw[i]=='`'||raw[i]=='~')&&(i==0||raw[i-1]=='\n'))forumCodeFenceRegex.matchAt(raw,i)else null
+        if(fence!=null){codes.append(protect(fence.value,block=true));i=fence.range.last+1;continue}
+        if(raw[i]=='`') {
+            val length=raw.substring(i).takeWhile {it=='`'}.length
+            val delimiter="`".repeat(length);val end=raw.indexOf(delimiter,i+length)
+            if(end>=0){codes.append(protect(raw.substring(i,end+length)));i=end+length;continue}
+        }
+        if(raw[i]=='\\'&&i+1<raw.length&&raw[i+1] in "[]!*_`|~<>\\") {
+            codes.append(protect(raw.substring(i,i+2)));i+=2;continue
+        }
+        codes.append(raw[i++])
+    }
+    val input=forumDecodeHtmlEntities(codes.toString()).replace(forumUnsafeBlockRegex, "")
+        .replace(Regex("""<(script|style)\b[^>]*>[\s\S]*\z""",RegexOption.IGNORE_CASE), "")
+    val scoped=StringBuilder();i=0
+    val foldOpen=Regex("""\[fold\s*:\s*([^\]\r\n]+)]""",RegexOption.IGNORE_CASE)
+    val foldTags=Regex("""\[fold\s*:\s*[^\]\r\n]+]|\[/fold\s*]""",RegexOption.IGNORE_CASE)
+    val detailsOpen=Regex("""<details\b[^>]*>""",RegexOption.IGNORE_CASE)
+    val detailsTags=Regex("""<details\b[^>]*>|</details\s*>""",RegexOption.IGNORE_CASE)
+    while(i<input.length) {
+        val open=foldOpen.matchAt(input,i)
+        if(open!=null) {
+            var depth=1;var close:MatchResult?=null
+            for(tag in foldTags.findAll(input,open.range.last+1)) {
+                if(tag.value.startsWith("[/"))depth-- else depth++
+                if(depth==0){close=tag;break}
+            }
+            val end=close?.range?.last?.plus(1) ?: input.length
+            val title=forumInlineText(open.groupValues[1]).trim().ifBlank {"折叠内容"}
+            val body=input.substring(open.range.last+1,close?.range?.first ?: end)
+            scoped.append(protect("[fold:$title]$body[/fold]",title,block=true));i=end;continue
+        }
+        val html=detailsOpen.matchAt(input,i)
+        if(html!=null) {
+            var depth=1;var close:MatchResult?=null
+            for(tag in detailsTags.findAll(input,html.range.last+1)) {
+                if(tag.value.startsWith("</"))depth-- else depth++
+                if(depth==0){close=tag;break}
+            }
+            val end=close?.range?.last?.plus(1) ?: input.length
+            val inner=input.substring(html.range.last+1,close?.range?.first ?: end)
+            val summary=Regex("""^\s*<summary\b[^>]*>(.*?)</summary\s*>""",setOf(RegexOption.IGNORE_CASE,RegexOption.DOT_MATCHES_ALL)).find(inner)
+            val title=summary?.groupValues?.get(1)?.let(::forumInlineText)?.trim()?.ifBlank {"折叠内容"} ?: "折叠内容"
+            val body=if(summary!=null)inner.substring(summary.range.last+1)else inner
+            scoped.append(protect("[fold:$title]$body[/fold]",title,block=true));i=end;continue
+        }
+        if(input.startsWith("||",i)) {
+            val close=input.indexOf("||",i+2);val end=if(close>=0)close+2 else input.length
+            scoped.append(protect(input.substring(i,end)));i=end;continue
+        }
+        scoped.append(input[i++])
+    }
+    return ForumProtectedScopes(scoped.toString(),values.toList())
 }
 
 private fun forumRestoreCodePlaceholder(
@@ -800,6 +899,7 @@ private fun forumInlineText(raw: String): String =
         .replace(Regex("(?m)^[ \\t]{0,3}\\d+[.)][ \\t]+"), "")
         .replace(Regex("[ \\t\\u000B\\f]+"), " ")
         .replace(Regex(" *\\n *"), "\n")
+        .replace(Regex("""\\([\[\]])"""), "$1")
 
 private fun forumHtmlAttribute(tag: String, name: String): String? {
     val quoted = Regex(

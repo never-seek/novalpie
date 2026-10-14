@@ -1,5 +1,9 @@
 package com.novalpie.nativeapp.ui
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+
 import android.app.Activity
 import android.content.ClipboardManager
 import android.content.Context
@@ -10,6 +14,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.novalpie.nativeapp.core.AppContainer
 import com.novalpie.nativeapp.feature.reader.tts.ReaderPlaybackService
 import com.novalpie.nativeapp.feature.reader.tts.SpeechChapter
+import com.novalpie.nativeapp.feature.reader.tts.ReaderSpeechFocus
+import com.novalpie.nativeapp.feature.reader.tts.readerSpeechFocus
 import com.novalpie.nativeapp.feature.reader.tts.SpeechStatus
 import com.novalpie.nativeapp.feature.reader.pagination.NativePagedReader
 import com.novalpie.nativeapp.feature.search.searchWordRangeInput
@@ -146,6 +152,8 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.BookmarkAdded
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.EmojiEmotions
@@ -406,6 +414,12 @@ fun NovalPieApp(
     viewModel: NovalPieViewModel = viewModel(),
 ) {
     val route = viewModel.currentRoute
+    val bookUiStates = rememberSaveableStateHolder()
+    val bookUiOwner = com.novalpie.nativeapp.data.readerCacheAccountScope(viewModel.authToken)
+    val bookUiKeys = remember(bookUiOwner) { mutableSetOf<String>() }
+    DisposableEffect(bookUiStates, bookUiOwner) {
+        onDispose { bookUiKeys.forEach(bookUiStates::removeState) }
+    }
     val context = LocalContext.current
     val activity = context as? MainActivity
 
@@ -430,7 +444,7 @@ fun NovalPieApp(
     val pendingStartUri = startUri?.takeIf(String::isNotBlank)
     LaunchedEffect(pendingStartUri) {
         pendingStartUri?.let { uri ->
-            viewModel.openDeepLink(uri)
+            viewModel.openDeepLink(uri, resetBackStack = true)
             onStartUriHandled(uri)
         }
     }
@@ -469,6 +483,12 @@ fun NovalPieApp(
             onChange = viewModel::updateForumHideSpoilers,
         ),
     ) {
+    com.novalpie.nativeapp.feature.books.ChapterRetranslationDialog(
+        state=viewModel.chapterRetranslationState,
+        onRange=viewModel::updateRetranslationRange,onSubmit=viewModel::submitChapterRetranslation,
+        onDismiss=viewModel::dismissChapterRetranslation,onWorkspace=viewModel::openRetranslationWorkspace,
+        onRefresh=viewModel::refreshRetranslatedChapters,onCheckedForRetry=viewModel::confirmRetranslationCheckedForRetry,
+    )
     val activeReaderPalette = if (route is AppRoute.Reader) {
         readerPalette(viewModel.readerUiOptions)
     } else {
@@ -485,6 +505,7 @@ fun NovalPieApp(
         WindowInsets.safeDrawing.union(WindowInsets.ime)
     }
     val systemBarView = LocalView.current
+    ReaderWindowBrightness((systemBarView.context as? Activity)?.window,route is AppRoute.Reader,viewModel.readerUiOptions.brightness)
     SideEffect {
         val activity = systemBarView.context as? Activity ?: return@SideEffect
         val controller = WindowCompat.getInsetsController(activity.window, systemBarView)
@@ -601,7 +622,8 @@ fun NovalPieApp(
                     state = viewModel.forumCreateState,
                     onDraftChange = viewModel::updateForumCreateDraft,
                     onSubmit = viewModel::submitForumPost,
-                    onOpenLogin = viewModel::openLoginFallback
+                    onOpenLogin = viewModel::openLoginFallback,
+                    onOpenLink = {link->openForumRichLink(context,viewModel,link)},
                 )
 
                 is AppRoute.ForumPostDetail -> ForumPostDetailRoute(route = route, viewModel = viewModel)
@@ -669,6 +691,7 @@ fun NovalPieApp(
                     onSourceChange = viewModel::updateSearchSource,
                     onWordCountRangeChange = viewModel::updateSearchWordCountRange,
                     onAdvancedSyntaxEnabledChange = viewModel::updateSearchAdvancedSyntaxEnabled,
+                    onSaveConditions = viewModel::saveSearchConditions,
                     onToggleSettingsCache = viewModel::toggleSearchSettingsCache,
                     onClearSettingsCache = viewModel::clearSearchSettingsCache,
                     onToggleViewMode = viewModel::toggleSearchViewMode,
@@ -983,29 +1006,34 @@ fun NovalPieApp(
                     onOpenSearchFallback = { viewModel.openWebFallback("https://novalpie.cc/search?sort_by=relevance") }
                 )
 
-                is AppRoute.BookDetail -> BookDetailScreen(
+                is AppRoute.BookDetail -> {
+                    val bookUiKey = "$bookUiOwner/book-${route.bookId}"
+                    bookUiKeys.add(bookUiKey)
+                    bookUiStates.SaveableStateProvider(bookUiKey) {
+                        BookDetailScreen(
                      state = viewModel.bookDetailState,
                      nativeEpubDownloadState = viewModel.nativeEpubDownloadState,
                      hasAuthToken = !viewModel.authToken.isNullOrBlank(),
                      readerProgress = viewModel.bookDetailState.readerProgress,
                     catalogQuery = viewModel.bookCatalogQuery,
-                    onCatalogQueryChange = viewModel::updateBookCatalogQuery,
+                    onCatalogQueryChange = {value -> viewModel.updateBookCatalogQuery(value,route.bookId)},
                     onRetry = { viewModel.loadBookDetail(route.bookId) },
                     onOpenReader = viewModel::openReader,
-                    onToggleFavorite = viewModel::toggleBookDetailFavorite,
+                    onToggleFavorite = {viewModel.toggleBookDetailFavorite(route.bookId)},
                     onOpenTerminology = { viewModel.openTerminology(route.bookId) },
                     onTranslateBook = { viewModel.openWorkspaceTranslation(route.bookId) },
+                    onRetranslateChapters = { viewModel.openChapterRetranslation(route.bookId) },
                     onEditInfo = { viewModel.openBookEditInfo(route.bookId) },
                     onManageChapters = { viewModel.openBookChapters(route.bookId) },
                     onAppendChapters = { viewModel.openBookAppend(route.bookId) },
-                    onCommentDraftChange = viewModel::updateBookCommentDraft,
-                    onSubmitComment = viewModel::submitBookComment,
-                    onReplyComment = viewModel::replyToBookComment,
-                    onCancelCommentReply = viewModel::cancelBookCommentReply,
-                    onCommentLike = viewModel::likeBookComment,
-                    onCommentDislike = viewModel::dislikeBookComment,
-                    onCommentEmoji = viewModel::emojiBookComment,
-                     onCommentAward = viewModel::awardBookComment,
+                    onCommentDraftChange = {value -> viewModel.updateBookCommentDraft(value,route.bookId)},
+                    onSubmitComment = {viewModel.submitBookComment(route.bookId)},
+                    onReplyComment = {comment -> viewModel.replyToBookComment(comment,route.bookId)},
+                    onCancelCommentReply = {viewModel.cancelBookCommentReply(route.bookId)},
+                    onCommentLike = {comment -> viewModel.likeBookComment(comment,route.bookId)},
+                    onCommentDislike = {comment -> viewModel.dislikeBookComment(comment,route.bookId)},
+                    onCommentEmoji = {comment -> viewModel.emojiBookComment(comment,route.bookId)},
+                     onCommentAward = {comment -> viewModel.awardBookComment(comment,route.bookId)},
                      onOpenUser = viewModel::openUserProfile,
                     onOpenLink = { link -> openForumRichLink(context, viewModel, link) },
         onDownloadEpub = { applyRules ->
@@ -1033,12 +1061,14 @@ fun NovalPieApp(
                     onRetryDownload = { viewModel.retryNativeBookDownload(route.bookId) },
                     onDismissDownload = { viewModel.dismissNativeBookDownload(route.bookId) },
                     onResolveDownloadFailureDecision = viewModel::resolveNativeDownloadFailureDecision,
-                    onRequestNewChapter = viewModel::requestBookDetailNewChapters,
+                    onRequestNewChapter = {viewModel.requestBookDetailNewChapters(route.bookId)},
                     onPreviewBookCover = viewModel::previewBookCover,
                     onSearchAuthor = viewModel::openBookDetailAuthorSearch,
                     onSearchTag = viewModel::openBookDetailTagSearch,
                     onOpenWeb = { viewModel.openWebFallback("https://novalpie.cc/book/${route.bookId}") }
-                )
+                        )
+                    }
+                }
 
                 is AppRoute.Terminology -> TerminologyScreen(
                     state = viewModel.terminologyState,
@@ -1071,6 +1101,8 @@ fun NovalPieApp(
                     onOpenEditor = viewModel::openManagedChapterEditor,
                     onUpdateEditor = viewModel::updateManagedChapterDraft,
                     onDismissEditor = viewModel::dismissManagedChapterEditor,
+                    onConfirmDiscardEditor = viewModel::confirmDiscardManagedChapterEditor,
+                    onCancelDiscardEditor = viewModel::cancelDiscardManagedChapterEditor,
                     onSaveEditor = viewModel::saveManagedChapterDraft,
                     onDelete = viewModel::deleteManagedChapter,
                     onBatchDelete = viewModel::batchDeleteManagedChapters,
@@ -1216,6 +1248,7 @@ private fun ReaderRoute(
          onDefaultReaderSharedRulesEnabledChange = viewModel::setDefaultReaderSharedRulesEnabled,
          onResetReaderSharedRulesOverride = viewModel::resetReaderSharedRulesOverride,
          onResetReaderOptions = viewModel::resetReaderOptions,
+        onRetranslateChapter = if(!viewModel.canRetranslateBook(route.bookId)) null else { chapterId -> viewModel.openChapterRetranslation(route.bookId,chapterId) },
         onClearReaderChapterCache = viewModel::clearReaderChapterCache,
         onRetry = {
             viewModel.loadReader(
@@ -2558,7 +2591,7 @@ internal fun ForumFeedExcerpt(
                                 annotation = currentSpoilerIndex.toString(),
                             )
                             if (forumSpoilerIsVisible(hideSpoilers, currentSpoilerIndex, revealedSpoilerIndexes)) {
-                                append(segment.value)
+                                withStyle(SpanStyle(fontWeight=if(segment.bold)FontWeight.Bold else FontWeight.Normal)){append(segment.value)}
                             } else {
                                 withStyle(SpanStyle(color = Color.Black, background = Color.Black)) {
                                     append(segment.value)
@@ -2634,7 +2667,7 @@ internal fun ForumRichExcerpt(
 }
 
 @Composable
-private fun ForumRichContent(
+internal fun ForumRichContent(
     content: String,
     style: androidx.compose.ui.text.TextStyle,
     onOpenLink: (String) -> Unit,
@@ -2660,7 +2693,19 @@ private fun ForumRichContent(
                 val image = paragraph.image
                 val fold = paragraph.fold
                 val codeBlock = paragraph.codeBlock
-                if (fold != null) {
+                val richSpoiler=(paragraph.segments.singleOrNull() as? ForumTextSegment.Spoiler)?.takeIf {it.richContent!=null}
+                if (richSpoiler != null) {
+                    if(forumSpoilerIsVisible(hideSpoilers,paragraphSpoilerOffset,revealedSpoilerIndexes)) {
+                        ForumRichContent(content=richSpoiler.richContent.orEmpty(),style=style,onOpenLink=onOpenLink,
+                            bookReferences=bookReferences,emptyLabel=emptyLabel,hideSpoilers=hideSpoilers,foldDepth=foldDepth+1)
+                    } else {
+                        Box(Modifier.fillMaxWidth().background(Color.Black).clickable {
+                            revealedSpoilerIndexes=forumRevealSpoiler(hideSpoilers,revealedSpoilerIndexes,paragraphSpoilerOffset)
+                        }.padding(NovalPieSpacing.sm).semantics {contentDescription="隐藏剧透内容，点击显示"}) {
+                            Text("点击揭示剧透内容",style=style,color=Color.LightGray)
+                        }
+                    }
+                } else if (fold != null) {
                     ForumFoldBlock(
                         fold = fold,
                         style = style,
@@ -3146,7 +3191,7 @@ private fun ForumRichParagraphText(
                             annotation = currentSpoilerIndex.toString(),
                         )
                         if (forumSpoilerIsVisible(hideSpoilers, currentSpoilerIndex, revealedSpoilerIndexes)) {
-                            append(segment.value)
+                            withStyle(SpanStyle(fontWeight=if(segment.bold)FontWeight.Bold else FontWeight.Normal)){append(segment.value)}
                         } else {
                             withStyle(SpanStyle(color = Color.Black, background = Color.Black)) {
                                 append(segment.value)
@@ -3524,9 +3569,9 @@ private fun ForumCommentRow(
                 horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs),
                 verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xxs)
             ) {
-                ForumActionIcon(Icons.Filled.ThumbUp, "赞 ${comment.likeCount ?: 0}", onLike)
-                ForumActionIcon(Icons.Filled.ThumbDown, "踩 ${comment.dislikeCount ?: 0}", onDislike)
-                ForumActionIcon(Icons.Filled.EmojiEmotions, "表情 ${comment.reactionCount ?: 0}", onEmoji)
+                ForumActionIcon(Icons.Filled.ThumbUp, "赞 ${comment.displayLikeCount ?: 0}", onLike)
+                ForumActionIcon(Icons.Filled.ThumbDown, "踩 ${comment.displayDislikeCount ?: 0}", onDislike)
+                ForumActionIcon(Icons.Filled.EmojiEmotions, "表情 ${comment.displayReactionCount ?: 0}", onEmoji)
                 ForumActionIcon(Icons.Filled.CardGiftcard, "打赏 ${comment.awardPoints ?: 0}", onAward)
                 ForumActionIcon(Icons.AutoMirrored.Filled.Reply, "回复", onReply)
             }
@@ -3632,13 +3677,7 @@ private fun HomeScreen(
         }
         item(key = "library-overview", span = { GridItemSpan(maxLineSpan) }) {
             LibraryOverviewBlock(
-                overview = libraryOverview(
-                    hasAuthToken = hasAuthToken,
-                    favoriteCount = state.favoriteTotal ?: (state.favoriteEntries as? LoadResult.Success)?.value?.size,
-                    groupCount = (state.groups as? LoadResult.Success)?.value?.size,
-                    recentCount = state.historyTotal ?: (state.history as? LoadResult.Success)?.value?.size,
-                    pageCount = if(state.favoriteEntries is LoadResult.Success)state.favoritesPage else null,
-                ),
+                overview=libraryOverviewForState(hasAuthToken,state),
                 onRefresh = onRefresh,
                 onOpenSearch = onOpenSearch,
                 onOpenLogin = onOpenLogin,
@@ -3887,6 +3926,7 @@ private fun SearchScreen(
     onSourceChange: (String) -> Unit,
     onWordCountRangeChange: (String) -> Unit,
     onAdvancedSyntaxEnabledChange: (Boolean) -> Unit,
+    onSaveConditions: () -> Unit,
     onToggleSettingsCache: () -> Unit,
     onClearSettingsCache: () -> Unit,
     onToggleViewMode: () -> Unit,
@@ -4073,6 +4113,7 @@ private fun SearchScreen(
                         onAdultFilterChange = onAdultFilterChange,
                         onSourceChange = onSourceChange,
                         onWordCountRangeChange = onWordCountRangeChange,
+                        onSaveConditions = onSaveConditions,
                         onToggleSettingsCache = onToggleSettingsCache,
                         onClearSettingsCache = onClearSettingsCache
                     )
@@ -4435,7 +4476,7 @@ private val searchFilterPages = listOf(searchFilterRules, searchFilterTags, sear
  * Keeping every rule present here avoids trading source capability for a nicer first screen.
  */
 @Composable
-private fun SourceSearchFilterPanel(
+internal fun SourceSearchFilterPanel(
     options: SearchOptions,
     tags: LoadResult<List<NovelTag>>,
     onApplyRequiredTag: (String) -> Unit,
@@ -4450,6 +4491,7 @@ private fun SourceSearchFilterPanel(
     onAdultFilterChange: (String) -> Unit,
     onSourceChange: (String) -> Unit,
     onWordCountRangeChange: (String) -> Unit,
+    onSaveConditions: () -> Unit,
     onToggleSettingsCache: () -> Unit,
     onClearSettingsCache: () -> Unit
 ) {
@@ -4457,6 +4499,7 @@ private fun SourceSearchFilterPanel(
     var showUsage by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var confirmClearCache by remember { mutableStateOf(false) }
+    var conditionNotice by remember { mutableStateOf<String?>(null) }
 
     if (showUsage) {
         AlertDialog(
@@ -4506,12 +4549,13 @@ private fun SourceSearchFilterPanel(
     if (confirmClearCache) {
         AlertDialog(
             onDismissRequest = { confirmClearCache = false },
-            title = { Text("清除搜索设置缓存") },
+            title = { Text("清除已保存条件") },
             text = { Text("只清除本地筛选、标签和视图设置；搜索历史与网站数据不受影响。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmClearCache = false
                     onClearSettingsCache()
+                    conditionNotice="已清除保存快照，当前条件保留"
                 }) { Text("清除") }
             },
             dismissButton = { TextButton(onClick = { confirmClearCache = false }) { Text("取消") } }
@@ -4556,11 +4600,15 @@ private fun SourceSearchFilterPanel(
                         modifier = Modifier.size(NovalPieSize.iconSm)
                     )
                 }
-                IconButton(onClick = onToggleSettingsCache, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { onSaveConditions(); conditionNotice="已保存全部条件（含选中与屏蔽标签）" }, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Filled.Save, contentDescription="保存当前搜索条件", tint=MaterialTheme.colorScheme.primary,
+                        modifier=Modifier.size(NovalPieSize.iconSm))
+                }
+                IconButton(onClick = { onToggleSettingsCache(); conditionNotice=if(options.cacheEnabled) "已关闭自动保存，当前条件不变" else "已开启自动保存" }, modifier = Modifier.size(32.dp)) {
                     Icon(
-                        Icons.Filled.Block,
+                        if(options.cacheEnabled) Icons.Filled.BookmarkAdded else Icons.Filled.Block,
                         contentDescription = if (options.cacheEnabled) "不缓存搜索设置" else "缓存搜索设置",
-                        tint = if (options.cacheEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        tint = if (options.cacheEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(NovalPieSize.iconSm)
                     )
                 }
@@ -4574,6 +4622,7 @@ private fun SourceSearchFilterPanel(
                 }
             }
 
+            conditionNotice?.let { Text(it,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary) }
             when (page) {
                 searchFilterRules -> SourceSearchOptionSection(
                     options = options,
@@ -6052,6 +6101,7 @@ private fun BookDetailScreen(
     onToggleFavorite: () -> Unit,
     onOpenTerminology: () -> Unit,
     onTranslateBook: () -> Unit,
+    onRetranslateChapters: () -> Unit,
     onEditInfo: () -> Unit,
     onManageChapters: () -> Unit,
     onAppendChapters: () -> Unit,
@@ -6089,17 +6139,17 @@ private fun BookDetailScreen(
     // preserve the source detail count so the tab and primary action do not misleadingly show 0.
     val chapterCount = bookDetailDisplayedChapterCount(loadedChapters, sourceChapterCount)
     val progressForBook = readerProgress?.takeIf { it.bookId == state.bookId }
-    var contentTab by remember(state.bookId) { mutableStateOf(BookDetailContentTab.Introduction) }
-    var catalogOrder by remember(state.bookId) {
-        mutableStateOf(BookDetailCatalogOrder.Ascending)
-    }
+    val tabSaver = remember { Saver<BookDetailContentTab,String>(
+        save={it.name},restore={name->BookDetailContentTab.entries.firstOrNull {it.name==name} ?: BookDetailContentTab.Introduction}) }
+    val orderSaver = remember { Saver<BookDetailCatalogOrder,String>(
+        save={it.name},restore={name->BookDetailCatalogOrder.entries.firstOrNull {it.name==name} ?: BookDetailCatalogOrder.Ascending}) }
+    var contentTab by rememberSaveable(state.bookId,stateSaver=tabSaver) { mutableStateOf(BookDetailContentTab.Introduction) }
+    var catalogOrder by rememberSaveable(state.bookId,stateSaver=orderSaver) { mutableStateOf(BookDetailCatalogOrder.Ascending) }
     val visibleChapters = (state.chapters as? LoadResult.Success)?.value?.let { chapters ->
         sortBookDetailChapters(filterChapters(chapters, catalogQuery), catalogOrder)
     }.orEmpty()
     val listState = rememberLazyListState()
-    LaunchedEffect(state.bookId) {
-        listState.scrollToItem(0)
-    }
+    // The account/book SaveableStateProvider restores this list, tab and order on Back.
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
@@ -6294,6 +6344,7 @@ private fun BookDetailScreen(
                 requestNewChapterLoading = state.requestNewChapterLoading,
                 onRequestNewChapter = onRequestNewChapter,
                 onTranslateBook = onTranslateBook,
+                onRetranslateChapters = onRetranslateChapters,
                 onOpenWeb = onOpenWeb,
             )
         }
@@ -6350,6 +6401,7 @@ internal fun ReaderScreen(
     onOpenWeb: (Long) -> Unit,
     onPreviewImage: (ReaderContentBlock.Image, String) -> Unit,
     recordPlaybackProgress:Boolean=true,
+    onRetranslateChapter:((Long)->Unit)?=null,
 ) {
     val chapters = (state.chapters as? LoadResult.Success)?.value.orEmpty()
     val catalogVisible = remember { mutableStateOf(false) }
@@ -6370,7 +6422,7 @@ internal fun ReaderScreen(
     val readableContent = (state.content as? LoadResult.Success)?.value
     val sourceChapterContents = remember(state.chapterContents, readableContent, state.chapterId) {
         state.chapterContents.ifEmpty {
-            readableContent?.let { listOf(ReaderChapterContent(state.chapterId, it.title, it)) }.orEmpty()
+            readableContent?.let { listOf(ReaderChapterContent(state.chapterId, it.title, it, state.contentFromCache)) }.orEmpty()
         }
     }
     val documentPreparer = remember(state.bookId) { com.novalpie.nativeapp.feature.reader.text.ReaderDocumentPreparer() }
@@ -7164,21 +7216,22 @@ internal fun ReaderScreen(
 
     var observedRuleRevision by remember(state.bookId) { mutableLongStateOf(replacementState.ttsRevision) }
     LaunchedEffect(replacementState.ttsRevision, chapterContents) {
-        if (observedRuleRevision != replacementState.ttsRevision) {
-            observedRuleRevision = replacementState.ttsRevision
-            if (speechBelongsToBook) chapterContents.firstOrNull { it.chapterId == speech.chapter?.chapterId }
-                ?.let { playback.replaceChapter(speechChapterFor(it)) }
-        }
+        val rulesChanged=observedRuleRevision!=replacementState.ttsRevision
+        observedRuleRevision=replacementState.ttsRevision
+        if(speechBelongsToBook) chapterContents.firstOrNull {it.chapterId==speech.chapter?.chapterId}
+            ?.takeIf {rulesChanged || !it.fromCache}
+            ?.let {playback.replaceChapter(speechChapterFor(it))}
     }
-    LaunchedEffect(speech.chapter?.chapterId,speech.segmentIndex,speech.status,hasReadableBody) {
+    val ttsFocus=if(speechBelongsToBook)speech.readerSpeechFocus() else null
+    LaunchedEffect(ttsFocus,speech.generation,speech.status,hasReadableBody,readerBodyLayout) {
         val active = speech.chapter ?: return@LaunchedEffect
         if (!speechBelongsToBook || !ttsSettings.enableAutoScroll || speech.status != SpeechStatus.Speaking) return@LaunchedEffect
         if (chapterContents.none { it.chapterId == active.chapterId }) {
             speechNavigationTarget = active.chapterId
             onOpenReader(state.bookId,active.chapterId)
         } else if (hasReadableBody && !pageTurnEnabled) {
-            active.segments.getOrNull(speech.segmentIndex)?.let { text ->
-                readerBodyItemIndexForText(readerBodyLayout,text,active.chapterId)?.let { listState.scrollToItem(it) }
+            ttsFocus?.let { focus ->
+                readerBodyItemIndexForSpeechFocus(readerBodyLayout,focus)?.let { listState.scrollToItem(it) }
             }
         }
     }
@@ -7241,6 +7294,7 @@ internal fun ReaderScreen(
                 onAnchor={nativePagedAnchor=it;onViewportAnchorChanged(it)},onPreview=onPreviewImage,
                 onPageProgress = { visibleProgress.value = state.chapterId to it },
                 followText=ttsActiveText.takeIf {ttsSettings.enableAutoScroll},highlightText=ttsHighlightText,
+                followFocus=ttsFocus.takeIf {ttsSettings.enableAutoScroll},highlightFocus=ttsFocus.takeIf {ttsSettings.enableHighlight},
                 backgroundImageUri=palette.backgroundImageUri,
                 modifier=Modifier.align(Alignment.Center).widthIn(max=options.contentWidthDp.dp).fillMaxSize()
                     .then(readerSystemBarModifier)
@@ -7289,35 +7343,31 @@ internal fun ReaderScreen(
                     pageTurnEnabled,
                     readerTouchSlop,
                 ) {
-                    // Observe the initial pointer pass without consuming it. Reader prose has no
-                    // selection action mode; regular drags remain LazyColumn scrolling gestures
-                    // and stationary taps are reserved for the stable reader toolbar controls.
+                    // Observe after child controls have handled the event. The initial-pass
+                    // observer used to turn a next-chapter/retry click into a simultaneous body
+                    // menu tap. Do not consume scrolling, image previews or inline controls.
                     awaitPointerEventScope {
                         var active = false
                         var moved = false
                         var pageZoneGesture = false
+                        var childHandled = false
                         var downPosition = Offset.Zero
                         var downTime = 0L
                         while (true) {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val event = awaitPointerEvent(PointerEventPass.Final)
                             val change = event.changes.firstOrNull() ?: continue
                             if (change.pressed && !active) {
                                 active = true
                                 activeReaderGestureId += 1L
                                 moved = false
+                                childHandled = change.isConsumed || inlineCommentInteractionActive.get()
                                 downPosition = change.position
                                 downTime = change.uptimeMillis
                                 val downFraction = (change.position.x / size.width).coerceIn(0f, 1f)
-                                pageZoneGesture = readerPageModeTapShouldInterceptChild(
-                                    pageTurnEnabled = pageTurnEnabled,
-                                    controlsVisible = toolbarsVisible.value,
-                                    action = readerTapActionAt(
-                                        options.tapAreas.ifEmpty { defaultReaderTapAreas() },
-                                        downFraction,
-                                    ),
-                                )
+                                pageZoneGesture = false // Real page gestures belong to NativePagedReader.
                                 if (pageZoneGesture) change.consume()
                             } else if (change.pressed && active) {
+                                childHandled = childHandled || change.isConsumed || inlineCommentInteractionActive.get()
                                 if (pageZoneGesture) change.consume()
                                 if (readerTapExceedsTouchSlop(
                                         distancePx = (change.position - downPosition).getDistance(),
@@ -7344,7 +7394,7 @@ internal fun ReaderScreen(
                                     durationMillis = duration,
                                     longPressTimeoutMillis = viewConfiguration.longPressTimeoutMillis,
                                 )
-                                val readerGestureEligible = isShortBodyTap
+                                val readerGestureEligible = isShortBodyTap && !childHandled && !change.isConsumed
                                 val inlineInteractionInProgress = inlineCommentInteractionActive.get()
                                 if (
                                     readerBodyTapCanHandle(
@@ -7404,6 +7454,7 @@ internal fun ReaderScreen(
                             layout = readerBodyLayout,
                             options = options,
                             highlightedText = ttsHighlightText,
+                            highlightedFocus = ttsFocus.takeIf {ttsSettings.enableHighlight},
                             chapterCommentStates = state.chapterCommentStates,
                             fallbackCommentState = state,
                             onRetryChapterComments = onRetryChapterComments,
@@ -7519,6 +7570,7 @@ internal fun ReaderScreen(
                     onBack()
                 },
                 onToggleFavorite = onToggleFavorite,
+                onRetranslate = onRetranslateChapter?.let { action -> { closeReaderSidePanel(); action(state.visibleChapterId ?: state.chapterId) } },
                 onDismiss = ::closeReaderSidePanel,
                 modifier = readerSidePanelModifier,
             )
@@ -7953,6 +8005,7 @@ private fun ReaderNavigationPanel(
     onOpenBook: () -> Unit,
     onToggleFavorite: () -> Unit,
     onDismiss: () -> Unit,
+    onRetranslate:(()->Unit)?=null,
     modifier: Modifier = Modifier,
 ) {
     val favorite = (favoriteStatus as? LoadResult.Success)?.value?.isFavorited == true
@@ -7975,6 +8028,9 @@ private fun ReaderNavigationPanel(
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (favorite) "已收藏" else label) }
             }
+        }
+        onRetranslate?.let { action ->
+            OutlinedButton(onClick=action,modifier=Modifier.fillMaxWidth()) { Text("重翻当前章节") }
         }
     }
 }
@@ -8218,9 +8274,9 @@ private fun ChapterCommentActionRow(
         horizontalArrangement = Arrangement.spacedBy(NovalPieSpacing.sm),
         verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.xs)
     ) {
-        ForumActionIcon(Icons.Filled.ThumbUp, "赞 ${comment.likeCount ?: 0}", onLike)
-        ForumActionIcon(Icons.Filled.ThumbDown, "踩 ${comment.dislikeCount ?: 0}", onDislike)
-        ForumActionIcon(Icons.Filled.EmojiEmotions, "表情 ${comment.reactionCount ?: 0}", onEmoji)
+        ForumActionIcon(Icons.Filled.ThumbUp, "赞 ${comment.displayLikeCount ?: 0}", onLike)
+        ForumActionIcon(Icons.Filled.ThumbDown, "踩 ${comment.displayDislikeCount ?: 0}", onDislike)
+        ForumActionIcon(Icons.Filled.EmojiEmotions, "表情 ${comment.displayReactionCount ?: 0}", onEmoji)
         ForumActionIcon(Icons.Filled.CardGiftcard, "打赏 ${comment.awardPoints ?: 0}", onAward)
         ForumActionIcon(Icons.AutoMirrored.Filled.Reply, "回复", onReply)
     }
@@ -10483,6 +10539,7 @@ private fun BookDetailBottomActionBar(
     requestNewChapterLoading: Boolean,
     onRequestNewChapter: () -> Unit,
     onTranslateBook: () -> Unit,
+    onRetranslateChapters: () -> Unit,
     onOpenWeb: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -10506,6 +10563,7 @@ private fun BookDetailBottomActionBar(
         nativeDownloadsVisible = nativeDownloadsVisible,
         canManageBook = canManageBook,
         translationVisible = requestNewChapterVisible,
+        retranslationVisible = requestNewChapterVisible,
     )
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -10529,7 +10587,7 @@ private fun BookDetailBottomActionBar(
                 ) {
                     if (downloadStateForBook.awaitingFailureDecision) {
                         Text(
-                            text = "⚠️ 部分插图失败，点击处理",
+                            text = if(downloadStateForBook.integrityDecisionPending) "⚠️ 资料 / 图源待确认，点击处理" else "⚠️ 部分插图失败，点击处理",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error,
                             fontWeight = FontWeight.Bold,
@@ -10732,6 +10790,7 @@ private fun BookDetailBottomActionBar(
                         )
                         BookDetailMenuAction.OpenWeb -> "打开网页详情"
                         BookDetailMenuAction.TranslateInWorkspace -> "自助翻译（本人 API）"
+                        BookDetailMenuAction.RetranslateChapters -> "重翻章节"
                         BookDetailMenuAction.EditInfo -> "编辑信息"
                         BookDetailMenuAction.ManageChapters -> "章节管理"
                         BookDetailMenuAction.AppendChapters -> "追加章节"
@@ -10757,6 +10816,7 @@ private fun BookDetailBottomActionBar(
                                     }
                                     BookDetailMenuAction.RequestNewChapter -> onRequestNewChapter()
                                     BookDetailMenuAction.TranslateInWorkspace -> onTranslateBook()
+                                    BookDetailMenuAction.RetranslateChapters -> onRetranslateChapters()
                                     BookDetailMenuAction.DownloadEpub -> {
                                         downloadChoiceFormat = NativeBookDownloadFormat.Epub
                                     }
@@ -11090,8 +11150,9 @@ private fun BookCommentsSection(
     // A long composition box used to occupy the first screen of the \"书评\" tab, so existing
     // reviews looked missing until the user scrolled past it. Keep writing available, but lead
     // with the source reviews and reveal the editor deliberately.
-    var composerVisible by remember(state.bookId) { mutableStateOf(false) }
-    var expandedThreadIds by remember(state.bookId) { mutableStateOf(emptySet<Long>()) }
+    var composerVisible by rememberSaveable(state.bookId) { mutableStateOf(state.commentDraft.isNotBlank() || state.replyingToName!=null) }
+    val expandedRepliesSaver=remember {Saver<Set<Long>,ArrayList<Long>>(save={ArrayList(it)},restore={it.toSet()})}
+    var expandedThreadIds by rememberSaveable(state.bookId,stateSaver=expandedRepliesSaver) { mutableStateOf(emptySet<Long>()) }
     LaunchedEffect(state.replyingToName) {
         if (state.replyingToName != null) composerVisible = true
     }
@@ -11737,6 +11798,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readerBodyItems(
     layout: ReaderBodyLayout,
     options: ReaderUiOptions,
     highlightedText: String? = null,
+    highlightedFocus: ReaderSpeechFocus? = null,
     chapterCommentStates: Map<Long, ReaderChapterCommentState>,
     fallbackCommentState: ReaderState,
     onRetryChapterComments: (Long) -> Unit,
@@ -11755,6 +11817,12 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readerBodyItems(
     inlineCommentInteractionActive: AtomicBoolean,
 ) {
     val textLayout = readerTextLayout(options)
+    val legacyHighlightLocation=if(highlightedFocus?.position==null) {
+        val chapter=highlightedFocus?.chapterId
+        val target=highlightedFocus?.text ?: highlightedText
+        target?.let {text->layout.textLocations.filter { (chapter==null||it.chapterId==chapter) &&
+            (it.text.contains(text)||text.contains(it.text.take(24))) }.singleOrNull()?.blockId}
+    } else null
     var imageOrdinal = 0
     layout.chapters.forEachIndexed { chapterIndex, chapterLayout ->
         val chapter = chapterLayout.chapter
@@ -11786,6 +11854,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readerBodyItems(
                             textLayout = textLayout,
                             palette = readerPalette(options),
                             highlightedText = highlightedText,
+                            focus=highlightedFocus?.takeIf {it.chapterId==chapter.chapterId &&
+                                (it.position?.blockId ?: legacyHighlightLocation)=="${chapter.chapterId}:p:$index"},
+                            chapterId=chapter.chapterId,blockId="${chapter.chapterId}:p:$index",
                         )
                     }
                 }
@@ -11978,12 +12049,15 @@ private fun ReaderParagraph(
     textLayout: ReaderTextLayout,
     palette: ReaderPalette,
     highlightedText: String? = null,
+    focus: ReaderSpeechFocus? = null,
+    chapterId:Long=0,blockId:String="",
 ) {
-    val display = remember(value,textLayout.wordSpacingSp) {
-        com.novalpie.nativeapp.feature.reader.text.readerAnnotatedTextWithWordSpacing(value.toAnnotatedString(),textLayout.wordSpacingSp)
+    val variant=LocalChineseVariant.current
+    val display = remember(value,textLayout.wordSpacingSp,variant) {
+        com.novalpie.nativeapp.feature.reader.text.readerAnnotatedTextWithWordSpacing(convertChineseVariantAnnotatedText(value.toAnnotatedString(),variant),textLayout.wordSpacingSp)
     }
-    val annotated=remember(display,highlightedText,palette.text) {
-        val range=highlightedText?.let{com.novalpie.nativeapp.feature.reader.text.readerSpokenTextRange(display.text,it)}
+    val annotated=remember(display,focus,palette.text,chapterId,blockId) {
+        val range=focus?.let{com.novalpie.nativeapp.feature.reader.tts.readerSpeechDisplayRange(display.text,it,chapterId,blockId,variant,textLayout.wordSpacingSp)}
         if(range==null)display else androidx.compose.ui.text.AnnotatedString.Builder(display).apply{
             addStyle(SpanStyle(background=palette.text.copy(alpha=.2f)),range.first,range.last+1)
         }.toAnnotatedString()

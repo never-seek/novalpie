@@ -224,6 +224,8 @@ data class HomeState(
     val favoriteEntries: LoadResult<List<FavoriteEntry>> = LoadResult.Idle,
     /** Source total remains accurate even when only the first/visible page has loaded. */
     val favoriteTotal: Int? = null,
+    val favoriteTotalPages:Int?=null,
+    val historyTotalPages:Int?=null,
     val history: LoadResult<List<FavoriteEntry>> = LoadResult.Idle,
     val historyTotal:Int?=null,
     val favoritesPage: Int = 1,
@@ -666,6 +668,7 @@ data class BookDetailState(
     val commentDraft: String = "",
     val replyingToCommentId: Long? = null,
     val replyingToName: String? = null,
+    val catalogQuery: String = "",
     val favoriteLoading: Boolean = false,
     val actionMessage: String? = null,
     val actionLoading: Boolean = false,
@@ -697,6 +700,8 @@ data class NativeEpubDownloadState(
     val awaitingFailureDecision: Boolean = false,
     val failedImageCount: Int = 0,
     val totalImageCount: Int = 0,
+    val integrityNotices:List<String> = emptyList(),
+    val integrityDecisionPending:Boolean=false,
 )
 
 /** Global because a card can request its original before a detail route has been opened. */
@@ -723,6 +728,8 @@ data class BookChapterManagerState(
     val selectedIds: Set<Long> = emptySet(),
     val orderDirty: Boolean = false,
     val editor: ManagedChapterDraft? = null,
+    val originalEditor: ManagedChapterDraft? = null,
+    val confirmDiscardEditor: Boolean = false,
     val editorLoading: Boolean = false,
     val actionLoading: Boolean = false,
     val translationMode: String = "shared",
@@ -840,6 +847,7 @@ data class ReaderUiOptions(
     val pageTurnEffect: String = "fade",
     val volumeKeyPageTurn: Boolean = true,
     val tapAreas: List<ReaderTapArea> = defaultReaderTapAreas(),
+    val brightness: Float = -1f,
 )
 
 internal fun defaultReaderTapAreas(): List<ReaderTapArea> = listOf(
@@ -877,6 +885,7 @@ internal fun ReaderSettingsValues.toReaderUiOptions(): ReaderUiOptions = ReaderU
     pageTurnEffect = pageTurnEffect,
     volumeKeyPageTurn = volumeKeyPageTurn,
     tapAreas = tapAreas.ifEmpty { defaultReaderTapAreas() },
+    brightness = brightness,
 )
 
 internal fun ReaderUiOptions.toReaderSettingsValues(): ReaderSettingsValues = ReaderSettingsValues(
@@ -908,6 +917,7 @@ internal fun ReaderUiOptions.toReaderSettingsValues(): ReaderSettingsValues = Re
     pageTurnEffect = pageTurnEffect,
     volumeKeyPageTurn = volumeKeyPageTurn,
     tapAreas = tapAreas,
+    brightness = brightness,
 )
 
 internal fun ReaderUiOptions.normalizedReaderOptions(): ReaderUiOptions {
@@ -937,6 +947,7 @@ internal fun ReaderUiOptions.normalizedReaderOptions(): ReaderUiOptions {
         pageTurnMode = pageTurnMode && !useInfiniteScroll,
         pageTurnEffect = pageTurnEffect.takeIf { it in setOf("none", "fade", "cover", "slide", "simulated") } ?: "fade",
         tapAreas = tapAreas.takeIf { it.size == 3 } ?: defaultReaderTapAreas(),
+        brightness = normalizeReaderBrightness(brightness),
     )
 }
 
@@ -996,6 +1007,36 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         onComments={bookId,comments->loadBookCommentBookReferences(bookId,comments,bookDetailRequestSerial)},
     )
     private val bookDetailRequestSerial:Long get()=bookFeature.revision
+    private val retranslationFeature=com.novalpie.nativeapp.feature.books.ChapterRetranslationController(
+        com.novalpie.nativeapp.feature.books.WebsiteChapterRetranslationRepository(api),viewModelScope,
+        {dependencies.environment.revision},
+    )
+    internal val chapterRetranslationState get()=retranslationFeature.state
+    fun canRetranslateBook(bookId:Long):Boolean = !authToken.isNullOrBlank()&&
+        !((bookFeature.retainedState(bookId)?.book as? LoadResult.Success)?.value?.platform).equals("upload",ignoreCase=true)
+    fun openChapterRetranslation(bookId:Long,currentChapterId:Long?=null) {
+        if(!canRetranslateBook(bookId)||bookId<=0)return
+        val detail=bookFeature.retainedState(bookId)
+        val book=(detail?.book as? LoadResult.Success)?.value
+        if(book?.platform.equals("upload",ignoreCase=true))return
+        val catalog=if(readerState.bookId==bookId)(readerState.chapters as? LoadResult.Success)?.value
+            else (detail?.chapters as? LoadResult.Success)?.value
+        val number=catalog?.firstOrNull{it.id==currentChapterId}?.number
+        retranslationFeature.open(bookId,book?.title ?: readerState.bookTitle?.takeIf{readerState.bookId==bookId} ?: "书籍 #$bookId",catalog,number,currentChapterId)
+    }
+    fun updateRetranslationRange(value:String)=retranslationFeature.updateRange(value)
+    fun submitChapterRetranslation()=retranslationFeature.submit()
+    fun dismissChapterRetranslation()=retranslationFeature.dismiss()
+    fun confirmRetranslationCheckedForRetry()=retranslationFeature.confirmCheckedForRetry()
+    fun openRetranslationWorkspace() {
+        val id=chapterRetranslationState.bookId;retranslationFeature.dismiss();openWorkspaceTranslation(id)
+    }
+    fun refreshRetranslatedChapters() {
+        val id=chapterRetranslationState.bookId;retranslationFeature.dismiss()
+        val route=currentRoute
+        if(route is AppRoute.Reader&&route.bookId==id)loadReader(id,route.chapterId,restoreViewport=true)
+        else if(route==AppRoute.BookDetail(id))loadBookDetail(id)
+    }
     private var terminologyRequestSerial = 0L
     private val bookManagementFeature = com.novalpie.nativeapp.feature.books.BookManagementViewModel(
         dependencies.bookManagementRepository(::readUploadDocument, { uploadSource(it) }),
@@ -1003,6 +1044,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         onSaved = { id -> if (currentRoute == AppRoute.BookEditInfo(id)) loadBookDetail(id) },
     )
     private var bookChapterRequestSerial = 0L
+    private var managedChapterEditorRevision = 0L
     private val publicProfileFeature = com.novalpie.nativeapp.feature.profile.PublicProfileViewModel(dependencies.publicProfileRepository)
     private val adminFeature = com.novalpie.nativeapp.feature.admin.AdminViewModel(dependencies.adminRepository, { isAdminProfile(currentUserProfile()) })
     private var toolsRequestSerial = 0L
@@ -1067,6 +1109,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             downloadImageQuality = initialDownloadSettings.imageQuality,
             downloadZipCompressionLevel = initialDownloadSettings.zipCompressionLevel,
         ), onProfile = ::publishHomeUserProfile,
+        checkinReceipts=com.novalpie.nativeapp.feature.profile.StoredCheckinReceiptStore(application),
     )
     var profileState: ProfileState
         get() = profileFeature.state
@@ -1115,8 +1158,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     /** See [HomeState.favoritesLoadMoreError]; search had the identical defect. */
     val searchLoadMoreError get() = searchFeature.state.pageError
     internal val searchGridScrollPosition get() = searchFeature.state.scroll
-    var bookCatalogQuery by mutableStateOf("")
-        private set
+    val bookCatalogQuery: String get() = bookDetailState.catalogQuery
     var bookDetailState:BookDetailState
         get()=bookFeature.state
         private set(value){bookFeature.present{value}}
@@ -1195,8 +1237,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             var previous=authToken to proxySettings
             snapshotFlow {authToken to proxySettings}.collect {next->
                 if(next!=previous){
+                    val readerAccountChanged = com.novalpie.nativeapp.data.readerCacheAccountScope(previous.first) !=
+                        com.novalpie.nativeapp.data.readerCacheAccountScope(next.first)
+                    managedChapterEditorRevision++
                     val editorAccountChanged = previous.first?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0)?.id } != next.first?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0)?.id }
                     previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged();libraryFeature.environmentChanged();bookFeature.environmentChanged()
+                    if(readerAccountChanged)retranslationFeature.environmentChanged() else retranslationFeature.transportChanged()
                     messageInboxFeature.environmentChanged();messageDetailFeature.environmentChanged();conversationFeature.environmentChanged();messageSettingsFeature.environmentChanged()
                     profileFeature.environmentChanged()
                     publicProfileFeature.environmentChanged()
@@ -1219,7 +1265,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                         AppRoute.Profile->loadProfile()
                         AppRoute.Workspace->loadWorkspace()
                         is AppRoute.UserProfileDetail->loadUserProfile(route.userId)
-                        is AppRoute.Reader->loadReaderReplacementRules(route.bookId)
+                        is AppRoute.Reader->loadReader(route.bookId, route.chapterId, preserveContinuousWindow = !readerAccountChanged)
                         else->Unit
                     }
                     if (!next.first.isNullOrBlank()) {
@@ -1498,6 +1544,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         searchFeature.toggleCache()
     }
 
+    fun saveSearchConditions() = searchFeature.saveConditions()
+
     /** Clears local search-option state only; no source API request or search history is changed. */
     fun clearSearchSettingsCache() {
         searchFeature.setVisible(currentRoute==AppRoute.Search)
@@ -1565,8 +1613,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         searchFeature.updateOptions(options,refresh=currentRoute==AppRoute.Search)
     }
 
-    fun updateBookCatalogQuery(value: String) {
-        bookCatalogQuery = value
+    fun updateBookCatalogQuery(value:String,expectedBookId:Long=bookDetailState.bookId) {
+        if(isCurrentBookUi(expectedBookId))bookDetailState=bookDetailState.copy(catalogQuery=value)
     }
 
     fun updateReaderCatalogQuery(value: String) {
@@ -2050,8 +2098,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             refreshReaderCatalog()
             return
         }
-        if (direction > 0 && !readerInfiniteScrollCanAppendNext(edgeId, chapters, loadedIds)) return
-        if (direction < 0 && !readerInfiniteScrollCanPrependPrevious(edgeId, chapters, loadedIds)) return
+        // A duplicate sentinel is a no-op. A genuine missing successor must still enter the
+        // end-confirmation path below; do not short-circuit it with canAppend(false).
+        val adjacent = adjacentReaderChapters(edgeId, chapters)
+        if (direction > 0 && adjacent.next?.id in loadedIds) return
+        if (direction < 0 && adjacent.previous?.id in loadedIds) return
         val next = if (direction < 0) adjacentReaderChapters(edgeId, chapters).previous
             else nextReaderChapterForInfiniteScroll(edgeId, chapters, loadedIds)
         if (next == null) {
@@ -2084,11 +2135,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             nextChapterExhausted = false,
         )
         val requestSerial = readerRequestSerial
+        val cacheStore = readerChapterCacheStore.forCurrentAccount()
         val replaceMode = readerUiOptions.replaceMode
         val showImages = readerUiOptions.showImages
         viewModelScope.launch {
             val cachedContent = async(Dispatchers.IO) {
-                readerChapterCacheStore.load(
+                cacheStore.load(
                     bookId = route.bookId,
                     chapterId = next.id,
                     replaceMode = replaceMode,
@@ -2113,18 +2165,23 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 )
             }
             val cached = cachedContent.await()
-            val servedFromCache = result.isFailure && cached != null
-            val content = result.getOrNull() ?: cached?.content
+            val servedFromCache = result.isFailure && cached != null && com.novalpie.nativeapp.data.readerCacheMayServeFailure(result.exceptionOrNull())
+            val content = result.getOrNull() ?: cached?.content?.takeIf { servedFromCache }
             if (
                 requestSerial != readerRequestSerial ||
                 currentRoute != route ||
                 readerState.bookId != route.bookId ||
                 readerState.chapterId != route.chapterId
             ) return@launch
+            if ((result.exceptionOrNull() as? com.novalpie.nativeapp.data.NovalPieApiException)?.statusCode in listOf(401, 403, 404, 410)) {
+                val persisted=withContext(Dispatchers.IO) { cacheStore.revoke(route.bookId,next.id,replaceMode,showImages) }
+                if(!persisted&&requestSerial==readerRequestSerial)readerState=readerState.copy(
+                    actionMessage="章节访问已拒绝；离线保护未能保存，本次不会回退缓存。请联网重试。")
+            }
             if (content != null) {
                 if (!servedFromCache) {
                     withContext(Dispatchers.IO) {
-                        readerChapterCacheStore.save(
+                        cacheStore.save(
                             bookId = route.bookId,
                             chapterId = next.id,
                             replaceMode = replaceMode,
@@ -2135,7 +2192,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     }
                 }
                 val cacheStates = withContext(Dispatchers.IO) {
-                    readerChapterCacheStore.cacheStates(
+                    cacheStore.cacheStates(
                         bookId = route.bookId,
                         replaceMode = replaceMode,
                         showImages = showImages,
@@ -2144,7 +2201,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 }
                 if (requestSerial != readerRequestSerial || currentRoute != route || readerState.bookId != route.bookId) return@launch
                 val existing = readerState.chapterContents
-                val addition = ReaderChapterContent(next.id, next.title, content)
+                val addition = ReaderChapterContent(next.id, next.title, content, fromCache = servedFromCache)
                 val window = com.novalpie.nativeapp.feature.reader.text.boundedReaderChapterWindow(
                     if (direction < 0) listOf(addition) + existing else existing + addition,
                     readerState.visibleChapterId ?: state.chapterId, direction)
@@ -3506,11 +3563,14 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     fun emojiForumComment(comment: ForumComment) = forumPostFeature.react(com.novalpie.nativeapp.feature.forum.ForumReaction.Joy, comment)
     fun awardForumComment(comment: ForumComment) = forumPostFeature.react(com.novalpie.nativeapp.feature.forum.ForumReaction.Award, comment)
 
-    fun updateBookCommentDraft(value: String) {
-        bookDetailState = bookDetailState.copy(commentDraft = value)
+    private fun isCurrentBookUi(bookId:Long)=bookId>0&&bookDetailState.bookId==bookId&&currentRoute==AppRoute.BookDetail(bookId)
+
+    fun updateBookCommentDraft(value:String,expectedBookId:Long=bookDetailState.bookId) {
+        if(isCurrentBookUi(expectedBookId))bookDetailState=bookDetailState.copy(commentDraft=value)
     }
 
-    fun replyToBookComment(comment: ChapterComment) {
+    fun replyToBookComment(comment:ChapterComment,expectedBookId:Long=bookDetailState.bookId) {
+        if(!isCurrentBookUi(expectedBookId))return
         bookDetailState = bookDetailState.copy(
             replyingToCommentId = chapterCommentReplySubmissionCommentId(comment, currentBookComments()),
             replyingToName = comment.authorName,
@@ -3522,96 +3582,82 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         )
     }
 
-    fun cancelBookCommentReply() {
+    fun cancelBookCommentReply(expectedBookId:Long=bookDetailState.bookId) {
+        if(!isCurrentBookUi(expectedBookId))return
         bookDetailState = bookDetailState.copy(replyingToCommentId = null, replyingToName = null)
     }
 
-    fun submitBookComment() {
-        val bookId = bookDetailState.bookId
-        val content = bookDetailState.commentDraft.trim()
-        if (bookId <= 0 || content.isBlank() || bookDetailState.actionLoading) return
-        val replyId = bookDetailState.replyingToCommentId
-        val replyToName = bookDetailState.replyingToName
-        val identity=ContentMutationIdentity(AppRoute.BookDetail(bookId),bookDetailRequestSerial,dependencies.environment.revision)
-        bookDetailState = bookDetailState.copy(actionLoading = true, actionMessage = null)
+    fun submitBookComment(expectedBookId:Long=bookDetailState.bookId) {
+        if(!isCurrentBookUi(expectedBookId))return
+        val state=bookDetailState
+        val bookId=state.bookId
+        val content=state.commentDraft.trim()
+        if(bookId<=0||content.isBlank()||currentRoute!=AppRoute.BookDetail(bookId))return
+        val submitted=BookCommentSubmissionSnapshot(state.commentDraft,state.replyingToCommentId,state.replyingToName)
+        val environment=dependencies.environment.revision
+        val ticket=bookFeature.beginAction(com.novalpie.nativeapp.feature.books.BookActionLane.Comments) ?: return
         viewModelScope.launch {
-            if(!isCurrentContentMutation(identity,currentRoute,bookDetailRequestSerial,dependencies.environment.revision))return@launch
-            val result = runCatching {
-                if (replyId != null) {
-                    api.createCommentReply(commentId = replyId, content = content, replyToName = replyToName)
-                } else {
-                    api.createBookComment(bookId = bookId, content = content)
-                }
+            if(!bookFeature.ownsAction(ticket)||environment!=dependencies.environment.revision)return@launch
+            val result=runCatching {
+                if(submitted.replyId!=null)api.createCommentReply(submitted.replyId,content,submitted.replyName)
+                else api.createBookComment(bookId,content)
             }
-            if(!isCurrentContentMutation(identity,currentRoute,bookDetailRequestSerial,dependencies.environment.revision))return@launch
-            bookDetailState = bookCommentAfterSubmission(
-                bookDetailState,
-                result,
-            )
-            if (result.getOrNull()?.success == true) {
-                loadBookDetail(
-                    bookId = bookId,
-                    preservedActionMessage = bookDetailState.actionMessage,
-                    retainCommentComposer = true,
-                )
+            if(environment!=dependencies.environment.revision)return@launch
+            val updated=bookFeature.finishAction(ticket,invalidateComments=result.getOrNull()?.success==true) {
+                bookCommentAfterSubmission(it,result,submitted)
             }
+            if(updated&&result.getOrNull()?.success==true&&currentRoute==AppRoute.BookDetail(bookId))
+                loadBookDetail(bookId,bookDetailState.actionMessage,retainCommentComposer=true)
         }
     }
 
-    fun likeBookComment(comment: ChapterComment) {
+    fun likeBookComment(comment:ChapterComment,expectedBookId:Long=bookDetailState.bookId) {
+        if(!isCurrentBookUi(expectedBookId))return
         val target = chapterCommentActionTarget(comment, currentBookComments())
         reactOnBookComment(comment, "评论点赞") {
             api.toggleCommentLike(target.parentCommentId, target.replyId)
         }
     }
 
-    fun dislikeBookComment(comment: ChapterComment) {
-        reactOnBookComment(comment, "评论点踩") { reactToCommentOrReply(comment, currentBookComments(), "down") }
+    fun dislikeBookComment(comment:ChapterComment,expectedBookId:Long=bookDetailState.bookId) {
+        if(!isCurrentBookUi(expectedBookId))return
+        val comments=currentBookComments()
+        reactOnBookComment(comment, "评论点踩") { reactToCommentOrReply(comment, comments, "down") }
     }
 
-    fun emojiBookComment(comment: ChapterComment) {
-        reactOnBookComment(comment, "评论表情") { reactToCommentOrReply(comment, currentBookComments(), "emoji:heart") }
+    fun emojiBookComment(comment:ChapterComment,expectedBookId:Long=bookDetailState.bookId) {
+        if(!isCurrentBookUi(expectedBookId))return
+        val comments=currentBookComments()
+        reactOnBookComment(comment, "评论表情") { reactToCommentOrReply(comment, comments, "emoji:heart") }
     }
 
-    fun awardBookComment(comment: ChapterComment) {
+    fun awardBookComment(comment:ChapterComment,expectedBookId:Long=bookDetailState.bookId) {
+        if(!isCurrentBookUi(expectedBookId))return
+        val comments=currentBookComments()
         reactOnBookComment(comment, "评论打赏") {
-            reactToCommentOrReply(comment, currentBookComments(), "award", awardPoints = 10)
+            reactToCommentOrReply(comment, comments, "award", awardPoints = 10)
         }
     }
 
     private fun currentBookComments(): List<ChapterComment> =
         (bookDetailState.comments as? LoadResult.Success<List<ChapterComment>>)?.value.orEmpty()
 
-    private fun reactOnBookComment(comment: ChapterComment, label: String, action: suspend () -> com.novalpie.nativeapp.model.ForumActionResult) {
-        if (comment.id <= 0 || bookDetailState.bookId <= 0 || bookDetailState.actionLoading) return
-        val bookId = bookDetailState.bookId
-        val identity=ContentMutationIdentity(AppRoute.BookDetail(bookId),bookDetailRequestSerial,dependencies.environment.revision)
-        bookDetailState = bookDetailState.copy(actionLoading = true, actionMessage = null)
+    private fun reactOnBookComment(comment:ChapterComment,label:String,action:suspend()->com.novalpie.nativeapp.model.ForumActionResult) {
+        val bookId=bookDetailState.bookId
+        if(comment.id<=0||bookId<=0||currentRoute!=AppRoute.BookDetail(bookId))return
+        val environment=dependencies.environment.revision
+        val ticket=bookFeature.beginAction(com.novalpie.nativeapp.feature.books.BookActionLane.Comments) ?: return
         viewModelScope.launch {
-            if(!isCurrentContentMutation(identity,currentRoute,bookDetailRequestSerial,dependencies.environment.revision))return@launch
-            val result = runCatching { action() }
-            if(!isCurrentContentMutation(identity,currentRoute,bookDetailRequestSerial,dependencies.environment.revision))return@launch
-            bookDetailState = result.fold(
-                onSuccess = {
-                    bookDetailState.copy(
-                        actionLoading = false,
-                        actionMessage = it.message ?: "$label 已同步"
-                    )
-                },
-                onFailure = {
-                    bookDetailState.copy(
-                        actionLoading = false,
-                        actionMessage = apiFailureMessage(label, it)
-                    )
-                }
-            )
-            if (result.getOrNull()?.success == true) {
-                loadBookDetail(
-                    bookId = bookId,
-                    preservedActionMessage = bookDetailState.actionMessage,
-                    retainCommentComposer = true,
-                )
+            if(!bookFeature.ownsAction(ticket)||environment!=dependencies.environment.revision)return@launch
+            val result=runCatching {action()}
+            if(environment!=dependencies.environment.revision)return@launch
+            val updated=bookFeature.finishAction(ticket,invalidateComments=result.getOrNull()?.success==true) { state ->
+                state.copy(actionMessage=result.fold(
+                    {it.message ?: if(it.success)"$label 已同步" else "$label 未成功，请重试"},
+                    {apiFailureMessage(label,it)}))
             }
+            if(updated&&result.getOrNull()?.success==true&&currentRoute==AppRoute.BookDetail(bookId))
+                loadBookDetail(bookId,bookDetailState.actionMessage,retainCommentComposer=true)
         }
     }
 
@@ -3840,6 +3886,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     fun loadManagedChapters(bookId: Long) {
         if (bookId <= 0) return
+        managedChapterEditorRevision++
         val requestSerial = ++bookChapterRequestSerial
         bookChapterManagerState = BookChapterManagerState(bookId = bookId, chapters = LoadResult.Loading)
         viewModelScope.launch {
@@ -3901,28 +3948,35 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             bookChapterManagerState = state.copy(actionMessage = "请先保存章节顺序")
             return
         }
+        val revision = ++managedChapterEditorRevision
+        val environmentRevision = dependencies.environment.revision
         if (chapter == null) {
             val count = (state.chapters as? LoadResult.Success)?.value?.size ?: 0
+            val draft = ManagedChapterDraft(insertAt = count + 1)
             bookChapterManagerState = state.copy(
-                editor = ManagedChapterDraft(insertAt = count + 1),
+                editor = draft,
+                originalEditor = draft,
+                editorLoading = false,
+                confirmDiscardEditor = false,
                 actionMessage = null
             )
             return
         }
-        bookChapterManagerState = state.copy(editorLoading = true, actionMessage = "正在加载章节正文…")
+        bookChapterManagerState = state.copy(editorLoading = true, confirmDiscardEditor = false, actionMessage = "正在加载章节正文…")
         viewModelScope.launch {
             val result = runCatching { api.chapterContent(chapter.id) }
+            if (revision != managedChapterEditorRevision || environmentRevision != dependencies.environment.revision ||
+                bookChapterManagerState.bookId != state.bookId) return@launch
             if (currentRoute != AppRoute.BookChapters(state.bookId)) return@launch
             bookChapterManagerState = result.fold(
                 onSuccess = { content ->
+                    val draft = ManagedChapterDraft(chapterId = chapter.id, insertAt = chapter.number ?: 1,
+                        title = content.title ?: chapter.title, content = content.content)
                     bookChapterManagerState.copy(
                         editorLoading = false,
-                        editor = ManagedChapterDraft(
-                            chapterId = chapter.id,
-                            insertAt = chapter.number ?: 1,
-                            title = content.title ?: chapter.title,
-                            content = content.content
-                        ),
+                        editor = draft,
+                        originalEditor = draft,
+                        confirmDiscardEditor = false,
                         actionMessage = null
                     )
                 },
@@ -3932,13 +3986,30 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun updateManagedChapterDraft(draft: ManagedChapterDraft) {
-        bookChapterManagerState = bookChapterManagerState.copy(editor = draft, actionMessage = null)
+        if (bookChapterManagerState.actionLoading) return
+        managedChapterEditorRevision++
+        bookChapterManagerState = bookChapterManagerState.copy(editor = draft, editorLoading = false, confirmDiscardEditor = false, actionMessage = null)
     }
 
     fun dismissManagedChapterEditor() {
         if (!bookChapterManagerState.actionLoading) {
-            bookChapterManagerState = bookChapterManagerState.copy(editor = null, editorLoading = false)
+            managedChapterEditorRevision++
+            val state = bookChapterManagerState
+            if (state.editor != null && state.editor != state.originalEditor) {
+                bookChapterManagerState = state.copy(editorLoading = false, confirmDiscardEditor = true)
+            } else confirmDiscardManagedChapterEditor()
         }
+    }
+
+    fun confirmDiscardManagedChapterEditor() {
+        if (bookChapterManagerState.actionLoading) return
+        managedChapterEditorRevision++
+        bookChapterManagerState = bookChapterManagerState.copy(editor = null, originalEditor = null,
+            editorLoading = false, confirmDiscardEditor = false)
+    }
+
+    fun cancelDiscardManagedChapterEditor() {
+        bookChapterManagerState = bookChapterManagerState.copy(confirmDiscardEditor = false)
     }
 
     fun openManagedChapterIllustrations(chapter: Chapter) {
@@ -4047,10 +4118,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         }
         val placeholder = chapterIllustrationPlaceholder(index)
         val separator = if (editor.content.endsWith("\n") || editor.content.isBlank()) "" else "\n"
-        bookChapterManagerState = state.copy(
-            editor = editor.copy(content = editor.content + separator + placeholder),
-            actionMessage = "已插入 $placeholder"
-        )
+        updateManagedChapterDraft(editor.copy(content = editor.content + separator + placeholder))
+        bookChapterManagerState = bookChapterManagerState.copy(actionMessage = "已插入 $placeholder")
     }
 
     fun saveManagedChapterDraft() {
@@ -4061,6 +4130,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             return
         }
         if (state.actionLoading) return
+        val revision = managedChapterEditorRevision
+        val environmentRevision = dependencies.environment.revision
         bookChapterManagerState = state.copy(actionLoading = true, actionMessage = "正在保存章节…")
         viewModelScope.launch {
             val result = runCatching {
@@ -4070,11 +4141,17 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     api.updateManagedChapter(draft.chapterId, draft.title, draft.content)
                 }
             }
-            if (currentRoute != AppRoute.BookChapters(state.bookId)) return@launch
+            if (revision != managedChapterEditorRevision || environmentRevision != dependencies.environment.revision ||
+                bookChapterManagerState.bookId != state.bookId) return@launch
             result.fold(
                 onSuccess = {
-                    bookChapterManagerState = bookChapterManagerState.copy(editor = null, actionLoading = false, actionMessage = it.message ?: "章节已保存")
-                    loadManagedChapters(state.bookId)
+                    if (!it.success) {
+                        bookChapterManagerState = bookChapterManagerState.copy(actionLoading = false, actionMessage = it.message ?: "章节保存未成功，请重试")
+                    } else {
+                        bookChapterManagerState = bookChapterManagerState.copy(editor = null, originalEditor = null,
+                            confirmDiscardEditor = false, actionLoading = false, actionMessage = it.message ?: "章节已保存")
+                        if (currentRoute == AppRoute.BookChapters(state.bookId)) loadManagedChapters(state.bookId)
+                    }
                 },
                 onFailure = { bookChapterManagerState = bookChapterManagerState.copy(actionLoading = false, actionMessage = apiFailureMessage("保存章节", it)) }
             )
@@ -4562,10 +4639,11 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun openDeepLink(rawUri: String) {
+    fun openDeepLink(rawUri: String, resetBackStack: Boolean = false) {
         val uri = runCatching { Uri.parse(rawUri) }.getOrNull() ?: return
         val isNativeScheme = uri.scheme == "novalpie" && uri.host == "app"
-        val isWebsiteRoute = uri.scheme in setOf("https", "http") && uri.host.equals("novalpie.cc", ignoreCase = true)
+        val isWebsiteRoute = uri.scheme in setOf("https", "http") &&
+            (uri.host.equals("novalpie.cc", ignoreCase = true) || uri.host.equals("www.novalpie.cc", ignoreCase = true))
         if (!isNativeScheme && !isWebsiteRoute) return
 
         clearReaderSessionWhenLeaving()
@@ -4585,6 +4663,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         if (destination != null) {
             openNativeWebsiteRoute(
                 route = destination,
+                resetBackStack = resetBackStack || isNativeScheme,
                 searchQuery = uri.getQueryParameter("q") ?: uri.getQueryParameter("keyword"),
                 resetToken = uri.getQueryParameter("token")
             )
@@ -4611,16 +4690,31 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         )
     }
 
-    private fun openNativeWebsiteRoute(route: AppRoute, searchQuery: String?, resetToken: String? = null) {
+    private fun openNativeWebsiteRoute(route: AppRoute, searchQuery: String?, resetToken: String? = null, resetBackStack: Boolean = true) {
+        fun prepareTab(tab: BottomTab) {
+            if (resetBackStack) resetToTabRoot(tab) else {
+                val root = when (tab) {
+                    BottomTab.Collection -> AppRoute.Home
+                    BottomTab.Discover -> AppRoute.Search
+                    BottomTab.Tools -> AppRoute.Tools
+                    BottomTab.Forum -> AppRoute.Forum
+                    BottomTab.Profile -> AppRoute.Profile
+                }
+                if (route == root) {
+                    navigator.replaceAll(pushDistinctRoute(routes.toList(), root))
+                    currentTab = tab
+                }
+            }
+        }
         when (route) {
             AppRoute.Home -> {
-                resetToTabRoot(BottomTab.Collection)
+                prepareTab(BottomTab.Collection)
                 // `init` already starts the first shelf request. A Home deep link received during
                 // launch must join that request instead of starting a competing duplicate.
                 if (shouldLoadHomeOnTabEntry()) loadHome()
             }
             AppRoute.Search -> {
-                resetToTabRoot(BottomTab.Discover)
+                prepareTab(BottomTab.Discover)
                 val keyword = searchQuery?.trim()
                 if (keyword.isNullOrBlank()) {
                     loadSearchTags()
@@ -4630,75 +4724,75 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             AppRoute.Tools -> {
-                resetToTabRoot(BottomTab.Tools)
+                prepareTab(BottomTab.Tools)
                 loadTools()
             }
             AppRoute.Forum -> {
-                resetToTabRoot(BottomTab.Forum)
+                prepareTab(BottomTab.Forum)
                 loadForum()
             }
             AppRoute.ForumCreate -> {
-                resetToTabRoot(BottomTab.Forum)
+                prepareTab(BottomTab.Forum)
                 loadForum()
                 openForumCreate()
             }
             is AppRoute.ForumPostDetail -> {
-                resetToTabRoot(BottomTab.Forum)
+                prepareTab(BottomTab.Forum)
                 loadForum()
                 openForumPost(route.postId)
             }
             AppRoute.Profile -> {
-                resetToTabRoot(BottomTab.Profile)
+                prepareTab(BottomTab.Profile)
                 loadProfile()
             }
             is AppRoute.UserProfileDetail -> {
-                resetToTabRoot(BottomTab.Profile)
+                prepareTab(BottomTab.Profile)
                 // The public profile is pushed on top of Profile. Hydrate that root now so a
                 // system-back from this deep link cannot reveal an Idle "我的" screen forever.
                 loadProfile()
                 openUserProfile(route.userId)
             }
             AppRoute.Settings -> {
-                resetToTabRoot(BottomTab.Profile)
+                prepareTab(BottomTab.Profile)
                 loadProfile()
                 openSettings()
             }
             AppRoute.MessageCenter -> {
-                resetToTabRoot(BottomTab.Tools)
+                prepareTab(BottomTab.Tools)
                 loadTools()
                 openMessageCenter()
             }
             is AppRoute.MessageDetail -> {
-                resetToTabRoot(BottomTab.Tools)
+                prepareTab(BottomTab.Tools)
                 openMessageCenter()
                 openMessageDetail(route.messageId)
             }
             is AppRoute.MessageConversation -> {
-                resetToTabRoot(BottomTab.Tools)
+                prepareTab(BottomTab.Tools)
                 openMessageConversation(route.targetUserId, route.targetName)
             }
             AppRoute.MessageSettings -> {
-                resetToTabRoot(BottomTab.Tools)
+                prepareTab(BottomTab.Tools)
                 openMessageSettings()
             }
             AppRoute.Workspace -> {
-                resetToTabRoot(BottomTab.Tools)
+                prepareTab(BottomTab.Tools)
                 openWorkspace()
             }
             AppRoute.UploadBook -> {
-                resetToTabRoot(BottomTab.Tools)
+                prepareTab(BottomTab.Tools)
                 openUploadBook()
             }
             AppRoute.UploadEditor -> {
-                resetToTabRoot(BottomTab.Tools)
+                prepareTab(BottomTab.Tools)
                 openUploadEditor()
             }
             AppRoute.PoliticalExam -> {
-                resetToTabRoot(BottomTab.Tools)
+                prepareTab(BottomTab.Tools)
                 openPoliticalExam()
             }
             is AppRoute.Auth -> {
-                resetToTabRoot(BottomTab.Profile)
+                prepareTab(BottomTab.Profile)
                 // Auth and captcha routes return to the Profile root.  Start that root's request
                 // before pushing the form so Cancel/Back cannot reveal an Idle state that the UI
                 // correctly has no account data to render yet.
@@ -4707,29 +4801,29 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             }
             AppRoute.AuthCaptcha -> Unit
             is AppRoute.BookDetail -> {
-                resetToTabRoot(BottomTab.Collection)
+                prepareTab(BottomTab.Collection)
                 openBook(route.bookId)
             }
             is AppRoute.Terminology -> {
-                resetToTabRoot(BottomTab.Collection)
+                prepareTab(BottomTab.Collection)
                 openBook(route.bookId)
                 openTerminology(route.bookId)
             }
             is AppRoute.Reader -> {
-                resetToTabRoot(BottomTab.Collection)
+                prepareTab(BottomTab.Collection)
                 openBook(route.bookId)
                 openReader(route.bookId, route.chapterId)
             }
             is AppRoute.BookEditInfo,
             is AppRoute.BookChapters,
-            is AppRoute.BookAppend -> openDeepLinkedManagedBook(route)
+            is AppRoute.BookAppend -> openDeepLinkedManagedBook(route, resetBackStack)
             is AppRoute.Admin -> {
                 if (!isAdminProfile(currentUserProfile())) return
-                resetToTabRoot(BottomTab.Tools)
+                prepareTab(BottomTab.Tools)
                 openAdminSection(route.section)
             }
             is AppRoute.WebFallback -> {
-                resetToTabRoot(BottomTab.Collection)
+                prepareTab(BottomTab.Collection)
                 openWebFallback(route.url)
             }
         }
@@ -4740,7 +4834,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
      * route stays underneath the destination so Back has a meaningful native destination, while
      * no editor route is ever placed on the stack until the source permission API permits it.
      */
-    private fun openDeepLinkedManagedBook(route: AppRoute) {
+    private fun openDeepLinkedManagedBook(route: AppRoute, resetBackStack: Boolean = true) {
         val bookId = when (route) {
             is AppRoute.BookEditInfo -> route.bookId
             is AppRoute.BookChapters -> route.bookId
@@ -4753,7 +4847,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             return
         }
 
-        resetToTabRoot(BottomTab.Collection)
+        if (resetBackStack) resetToTabRoot(BottomTab.Collection)
         navigator.push(AppRoute.BookDetail(bookId))
         loadBookDetail(bookId)
         val navigationRevision = navigator.revision
@@ -4784,6 +4878,12 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         navigator.pop()
         rootRouteTab(currentRoute)?.let { currentTab = it }
         when (val restored = currentRoute) {
+            is AppRoute.BookDetail -> {
+                bookFeature.restore(restored.bookId,!authToken.isNullOrBlank())
+                if (!nativeEpubDownloadState.busy && nativeEpubDownloadState.bookId!=restored.bookId)
+                    nativeEpubDownloadState=NativeEpubDownloadState(bookId=restored.bookId)
+                loadLatestCompletedNativeDownload(restored.bookId)
+            }
             is AppRoute.BookEditInfo -> if (bookEditState.bookId != restored.bookId) loadBookEditInfo(restored.bookId)
             is AppRoute.Admin -> adminFeature.enter(restored.section)
             AppRoute.UploadBook -> uploadFeature.enter(null)
@@ -4932,7 +5032,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         retainCommentComposer: Boolean = false,
     ) {
         if(bookId<=0)return
-        if (!nativeEpubDownloadState.busy) nativeEpubDownloadState = NativeEpubDownloadState(bookId = bookId)
+        if (!nativeEpubDownloadState.busy && nativeEpubDownloadState.bookId!=bookId)
+            nativeEpubDownloadState = NativeEpubDownloadState(bookId = bookId)
         bookFeature.load(bookId,!authToken.isNullOrBlank(),retainCommentComposer,preservedActionMessage)
         loadLatestCompletedNativeDownload(bookId)
     }
@@ -4958,72 +5059,42 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     }
 
     /** Mirrors the reader's favourite action while keeping the detail action independently busy. */
-    fun toggleBookDetailFavorite() {
-        val state = bookDetailState
-        val bookId = state.bookId
-        val current = (state.favoriteStatus as? LoadResult.Success)?.value ?: return
-        if (bookId <= 0 || state.favoriteLoading) return
-        val requestSerial = bookDetailRequestSerial
-        bookDetailState = state.copy(favoriteLoading = true, actionMessage = null)
+    fun toggleBookDetailFavorite(expectedBookId:Long=bookDetailState.bookId) {
+        if(!isCurrentBookUi(expectedBookId))return
+        val state=bookDetailState
+        val bookId=state.bookId
+        val current=(state.favoriteStatus as? LoadResult.Success)?.value ?: return
+        if(bookId<=0||currentRoute!=AppRoute.BookDetail(bookId))return
+        val environment=dependencies.environment.revision
+        val ticket=bookFeature.beginAction(com.novalpie.nativeapp.feature.books.BookActionLane.Favorite) ?: return
         viewModelScope.launch {
-            val result = runCatching {
-                api.toggleFavorite(bookId, current.isFavorited, current.groupId ?: 0L)
+            if(!bookFeature.ownsAction(ticket)||environment!=dependencies.environment.revision)return@launch
+            val result=runCatching {api.toggleFavorite(bookId,current.isFavorited,current.groupId ?: 0L)}
+            if(environment!=dependencies.environment.revision)return@launch
+            bookFeature.finishAction(ticket) { saved -> result.fold(
+                {status -> saved.copy(favoriteStatus=LoadResult.Success(status),actionMessage=if(status.isFavorited)"已加入收藏" else "已取消收藏")},
+                {failure -> saved.copy(actionMessage=apiFailureMessage("收藏",failure))})
             }
-            if (
-                !isFreshRequestSerial(requestSerial, bookDetailRequestSerial) ||
-                !isFreshBookDetailResult(currentRoute, bookDetailState, bookId)
-            ) return@launch
-            bookDetailState = result.fold(
-                onSuccess = { status ->
-                    bookDetailState.copy(
-                        favoriteStatus = LoadResult.Success(status),
-                        favoriteLoading = false,
-                        actionMessage = if (status.isFavorited) "已加入收藏" else "已取消收藏",
-                    )
-                },
-                onFailure = { failure ->
-                    bookDetailState.copy(
-                        favoriteLoading = false,
-                        actionMessage = apiFailureMessage("收藏", failure),
-                    )
-                },
-            )
         }
     }
 
     /** Ask the source to fetch new chapters; this is intentionally not a local catalogue refresh. */
-    fun requestBookDetailNewChapters() {
-        val state = bookDetailState
-        val book = (state.book as? LoadResult.Success)?.value ?: return
-        if (
-            state.bookId <= 0 || state.requestNewChapterLoading ||
-            !bookDetailShowsRequestNewChapter(!authToken.isNullOrBlank(), book.platform)
-        ) return
-        val requestSerial = bookDetailRequestSerial
-        bookDetailState = state.copy(requestNewChapterLoading = true, actionMessage = null)
+    fun requestBookDetailNewChapters(expectedBookId:Long=bookDetailState.bookId) {
+        if(!isCurrentBookUi(expectedBookId))return
+        val state=bookDetailState
+        val book=(state.book as? LoadResult.Success)?.value ?: return
+        if(currentRoute!=AppRoute.BookDetail(book.id)||!bookDetailShowsRequestNewChapter(!authToken.isNullOrBlank(),book.platform))return
+        val environment=dependencies.environment.revision
+        val ticket=bookFeature.beginAction(com.novalpie.nativeapp.feature.books.BookActionLane.NewChapters) ?: return
         viewModelScope.launch {
-            val result = runCatching { api.requestNovelChapters(book.id) }
-            if (
-                !isFreshRequestSerial(requestSerial, bookDetailRequestSerial) ||
-                !isFreshBookDetailResult(currentRoute, bookDetailState, book.id)
-            ) return@launch
-            bookDetailState = result.fold(
-                onSuccess = { action ->
-                    bookDetailState.copy(
-                        requestNewChapterLoading = false,
-                        actionMessage = action.message ?: if (action.success) "已提交获取新章请求" else "获取新章失败",
-                    )
-                },
-                onFailure = { failure ->
-                    bookDetailState.copy(
-                        requestNewChapterLoading = false,
-                        actionMessage = apiFailureMessage("获取新章", failure),
-                    )
-                },
-            )
+            if(!bookFeature.ownsAction(ticket)||environment!=dependencies.environment.revision)return@launch
+            val result=runCatching {api.requestNovelChapters(book.id)}
+            if(environment!=dependencies.environment.revision)return@launch
+            bookFeature.finishAction(ticket) { saved -> saved.copy(actionMessage=result.fold(
+                {it.message ?: if(it.success)"已提交获取新章请求" else "获取新章失败"},
+                {apiFailureMessage("获取新章",it)})) }
         }
     }
-
 
     fun downloadBookEpub(bookId:Long,replacementMode:NativeDownloadReplacementMode=NativeDownloadReplacementMode.Source) =
         startNativeDownloadTask(bookId,DownloadFormat.Epub,replacementMode)
@@ -5166,6 +5237,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         restoreViewport: Boolean = entryPosition == ReaderChapterEntryPosition.Start,
     ) {
         val requestSerial = ++readerRequestSerial
+        val cacheStore = readerChapterCacheStore.forCurrentAccount()
         val catalogRequestSerial = ++readerCatalogRequestSerial
         loadReaderReplacementRules(bookId)
         val requestedReplaceMode = readerUiOptions.replaceMode
@@ -5175,13 +5247,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val keepWindow = preserveContinuousWindow &&
             previousState.bookId == bookId &&
             previousState.chapterId == chapterId
-        fun chapterWindow(content: ReaderContent, title: String?): List<ReaderChapterContent> {
-            val loaded = ReaderChapterContent(chapterId, title ?: content.title, content)
-            return if (keepWindow) {
-                previousState.chapterContents.map { if (it.chapterId == chapterId) loaded else it }.ifEmpty { listOf(loaded) }
-            } else {
-                listOf(loaded)
-            }
+        fun chapterWindow(content: ReaderContent, title: String?, fromCache: Boolean = false): List<ReaderChapterContent> {
+            val catalogTitle=(readerState.chapters as? LoadResult.Success)?.value?.firstOrNull {it.id==chapterId}?.title
+            val loaded = ReaderChapterContent(chapterId, catalogTitle ?: title ?: content.title, content, fromCache)
+            val live = readerState.chapterContents
+            // A slow initial body refresh must only replace its own entry, never resurrect an
+            // evicted head or discard chapters/comments already appended while cache was visible.
+            return if (live.isNotEmpty()) live.map { if (it.chapterId == chapterId) loaded else it } else listOf(loaded)
         }
         val retainedBookTitle = previousState.bookTitle
             ?.trim()
@@ -5211,7 +5283,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             chapters = LoadResult.Loading,
             comments = LoadResult.Loading,
             chapterCommentStates = (if (keepWindow) previousState.chapterCommentStates else emptyMap()) +
-                (chapterId to ReaderChapterCommentState(comments = LoadResult.Loading)),
+                (chapterId to ((if (keepWindow) previousState.chapterCommentStates[chapterId] else null)
+                    ?: ReaderChapterCommentState()).copy(comments = LoadResult.Loading)),
             favoriteStatus = LoadResult.Loading,
         )
         if (initialBookTitle == null) {
@@ -5240,7 +5313,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 }
             }
             val cachedContent = async(Dispatchers.IO) {
-                readerChapterCacheStore.load(
+                cacheStore.load(
                     bookId = bookId,
                     chapterId = chapterId,
                     replaceMode = requestedReplaceMode,
@@ -5250,6 +5323,36 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             val chapters = async { runCatching { api.chapters(bookId) } }
             val comments = async { runCatching { api.chapterComments(bookId = bookId, chapterId = chapterId, page = 1, limit = PAGE_SIZE) } }
             val favorite = async { runCatching { api.favoriteStatus(bookId) } }
+            launch {
+                val result=chapters.await()
+                if (requestSerial!=readerRequestSerial || catalogRequestSerial!=readerCatalogRequestSerial ||
+                    !isFreshReaderResult(currentRoute,readerState,bookId,chapterId)) return@launch
+                val catalog=result.getOrNull()
+                if(catalog!=null && readerCatalogConfirmsStaleChapter(chapterId,catalog)) {
+                    readerRequestSerial++;readerCatalogRequestSerial++;readerSessionStore.clear()
+                    dependencies.stopPlaybackIfInitialized()
+                    readerState=readerState.copy(content=LoadResult.Error(READER_STALE_CHAPTER_MESSAGE),chapterContents=emptyList(),
+                        chapters=LoadResult.Success(catalog),comments=LoadResult.Error(READER_STALE_CHAPTER_MESSAGE),
+                        chapterCommentStates=emptyMap(),contentFromCache=false,loadingNextChapter=false,loadingPreviousChapter=false,
+                        actionLoading=false,actionMessage=READER_STALE_CHAPTER_MESSAGE)
+                    return@launch
+                }
+                readerState=readerState.copy(chapters=result.toLoadResult("阅读器目录"))
+            }
+            launch {
+                val result=comments.await()
+                if(requestSerial!=readerRequestSerial || !isFreshReaderResult(currentRoute,readerState,bookId,chapterId))return@launch
+                val existing=readerChapterCommentState(readerState,chapterId)
+                readerState=readerState.copy(comments=result.toLoadResult(VisibleUiLabels.ChapterComments),
+                    chapterCommentStates=readerState.chapterCommentStates+(chapterId to existing.copy(
+                        comments=result.toLoadResult(VisibleUiLabels.ChapterComments),bookReferences=if(result.isSuccess)emptyMap()else existing.bookReferences)))
+                result.getOrNull()?.let {loadReaderCommentBookReferences(bookId,chapterId,it,requestSerial)}
+            }
+            launch {
+                val result=favorite.await()
+                if(requestSerial==readerRequestSerial && isFreshReaderResult(currentRoute,readerState,bookId,chapterId))
+                    readerState=readerState.copy(favoriteStatus=result.toLoadResult("收藏状态"))
+            }
             val cached = cachedContent.await()
             // Start showing an already-downloaded body immediately. The network request remains in
             // flight and replaces it when successful, so this is a real offline fallback rather
@@ -5261,7 +5364,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             ) {
                 readerState = readerState.copy(
                     content = LoadResult.Success(cached.content),
-                    chapterContents = chapterWindow(cached.content, cached.content.title),
+                    chapterContents = chapterWindow(cached.content, cached.content.title, fromCache = true),
                     contentFromCache = true,
                 )
             }
@@ -5270,7 +5373,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             // The website retries a politically restricted "no replacement" request using its
             // default India mode. Keep the same recovery path so a selectable mode cannot strand
             // the native reader on an empty error state.
-            if (contentResult.isFailure && requestedReplaceMode.isBlank() &&
+            if (requestSerial==readerRequestSerial && isFreshReaderResult(currentRoute,readerState,bookId,chapterId) &&
+                contentResult.isFailure && requestedReplaceMode.isBlank() &&
                 isReplacementRestriction(contentResult.exceptionOrNull())) {
                 contentResult = runCatching {
                     api.chapterContent(
@@ -5285,7 +5389,21 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     readerSettingsStore.save(readerUiOptions.toReaderSettingsValues())
                 }
             }
-            val contentFromCache = contentResult.isFailure && cached != null
+            val contentFromCache = contentResult.isFailure && cached != null &&
+                com.novalpie.nativeapp.data.readerCacheMayServeFailure(contentResult.exceptionOrNull())
+            val chapterDenied=(contentResult.exceptionOrNull() as? com.novalpie.nativeapp.data.NovalPieApiException)?.statusCode in listOf(401,403,404,410)
+            if (chapterDenied && requestSerial==readerRequestSerial && isFreshReaderResult(currentRoute,readerState,bookId,chapterId)) {
+                // Publish the denial before any disk work, and invalidate speech for this body only.
+                dependencies.stopPlaybackForChapterIfInitialized(bookId,chapterId)
+                readerState=readerStateAfterChapterDenied(readerState,chapterId,contentResult.toLoadResult("阅读器正文") as LoadResult.Error)
+                val persisted=withContext(Dispatchers.IO) {
+                    val requested=cacheStore.revoke(bookId,chapterId,requestedReplaceMode,requestedShowImages)
+                    val effective=effectiveReplaceMode==requestedReplaceMode || cacheStore.revoke(bookId,chapterId,effectiveReplaceMode,requestedShowImages)
+                    requested&&effective
+                }
+                if(!persisted&&requestSerial==readerRequestSerial)readerState=readerState.copy(
+                    actionMessage="章节访问已拒绝；离线保护未能保存，本次不会回退缓存。请联网重试。")
+            }
             if (contentFromCache) contentResult = Result.success(cached!!.content)
             val contentValue = contentResult.getOrNull()
             if (
@@ -5295,48 +5413,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 // Publish the core body first. The directory, chapter comments, and favourite
                 // status are useful secondary panels and must never make a readable chapter look
                 // stuck on a spinner when one auxiliary endpoint is slow or unavailable.
-                readerState = readerStateAfterCoreContent(
+                readerState = if(chapterDenied)readerStateAfterChapterDenied(readerState,chapterId,
+                    contentResult.toLoadResult("阅读器正文") as LoadResult.Error) else readerStateAfterCoreContent(
                     current = readerState,
                     content = contentResult.toLoadResult("阅读器正文"),
-                    chapterContents = contentValue?.let { content -> chapterWindow(content, content.title) }.orEmpty(),
+                    chapterContents = contentValue?.let { content -> chapterWindow(content, content.title, contentFromCache) }.orEmpty(),
                     contentFromCache = contentFromCache,
                 )
-                launch {
-                    val commentsResult = comments.await()
-                    if (
-                        requestSerial == readerRequestSerial &&
-                        isFreshReaderResult(currentRoute, readerState, bookId, chapterId)
-                    ) {
-                        readerState = readerState.copy(
-                            comments = commentsResult.toLoadResult(VisibleUiLabels.ChapterComments),
-                            chapterCommentStates = readerState.chapterCommentStates + (
-                                chapterId to ReaderChapterCommentState(
-                                    comments = commentsResult.toLoadResult(VisibleUiLabels.ChapterComments),
-                                    bookReferences = emptyMap(),
-                                )
-                            ),
-                        )
-                        commentsResult.getOrNull()?.let { commentList ->
-                            loadReaderCommentBookReferences(
-                                bookId = bookId,
-                                chapterId = chapterId,
-                                comments = commentList,
-                                requestSerial = requestSerial,
-                            )
-                        }
-                    }
-                }
-                launch {
-                    val favoriteResult = favorite.await()
-                    if (
-                        requestSerial == readerRequestSerial &&
-                        isFreshReaderResult(currentRoute, readerState, bookId, chapterId)
-                    ) {
-                        readerState = readerState.copy(
-                            favoriteStatus = favoriteResult.toLoadResult("收藏状态"),
-                        )
-                    }
-                }
             }
             val chaptersResult = chapters.await()
             val chapterTitle = chaptersResult.getOrNull()
@@ -5384,21 +5467,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             } else {
                 readerState.chapters
             }
-            val effectiveCatalogWaiting = if (catalogWasSuperseded) {
-                readerState.nextChapterWaitingForCatalog
-            } else {
-                false
-            }
-            val effectiveCatalogExhausted = if (catalogWasSuperseded) {
-                readerState.nextChapterExhausted
-            } else {
-                false
-            }
+            val effectiveCatalogWaiting = readerState.nextChapterWaitingForCatalog
+            val effectiveCatalogExhausted = readerState.nextChapterExhausted
             val cacheChapters = (effectiveChapters as? LoadResult.Success)?.value.orEmpty()
             if (contentValue != null && !contentFromCache) {
                 val sourceUpdatedAt = cacheChapters.firstOrNull { it.id == chapterId }?.updatedAt
                 withContext(Dispatchers.IO) {
-                    readerChapterCacheStore.save(
+                    cacheStore.save(
                         bookId = bookId,
                         chapterId = chapterId,
                         replaceMode = effectiveReplaceMode,
@@ -5412,7 +5487,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 emptyMap()
             } else {
                 withContext(Dispatchers.IO) {
-                    readerChapterCacheStore.cacheStates(
+                    cacheStore.cacheStates(
                         bookId = bookId,
                         replaceMode = effectiveReplaceMode,
                         showImages = requestedShowImages,
@@ -5420,7 +5495,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     )
                 }
             }
-            if (contentResult.isSuccess) {
+            if (requestSerial != readerRequestSerial || !isFreshReaderResult(currentRoute, readerState, bookId, chapterId)) return@launch
+            if (contentResult.isSuccess && (readerState.visibleChapterId ?: chapterId) == chapterId) {
                 val chapterNumber = cacheChapters.takeIf { it.isNotEmpty() }?.let { chapters ->
                     val chapterIndex = chapters.indexOfFirst { it.id == chapterId }
                     if (chapterIndex < 0) {
@@ -5438,15 +5514,13 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                     chapterCountAtLastRead = chapterCountAtLastRead,
                 )
             }
-            readerState = readerState.copy(
-                content = contentResult.toLoadResult("阅读器正文"),
-                chapterContents = contentValue?.let { content -> chapterWindow(content, chapterTitle ?: content.title) }.orEmpty(),
-                chapters = effectiveChapters,
-                nextChapterWaitingForCatalog = effectiveCatalogWaiting,
-                nextChapterExhausted = effectiveCatalogExhausted,
-                chapterCacheStates = cacheStates,
-                contentFromCache = contentFromCache,
-            )
+            val bodyState=if(chapterDenied)readerStateAfterChapterDenied(readerState,chapterId,
+                contentResult.toLoadResult("阅读器正文") as LoadResult.Error) else readerState.copy(
+                    content=contentResult.toLoadResult("阅读器正文"),
+                    chapterContents=contentValue?.let {content->chapterWindow(content,chapterTitle ?: content.title,contentFromCache)}.orEmpty(),
+                    contentFromCache=contentFromCache)
+            readerState=bodyState.copy(chapters=effectiveChapters,nextChapterWaitingForCatalog=effectiveCatalogWaiting,
+                nextChapterExhausted=effectiveCatalogExhausted,chapterCacheStates=cacheStates)
         }
     }
 

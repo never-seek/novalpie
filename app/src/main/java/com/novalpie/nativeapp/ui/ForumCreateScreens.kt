@@ -43,7 +43,8 @@ internal fun ForumCreateScreen(
     state: ForumCreateState,
     onDraftChange: (ForumCreateDraft) -> Unit,
     onSubmit: () -> Unit,
-    onOpenLogin: () -> Unit
+    onOpenLogin: () -> Unit,
+    onOpenLink: (String) -> Unit = {},
 ) {
     val draft = state.draft
     val validation = validateForumCreateDraft(draft, state.isAdmin)
@@ -142,7 +143,7 @@ internal fun ForumCreateScreen(
                 )
             }
             item {
-                ForumMarkdownPreview(draft.content)
+                ForumMarkdownPreview(draft.content,onOpenLink)
             }
             item {
                 ForumTagEditor(
@@ -217,25 +218,13 @@ private fun ForumSelectedCategory(
 }
 
 @Composable
-private fun ForumMarkdownPreview(content: String) {
+private fun ForumMarkdownPreview(content: String,onOpenLink:(String)->Unit) {
     if (content.isBlank()) return
-    val paragraphs = readerParagraphsFromContent(content)
-    val links = forumContentLinks(paragraphs)
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("正文预览", fontWeight = FontWeight.Bold)
             SelectionContainer {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    paragraphs.take(12).forEach { Text(it) }
-                }
-            }
-            if (links.isNotEmpty()) {
-                Text("链接", style = MaterialTheme.typography.labelLarge)
-                links.take(4).forEach { link ->
-                    Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                        Text(link, modifier = Modifier.padding(10.dp), style = MaterialTheme.typography.bodySmall)
-                    }
-                }
+                ForumRichContent(content,MaterialTheme.typography.bodyMedium,onOpenLink,emptyLabel="正文为空")
             }
         }
     }

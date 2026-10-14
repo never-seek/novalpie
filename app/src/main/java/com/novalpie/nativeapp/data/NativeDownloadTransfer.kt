@@ -100,18 +100,18 @@ internal class NativeDownloadControl {
         currentCoroutineContext().ensureActive()
     }
 
-    fun requestDecision(): kotlinx.coroutines.CompletableDeferred<DownloadFailureDecision> {
+    @Synchronized fun requestDecision(): kotlinx.coroutines.CompletableDeferred<DownloadFailureDecision> {
+        decisionDeferred?.takeUnless { it.isCompleted }?.let { return it }
         val deferred = kotlinx.coroutines.CompletableDeferred<DownloadFailureDecision>()
         decisionDeferred = deferred
         return deferred
     }
 
-    fun resolveDecision(decision: DownloadFailureDecision) {
+    @Synchronized fun resolveDecision(decision: DownloadFailureDecision) {
         decisionDeferred?.complete(decision)
-        decisionDeferred = null
     }
 
-    fun cancelDecision() {
+    @Synchronized fun cancelDecision() {
         decisionDeferred?.cancel()
         decisionDeferred = null
     }

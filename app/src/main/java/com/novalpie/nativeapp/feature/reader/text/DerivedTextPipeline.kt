@@ -31,11 +31,32 @@ internal object DerivedTextPipeline {
         return result.toString()
     }
 
-    fun transform(original: String, rules: List<ReaderReplacementRule>, chapterOrder: Int?): DerivedTextResult =
-        transformNodes(original, rules, chapterOrder, 0)
+    fun transform(original:String,rules:List<ReaderReplacementRule>,chapterOrder:Int?):DerivedTextResult {
+        if(rules.isEmpty())return DerivedTextResult(original,original,emptyList())
+        return transformNodes(original,0,true) {text->
+            applyReaderReplacementRules(text,rules,chapterOrder,ReaderReplacementTarget.Content)
+        }
+    }
 
-    private fun transformNodes(original: String, rules: List<ReaderReplacementRule>, chapterOrder: Int?, depth: Int): DerivedTextResult {
-        if (rules.isEmpty()) return DerivedTextResult(original, original, emptyList())
+    /** Original markup/URLs are opaque; output is safely encoded for the same source grammar. */
+    fun transformMarkupTextNodes(original:String,transform:(String)->String):String =
+        transformNodes(original,0,true) {text->com.novalpie.nativeapp.ui.ReaderReplacementApplyResult(transform(text))}.markup
+
+    /** Export formatting escapes the complete result afterwards, so escape replacement text only once. */
+    fun transformLiteralTextNodes(original:String,transform:(String)->String):String =
+        transformNodes(original,0,false) {text->com.novalpie.nativeapp.ui.ReaderReplacementApplyResult(transform(text))}.markup
+
+    /** TXT keeps literal replacement characters in plain sources, but preserves source HTML grammar. */
+    fun transformTxtTextNodes(original:String,transform:(String)->String):String =
+        transformNodes(original,0,htmlTag.containsMatchIn(original),lineBreakAsHtml=false) {text->com.novalpie.nativeapp.ui.ReaderReplacementApplyResult(transform(text))}.markup
+
+    /** Visit source structure before visible Markdown formatting, never exposing attributes to rules. */
+    fun renderSourceTextNodes(original:String,renderText:(String)->String,renderProtected:(String)->String):String =
+        transformNodes(original,0,false,renderProtected) {text->com.novalpie.nativeapp.ui.ReaderReplacementApplyResult(renderText(text))}.markup
+
+    private fun transformNodes(original:String,depth:Int,encodeMarkup:Boolean,
+        renderProtected:(String)->String={it},lineBreakAsHtml:Boolean=encodeMarkup,
+        transform:(String)->com.novalpie.nativeapp.ui.ReaderReplacementApplyResult):DerivedTextResult {
         val html = htmlTag.containsMatchIn(original)
         val result = StringBuilder(original.length)
         val invalid = linkedSetOf<String>()
@@ -46,16 +67,15 @@ internal object DerivedTextPipeline {
             if (until <= cursor) return
             val source = original.substring(cursor, until)
             val decoded = decodeEntities(source)
-            val applied = applyReaderReplacementRules(decoded, rules, chapterOrder, ReaderReplacementTarget.Content)
+            val applied = transform(decoded)
             invalid += applied.invalidRuleIds
             if (applied.text == decoded) {
                 result.append(source)
             } else {
                 val withBreaks = breakTag.replace(applied.text, "\n")
-                val safe = if (html || decoded != source || htmlTag.containsMatchIn(withBreaks)) {
-                    escapeMarkupText(withBreaks)
-                } else withBreaks
-                result.append(if (html) safe.replace("\n", "<br/>") else safe)
+                val safe = if(encodeMarkup&&(html||decoded!=source||htmlTag.containsMatchIn(withBreaks)))
+                    escapeMarkupText(withBreaks) else withBreaks
+                result.append(if(lineBreakAsHtml&&html)safe.replace("\n","<br/>")else safe)
             }
         }
 
@@ -88,9 +108,9 @@ internal object DerivedTextPipeline {
                         if (closeUrl != null) {
                             protectedEnd = closeUrl + 1
                             if (!image && depth < 8) {
-                                val label = transformNodes(original.substring(openLabel + 1, closeLabel), rules, chapterOrder, depth + 1)
+                                val label = transformNodes(original.substring(openLabel + 1, closeLabel),depth+1,encodeMarkup,renderProtected,lineBreakAsHtml,transform)
                                 invalid += label.invalidRuleIds
-                                transformedLink = "[${label.markup}]" + original.substring(closeLabel + 1, protectedEnd)
+                                transformedLink = "[${label.markup}]" + renderProtected(original.substring(closeLabel + 1,protectedEnd))
                             }
                         }
                     }
@@ -102,7 +122,7 @@ internal object DerivedTextPipeline {
 
             if (protectedEnd != null) {
                 appendText(index)
-                result.append(transformedLink ?: original.substring(index, protectedEnd))
+                result.append(transformedLink ?: renderProtected(original.substring(index,protectedEnd)))
                 cursor = protectedEnd
                 index = protectedEnd
             } else index++

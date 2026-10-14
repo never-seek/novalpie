@@ -29,6 +29,14 @@ internal fun libraryOverview(
     )
 )
 
+/** Never confuse a loaded page index with the source total-page count. */
+internal fun libraryOverviewForState(hasAuthToken:Boolean,state:HomeState):LibraryOverview=libraryOverview(
+    hasAuthToken=hasAuthToken,
+    favoriteCount=state.favoriteTotal ?: (state.favoriteEntries as? com.novalpie.nativeapp.model.LoadResult.Success)?.value?.size,
+    groupCount=(state.groups as? com.novalpie.nativeapp.model.LoadResult.Success)?.value?.size,
+    recentCount=state.historyTotal ?: (state.history as? com.novalpie.nativeapp.model.LoadResult.Success)?.value?.size,
+    pageCount=state.favoriteTotalPages)
+
 /** A paged shelf must report the source total, never merely the currently rendered page size. */
 internal fun collectionFavoriteCount(sourceTotal: Int?, loadedCount: Int): Int =
     sourceTotal?.coerceAtLeast(0) ?: loadedCount.coerceAtLeast(0)

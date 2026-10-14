@@ -73,6 +73,7 @@ data class ReaderChapterContent(
     val chapterId: Long,
     val title: String?,
     val content: ReaderContent,
+    val fromCache: Boolean = false,
 )
 
 /** A source-compatible reader tap zone. Width accepts values such as `30%` or `200px`. */
@@ -732,7 +733,8 @@ data class UploadChapter(
     val hierarchyLevel: Int = 0,
     val sectionPath: List<String> = emptyList(),
     val rawPath: String? = null,
-    val spineIndex: Int? = null
+    val spineIndex: Int? = null,
+    val epubSource: EpubChapterSource? = null
 )
 
 data class ParsedEpub(
@@ -741,7 +743,8 @@ data class ParsedEpub(
     val description: String = "",
     val language: String = "zh",
     val chapters: List<UploadChapter> = emptyList(),
-    val epubFilePath: String? = null
+    val epubFilePath: String? = null,
+    val epubBundle: EpubDocumentBundle? = null
 )
 
 data class UploadBookRequest(
@@ -775,7 +778,8 @@ data class EditorBookMetadata(
     val tags: String = "",
     val isAdult: Boolean = false,
     val source: String = "",
-    val sourceUrl: String = ""
+    val sourceUrl: String = "",
+    val epubBundles: List<EpubDocumentBundle> = emptyList()
 )
 
 data class EditorArchive(
@@ -860,7 +864,9 @@ data class ForumPost(
     val tags: List<String> = emptyList(),
     val pinned: Boolean = false,
     val featured: Boolean = false,
-    val authorId: Long? = null
+    val authorId: Long? = null,
+    /** Source markup for native previews; excerpt remains the legacy plain summary contract. */
+    val richExcerpt: String? = null,
 )
 
 /**
@@ -923,8 +929,15 @@ data class ForumComment(
     val awardPoints: Int? = null,
     val replyCount: Int? = null,
     val createdAt: String? = null,
-    val authorId: Long? = null
-)
+    val authorId: Long? = null,
+    val helpfulCount:Int?=null,
+    val notHelpfulCount:Int?=null,
+    val funnyCount:Int?=null,
+) {
+    val displayLikeCount:Int? get()=helpfulCount ?: likeCount
+    val displayDislikeCount:Int? get()=notHelpfulCount ?: dislikeCount
+    val displayReactionCount:Int? get()=funnyCount ?: reactionCount
+}
 
 data class ChapterComment(
     val id: Long,
@@ -944,8 +957,16 @@ data class ChapterComment(
     val awardPoints: Int? = null,
     val replyCount: Int? = null,
     val createdAt: String? = null,
-    val authorId: Long? = null
-)
+    val authorId: Long? = null,
+    val helpfulCount:Int?=null,
+    val notHelpfulCount:Int?=null,
+    val funnyCount:Int?=null,
+) {
+    // Legacy aggregates retain their API meaning. Native icons always consume the specific bucket.
+    val displayLikeCount:Int? get()=helpfulCount ?: likeCount
+    val displayDislikeCount:Int? get()=notHelpfulCount ?: dislikeCount
+    val displayReactionCount:Int? get()=funnyCount ?: reactionCount
+}
 
 data class ForumActionResult(
     val success: Boolean,

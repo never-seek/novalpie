@@ -81,11 +81,15 @@ internal class SearchViewModel(
         viewMode=if(state.options.viewMode==SearchViewMode.Grid) SearchViewMode.List else SearchViewMode.Grid,
     )).also { saveScroll(0,0) }
     fun toggleCache() = updateOptions(state.options.copy(cacheEnabled=!state.options.cacheEnabled))
+    fun saveConditions() {
+        // An explicit Save must also work after opting out of automatic retention.
+        val next=state.options.copy(cacheEnabled=true)
+        preferences.save(next.persisted())
+        state=state.copy(options=next)
+    }
     fun clearOptions() {
-        invalidate()
+        // Delete the persisted snapshot, not the user's live query, tags, viewport or request.
         preferences.clearOptions()
-        state=state.copy(options=SearchOptions(cacheEnabled=state.options.cacheEnabled),results=LoadResult.Idle,page=1,envelope=null,pageError=null,scroll=GridScrollPosition())
-        if (visible) submit()
     }
     fun clearHistory() { preferences.clearHistory(); state=state.copy(history=emptyList()) }
     fun openTarget(target: BookDetailSearchTarget) {

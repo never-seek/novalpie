@@ -324,7 +324,8 @@ internal class EditorViewModel(private val repository: EditorRepository, scope: 
                         cursorPosition = 0,
                         fileName = loaded.document.displayName,
                         files = (uploadEditorState.files + loaded.document).distinctBy(UploadDocument::uri),
-                        metadata = if (uploadEditorState.metadata == before.metadata) loaded.metadata else uploadEditorState.metadata,
+                        metadata = (if(uploadEditorState.metadata==before.metadata)loaded.metadata else uploadEditorState.metadata)
+                            .copy(epubBundles=loaded.metadata.epubBundles),
                         chapters = loaded.chapters,
                         markerValidationErrors = emptyList(),
                         selectedTab = if (loaded.chapters.isEmpty()) EditorTab.Text else EditorTab.Chapters,
@@ -368,6 +369,7 @@ internal class EditorViewModel(private val repository: EditorRepository, scope: 
                         cursorPosition = 0,
                         fileName = fileName,
                         chapters = chapters,
+                        metadata=uploadEditorState.metadata.copy(epubBundles=(uploadEditorState.metadata.epubBundles+chapters.mapNotNull{it.epubSource?.bundle}).distinctBy{it.id}),
                         markerValidationErrors = emptyList(),
                         selectedTab = EditorTab.Chapters,
                         busy = false,

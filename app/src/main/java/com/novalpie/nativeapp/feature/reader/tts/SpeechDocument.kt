@@ -7,7 +7,7 @@ import com.novalpie.nativeapp.ui.readerBlocksForDisplay
 import com.novalpie.nativeapp.ui.readerTtsSegments
 import com.novalpie.nativeapp.feature.reader.text.readerSpokenTextRange
 
-internal data class SpeechTextPosition(val blockId:String,val itemIndexWithinChapter:Int,val textOffset:Int)
+internal data class SpeechTextPosition(val blockId:String,val itemIndexWithinChapter:Int,val textOffset:Int,val sourceText:String?=null)
 
 /** Shared by initial foreground playback and background continuation, without ever voicing images. */
 internal fun buildSpeechChapter(
@@ -26,7 +26,7 @@ internal fun buildSpeechChapter(
                 val range=readerSpokenTextRange(block.value.substring(searchFrom),segment)
                 val start=range?.first?.plus(searchFrom) ?: searchFrom
                 segments+=segment
-                positions+=SpeechTextPosition("$chapterId:p:$blockIndex",itemIndex,start)
+                positions+=SpeechTextPosition("$chapterId:p:$blockIndex",itemIndex,start,block.value)
                 searchFrom=range?.last?.plus(searchFrom)?.plus(1) ?: start
             }
             itemIndex++

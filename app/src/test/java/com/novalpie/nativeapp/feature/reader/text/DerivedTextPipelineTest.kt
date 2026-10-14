@@ -61,4 +61,15 @@ class DerivedTextPipelineTest {
     @Test fun comparisonSymbolsAreNotMisclassifiedAsHtmlTags() {
         assertEquals("2 < 3 and five > 3",DerivedTextPipeline.transform("2 < 3 and 4 > 3",listOf(rule("4","five")),1).markup)
     }
+
+    @Test fun callbackScannerUsesTheSameProtectedNodeContractAsReaderRules() {
+        val source="<p title='Alice'>Alice [Alice](https://host/Alice)</p><!-- Alice -->[图片: https://host/Alice.png]"
+        val rules=listOf(rule("Alice","Bob"))
+        val callback=DerivedTextPipeline.transformMarkupTextNodes(source){DerivedTextPipeline.transformVisibleText(it,rules,1)}
+        assertEquals(DerivedTextPipeline.transform(source,rules,1).markup,callback)
+    }
+    @Test fun literalMappingLeavesOutputMarkupLiteralForTheFinalXmlEncoder() {
+        val raw="<p title='Alice'>Alice</p>"
+        assertEquals("<p title='Alice'><img src='fake'></p>",DerivedTextPipeline.transformLiteralTextNodes(raw){it.replace("Alice","<img src='fake'>")})
+    }
 }

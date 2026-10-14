@@ -38,6 +38,8 @@ data class ReaderSettingsValues(
     /** When disabled, Android keeps hardware volume keys for the system stream. */
     val volumeKeyPageTurn: Boolean = true,
     val tapAreas: List<ReaderTapArea> = emptyList(),
+    /** -1 follows the system; positive values affect only the reader window. */
+    val brightness: Float = -1f,
 )
 
 class ReaderSettingsStore(context: Context) {
@@ -113,11 +115,13 @@ class ReaderSettingsStore(context: Context) {
                 .orEmpty().takeIf { it in SUPPORTED_PAGE_TURN_EFFECTS } ?: "fade",
             volumeKeyPageTurn = prefs.getBoolean(KEY_VOLUME_KEY_PAGE_TURN, true),
             tapAreas = loadTapAreas(defaultTapAreas),
+            brightness = com.novalpie.nativeapp.ui.normalizeReaderBrightness(prefs.getFloat("reader_brightness",-1f)),
         )
     }
 
     fun save(values: ReaderSettingsValues) {
         prefs.edit()
+            .putFloat("reader_brightness",com.novalpie.nativeapp.ui.normalizeReaderBrightness(values.brightness))
             .putInt(KEY_FONT_SIZE_SP, values.fontSizeSp.coerceIn(MIN_FONT_SIZE_SP, MAX_FONT_SIZE_SP))
             .putFloat(KEY_LINE_HEIGHT, values.lineHeight.coerceIn(MIN_LINE_HEIGHT, MAX_LINE_HEIGHT))
             .putString(KEY_FONT_FAMILY, values.fontFamily.takeIf(ReaderFontStore::isSupportedFamily) ?: DEFAULT_FONT_FAMILY)

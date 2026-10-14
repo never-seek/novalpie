@@ -29,14 +29,15 @@ internal class ReaderDocumentPreparer(
                 val order = readerChapterOrderForId(source.chapterId, catalog)
                 val contentRules = readerReplacementRulesForChapter(rules, order, ReaderReplacementTarget.Content)
                 val titleRules = readerReplacementRulesForChapter(rules, order, ReaderReplacementTarget.Title)
-                val key = Key(bookId, source, order.takeIf { contentRules.isNotEmpty() || titleRules.isNotEmpty() }, contentRules, titleRules, options.removeDuplicateLines)
-                cache[key] ?: run {
+                val key = Key(bookId, source.copy(fromCache=false), order.takeIf { contentRules.isNotEmpty() || titleRules.isNotEmpty() }, contentRules, titleRules, options.removeDuplicateLines)
+                val layout=cache[key] ?: run {
                     val derived = effectiveReaderChapterContent(source, order, rules)
                     val layout = ReaderBodyLayoutChapter(derived, readerBlocksForDisplay(parse(derived.content), options.removeDuplicateLines))
                     currentCoroutineContext().ensureActive()
                     cache[key] = layout
                     layout
                 }
+                if(layout.chapter.fromCache==source.fromCache)layout else layout.copy(chapter=layout.chapter.copy(fromCache=source.fromCache))
             }
             // Evict after all current-window hits update LRU order. Prepending a chapter must not
             // evict the very next unchanged chapter and cascade into reparsing the entire window.

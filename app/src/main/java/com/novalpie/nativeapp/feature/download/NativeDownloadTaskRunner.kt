@@ -22,10 +22,11 @@ import java.util.concurrent.ConcurrentHashMap
 internal class NativeDownloadTaskRunner(
     context:Context,
     private val api:NovalPieApi,
-    private val publish:suspend (DownloadTask,File,suspend()->Unit)->String = AndroidDownloadPublisher(context)::publish,
+    private val publish:(suspend (DownloadTask,File,suspend()->Unit)->String)? = null,
 ):DownloadTaskRunner {
     private val app=context.applicationContext
     private val root=File(app.noBackupFilesDir,"download-work")
+    private val platformPublisher=AndroidDownloadPublisher(app)
 
     suspend fun run(
         task: DownloadTask,
@@ -43,6 +44,8 @@ internal class NativeDownloadTaskRunner(
         val work=File(root,task.id).canonicalFile
         require(work.parentFile==root.canonicalFile)
         if(!work.isDirectory&&!work.mkdirs())throw IOException("无法创建下载任务目录")
+        // These generated non-resumable fragments belong only to this validated task directory.
+        work.listFiles().orEmpty().filter { it.isFile && (it.name.startsWith("source-")||it.name.startsWith("novalpie-txt-preamble-")) && it.extension == "part" }.forEach(File::delete)
         val current=AtomicReference(task)
         // Locks are task-scoped; completing many downloads must not retain all historical URLs.
         val resourceLocks=ConcurrentHashMap<String,Mutex>()
@@ -51,6 +54,28 @@ internal class NativeDownloadTaskRunner(
             checkpoint(update, log, awaitingDecision)
         }
         control.awaitIfPaused()
+        val publicationReceipt=DownloadPublicationJournal(app,task.id,"runner")
+        val previousPublication=publicationReceipt.readJson()
+        if(previousPublication!=null) {
+            val completed=restorePublication(task,previousPublication)
+            if(publish==null) {
+                val uri=platformPublisher.recoverPublished(task,control::awaitIfPaused)
+                    ?: throw IOException("已发布文件的归属无法确认，原记录已保留；不会重复生成")
+                if(uri!=completed.destinationUri)throw IOException("下载发布地址与完成记录不一致")
+            }
+            save(completed,"已恢复已发布文件，不重复下载或保存")
+            if(work.canonicalFile.parentFile==root.canonicalFile)work.deleteRecursively()
+            return@withContext completed
+        }
+        if(publish==null)platformPublisher.recoverPublished(task,control::awaitIfPaused)?.let {uri->
+            // Destination committed before the runner could save its own completion receipt.
+            val published=task.copy(phase=DownloadPhase.Completed,destinationUri=uri,failure=null,updatedAt=System.currentTimeMillis())
+            val platform=DownloadPublicationJournal(app,task.id).read(task) ?: throw IOException("下载发布检查点无法确认")
+            publicationReceipt.saveJson(completionPublication(published,PublicationFingerprint(platform.bytes,platform.sha256)))
+            save(published,"已恢复已发布文件，不重复下载或保存")
+            if(work.canonicalFile.parentFile==root.canonicalFile)work.deleteRecursively()
+            return@withContext published
+        }
         if(task.applyReplacement&&task.replacementSnapshot==null) {
             val store=ReaderReplacementRulesStore(app)
             val personal=mergeReaderReplacementPersonalRules(store.loadPersonalRules(task.bookId),api.personalGlossaries(task.bookId))
@@ -61,7 +86,31 @@ internal class NativeDownloadTaskRunner(
                 hiddenSharedRuleIds=store.loadHiddenSharedRuleIds(task.bookId),sharedRulesEnabledOverride=enabled))
             save(current.get().copy(replacementSnapshot=snapshot))
         }
-        val metadata=runCatching{api.bookDetail(task.bookId)}.getOrNull()
+        suspend fun confirmIntegrity(issues:List<DownloadIntegrityIssue>):Boolean {
+            val merged=(current.get().integrityIssues+issues).distinctBy{it.key}
+            val pending=issues.filter{it.key !in current.get().acknowledgedIntegrityKeys}
+            if(pending.isEmpty()){save(current.get().copy(integrityIssues=merged));return true}
+            if(!checkpoint.supportsUserDecisions)throw DownloadIntegrityConfirmationRequired(pending)
+            val decision=control.requestDecision()
+            save(current.get().copy(integrityIssues=merged,integrityDecisionPending=true),
+                "完整性提示："+pending.joinToString("；"){it.message}+"。请重试或确认保留原文继续。",awaitingDecision=true)
+            val answer=try{decision.await()}finally{control.cancelDecision()}
+            save(current.get().copy(integrityDecisionPending=false,
+                acknowledgedIntegrityKeys=if(answer==DownloadFailureDecision.PackageAnyway)current.get().acknowledgedIntegrityKeys+pending.map{it.key}else current.get().acknowledgedIntegrityKeys),
+                if(answer==DownloadFailureDecision.PackageAnyway)"已确认保留原文，完整性提示会随文件保留"else "已选择重试读取来源",awaitingDecision=false)
+            return answer==DownloadFailureDecision.PackageAnyway
+        }
+        suspend fun clearIssue(code:DownloadIntegrityCode) {
+            save(current.get().copy(integrityIssues=current.get().integrityIssues.filterNot{it.code==code}))
+        }
+        var metadata=if(task.format==DownloadFormat.Epub)downloadAttempt{api.bookDetail(task.bookId)}.getOrNull()else null
+        if(task.format==DownloadFormat.Epub) {
+            while(metadata==null) {
+                if(confirmIntegrity(listOf(DownloadIntegrityIssue(DownloadIntegrityCode.MetadataUnavailable))))break
+                control.awaitIfPaused();metadata=downloadAttempt{api.bookDetail(task.bookId)}.getOrNull()
+            }
+            if(metadata!=null)clearIssue(DownloadIntegrityCode.MetadataUnavailable)
+        }
         var ticket=current.get().authorizationFile
         if(ticket==null) {
             if(!current.get().mayAuthorizeAgain)throw IOException("上次授权结果未确认，请核对下载记录后再新建任务，避免重复扣分")
@@ -73,15 +122,23 @@ internal class NativeDownloadTaskRunner(
         }
         val source=File(work,"source.txt")
         val sourceComplete=File(work,"source.complete")
-        val sourceWasReused=source.isFile&&sourceComplete.isFile&&JSONObject(sourceComplete.readText()).optString("sha256")==fileDigest(source)
+        runCatching { OwnedAtomicFile(source).openRead().close() }
+        val sourceReceipt = runCatching { OwnedAtomicFile(sourceComplete).openRead().bufferedReader().use { JSONObject(it.readText()) } }.getOrNull()
+        val sourceWasReused=source.isFile && sourceReceipt != null && sourceReceipt.optString("sha256")==fileDigest(source)
         if(!sourceWasReused) {
             save(current.get().copy(phase=DownloadPhase.Transferring), "正在下载小说正文...")
             val part=File.createTempFile("source-",".part",work)
+            try {
             part.outputStream().use {output->api.streamDownloadFile(ticket!!){input->copyNativeDownloadStream(input,output,control::awaitIfPaused)}}
             if(part.length()==0L)throw IOException("下载内容为空")
-            if(source.exists()&&!source.delete())throw IOException("无法覆盖已存在的正文检查点")
-            if(!part.renameTo(source))throw IOException("无法保存下载正文检查点")
-            sourceComplete.writeText(JSONObject().put("bytes",source.length()).put("sha256",fileDigest(source)).toString())
+            val atomic = OwnedAtomicFile(source)
+            val stream = atomic.startWrite()
+            try {
+                part.inputStream().use { copyNativeDownloadStream(it, stream, control::awaitIfPaused) }
+                atomic.finishWrite(stream)
+            } catch (error: Throwable) { atomic.failWrite(stream); throw error }
+            writeReceipt(sourceComplete, JSONObject().put("bytes",source.length()).put("sha256",fileDigest(source)).toString())
+            } finally { part.delete() }
             save(current.get(), "正文下载完成，开始解析章节...")
         }
         control.awaitIfPaused()
@@ -91,6 +148,7 @@ internal class NativeDownloadTaskRunner(
         val sourceDigest=JSONObject(sourceComplete.readText()).getString("sha256")
         val reusePackage=packageCheckpoint.reusable(current.get(),finished,sourceDigest,control) ||
             (sourceWasReused&&packageCheckpoint.adoptVerifiedLegacy(current.get(),finished,sourceDigest,control))
+        if(reusePackage)save(current.get().copy(integrityIssues=packageCheckpoint.integrityIssuesForReuse(task)))
         if(!reusePackage) {
         save(current.get().copy(phase=DownloadPhase.Packaging), "正在生成章节文本...")
         var lastProgress=NativeEpubExportProgress()
@@ -101,7 +159,7 @@ internal class NativeDownloadTaskRunner(
                 else source.reader(Charsets.UTF_8).use {reader->output.writer(Charsets.UTF_8).use {writer->
                     NativeEpubArchiveWriter.writeTransformedTxt(writer,reader,{number,title,body->
                         transformed.transform(number,title,body).toNativeDownloadText()
-                    },control::awaitIfPaused)
+                    },control::awaitIfPaused,preambleDirectory=work)
                 }}
             }
         } else {
@@ -110,23 +168,27 @@ internal class NativeDownloadTaskRunner(
             val reconcilerDir=File(work,"image-reconciliation").apply{mkdirs()}
             var imageCatalog: List<com.novalpie.nativeapp.model.Chapter>? = null
             val catalogLock = Mutex()
-            val imageReconciler = TaskExportImageReconciler(reconcilerDir) { number ->
+            val reconciliationIssues=ConcurrentHashMap<String,DownloadIntegrityIssue>()
+            val imageReconciler=TaskExportImageReconciler(reconcilerDir,onIssue={issue->reconciliationIssues[issue.key]=issue}) { number ->
                 control.awaitIfPaused()
                 val catalog = catalogLock.withLock { imageCatalog ?: api.chapters(task.bookId).also { imageCatalog = it } }
                 val matching = catalog.filter { it.number == number }
-                val chapter = matching.singleOrNull() ?: catalog.getOrNull(number - 1) ?: catalog.firstOrNull { it.number == number }
-                if (chapter == null) emptyList()
-                else try {
-                    com.novalpie.nativeapp.ui.readerBlocksForContent(api.chapterContent(chapter.id, showImages = true))
-                        .filterIsInstance<com.novalpie.nativeapp.ui.ReaderContentBlock.Image>().map { it.originalUrl ?: it.url }
-                } catch (_: Throwable) {
-                    emptyList()
-                }
+                val chapter=matching.singleOrNull() ?: catalog.getOrNull(number-1)?.takeIf {catalog.all{it.number==null}}
+                    ?: throw IOException("无法唯一匹配第${number}章图源，未按列表下标猜测")
+                com.novalpie.nativeapp.ui.readerBlocksForContent(api.chapterContent(chapter.id,showImages=true))
+                    .filterIsInstance<com.novalpie.nativeapp.ui.ReaderContentBlock.Image>().map{it.originalUrl ?: it.url}
             }
-            val sourceOnlyImages = source.reader(Charsets.UTF_8).use { reader ->
-                imageReconciler.prepare(reader, task.requestedConcurrency, control::awaitIfPaused)
-            }
-            save(current.get().copy(sourceOnlyImages = sourceOnlyImages), "开始生成 EPUB（下载插图并打包）...")
+            var sourceOnlyImages:Int
+            do {
+                reconciliationIssues.clear()
+                sourceOnlyImages=source.reader(Charsets.UTF_8).use {reader->imageReconciler.prepare(reader,task.requestedConcurrency,control::awaitIfPaused)}
+                val latest=reconciliationIssues.values.sortedBy{it.chapter ?: 0}
+                save(current.get().copy(sourceOnlyImages=sourceOnlyImages,
+                    integrityIssues=current.get().integrityIssues.filter{it.code==DownloadIntegrityCode.MetadataUnavailable}+latest))
+                val confirmed=if(latest.isEmpty())true else confirmIntegrity(latest)
+                if(!confirmed) {imageReconciler.retryUnverified();imageCatalog=null}
+            }while(!confirmed)
+            save(current.get(),"开始生成 EPUB（下载插图并打包）...")
             val downloadSettings = DownloadSettingsStore(app).load()
 
             var continueToPublish = false
@@ -136,16 +198,17 @@ internal class NativeDownloadTaskRunner(
                 var passFailedImages = 0
                 var passFailedCover = false
                 save(current.get(), "正在处理图片并打包...")
-                val bookDetail = metadata ?: runCatching { api.bookDetail(task.bookId) }.getOrNull()
+                val bookDetail = metadata ?: downloadAttempt {api.bookDetail(task.bookId)}.getOrNull()
+                if(bookDetail!=null&&metadata==null){metadata=bookDetail;clearIssue(DownloadIntegrityCode.MetadataUnavailable)}
                 val primaryCover = bookDetail?.fullCoverUrl?.trim()?.takeIf { it.isNotBlank() }
                     ?: bookDetail?.coverUrl?.trim()?.takeIf { it.isNotBlank() }
-                    ?: runCatching { api.bookCoverPhoto(task.bookId) }.getOrNull()
+                    ?: downloadAttempt {api.bookCoverPhoto(task.bookId)}.getOrNull()
 
                 val fallbackCovers = buildList {
                     bookDetail?.coverUrl?.trim()?.takeIf { it.isNotBlank() && it != primaryCover }?.let(::add)
                     bookDetail?.fullCoverUrl?.trim()?.takeIf { it.isNotBlank() && it != primaryCover }?.let(::add)
                     if (primaryCover == null) {
-                        runCatching { api.bookCoverPhoto(task.bookId) }.getOrNull()?.let(::add)
+                        downloadAttempt {api.bookCoverPhoto(task.bookId)}.getOrNull()?.let(::add)
                     }
                 }.distinct()
 
@@ -197,14 +260,22 @@ internal class NativeDownloadTaskRunner(
                             }
                         })
                 }}
+                val latestIntegrity=reconciliationIssues.values.sortedBy{it.chapter ?: 0}
                 save(current.get().copy(completedChapters=lastProgress.completedChapters,completedAssets=lastProgress.completedImages,
-                    totalChapters=lastProgress.totalChapters,totalAssets=lastProgress.totalImages,failedAssets=passFailedImages))
+                    totalChapters=lastProgress.totalChapters,totalAssets=lastProgress.totalImages,failedAssets=passFailedImages,
+                    integrityIssues=current.get().integrityIssues.filter{it.code==DownloadIntegrityCode.MetadataUnavailable}+latestIntegrity))
+                if(latestIntegrity.isNotEmpty()&&!confirmIntegrity(latestIntegrity)) {
+                    imageReconciler.retryUnverified();reconciliationIssues.clear();imageCatalog=null
+                    if(finished.exists())finished.delete()
+                    continue
+                }
 
                 if (passFailedImages == 0) {
                     continueToPublish = true
                 } else {
+                    val pendingDecision = control.requestDecision()
                     save(current.get(), "图片处理完成，其中 $passFailedImages 张失败。请选择：换网络重试或直接打包。", awaitingDecision = true)
-                    val decision = control.requestDecision().await()
+                    val decision = try { pendingDecision.await() } finally { control.cancelDecision() }
                     if (decision == DownloadFailureDecision.PackageAnyway) {
                         save(current.get(), "已选择直接打包（缺图处保留占位）...", awaitingDecision = false)
                         continueToPublish = true
@@ -216,17 +287,53 @@ internal class NativeDownloadTaskRunner(
             }
         }
         if(!finished.isFile||finished.length()==0L)throw IOException("下载生成结果为空")
+        if(current.get().integrityIssues.any{it.key !in current.get().acknowledgedIntegrityKeys})
+            throw DownloadIntegrityConfirmationRequired(current.get().integrityIssues.filter{it.key !in current.get().acknowledgedIntegrityKeys})
         packageCheckpoint.record(current.get(),finished,sourceDigest,control)
         }
         save(current.get().copy(phase=DownloadPhase.Saving), "正在保存文件到系统存储...")
-        val destination=publish(current.get(),finished,control::awaitIfPaused)
+        val fingerprint=packageCheckpoint.publicationFingerprint(current.get(),finished,sourceDigest)
+        // Reject an unsupported receipt before creating any destination. Reserve ample URI space.
+        publicationReceipt.validateJsonSize(completionPublication(current.get().copy(destinationUri="x".repeat(8192)),fingerprint))
+        val destination=if(publish!=null)publish.invoke(current.get(),finished,control::awaitIfPaused)
+            else platformPublisher.publishVerified(current.get(),finished,fingerprint,control::awaitIfPaused)
         val completed=current.get().copy(phase=DownloadPhase.Completed,destinationUri=destination,failure=null,updatedAt=System.currentTimeMillis())
-        save(completed, "EPUB 打包完成，已保存！")
+        // Independent receipt closes the completed-checkpoint failure window, including after work cleanup.
+        publicationReceipt.saveJson(completionPublication(completed,fingerprint))
+        save(completed,if(completed.integrityIssues.isEmpty())"${task.format.name.uppercase()} 打包完成，已保存！"
+            else "${task.format.name.uppercase()} 文件已保存，仍有完整性提示，请查看")
         // The canonical target was validated against the private task root above. No other task
         // or downloaded user file is eligible for cleanup here.
         if(work.canonicalFile.parentFile==root.canonicalFile)work.deleteRecursively()
         completed
     }
+
+    private fun completionPublication(task:DownloadTask,fingerprint:PublicationFingerprint):JSONObject=JSONObject()
+        .put("schema",1).put("task",task.id).put("account",task.accountId).put("book",task.bookId).put("format",task.format.name)
+        .put("created",task.createdAt).put("rules",publicationRuleHash(task)).put("bytes",fingerprint.bytes).put("sha256",fingerprint.sha256)
+        .put("uri",task.destinationUri).put("chapters",task.completedChapters).put("assets",task.completedAssets)
+        .put("totalChapters",task.totalChapters).put("totalAssets",task.totalAssets).put("failedAssets",task.failedAssets)
+        .put("sourceOnlyImages",task.sourceOnlyImages).put("updated",task.updatedAt)
+        .put("integrityIssues",DownloadIntegrityJson.encode(task.integrityIssues))
+        .put("integrityAccepted",org.json.JSONArray(task.acknowledgedIntegrityKeys.toList()))
+    private fun restorePublication(task:DownloadTask,data:JSONObject):DownloadTask=try {
+        require(data.getInt("schema")==1&&data.getString("task")==task.id&&data.getLong("account")==task.accountId&&
+            data.getLong("book")==task.bookId&&data.getString("format")==task.format.name&&data.getLong("created")==task.createdAt&&
+            data.getString("rules")==publicationRuleHash(task))
+        require(data.getLong("bytes")>0&&data.getString("sha256").matches(Regex("[a-f0-9]{64}")))
+        val uri=data.getString("uri");require(uri.isNotBlank())
+        task.copy(phase=DownloadPhase.Completed,destinationUri=uri,failure=null,
+            completedChapters=data.getInt("chapters"),completedAssets=data.getInt("assets"),
+            totalChapters=data.getInt("totalChapters"),totalAssets=data.getInt("totalAssets"),failedAssets=data.getInt("failedAssets"),
+            sourceOnlyImages=data.getInt("sourceOnlyImages"),updatedAt=data.getLong("updated"),
+            integrityIssues=DownloadIntegrityJson.decode(data.optJSONArray("integrityIssues")),
+            acknowledgedIntegrityKeys=data.optJSONArray("integrityAccepted")?.let{a->(0 until a.length()).map{a.getString(it)}.toSet()}.orEmpty(),
+            integrityDecisionPending=false)
+    }catch(error:Exception){throw IOException("下载完成记录与本任务不一致，原文件已保留；不会重复发布",error)}
+
+    private suspend fun <T> downloadAttempt(block:suspend()->T):Result<T> = try {Result.success(block())}
+        catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled}
+        catch(error:Exception){Result.failure(error)}
 
     internal suspend fun openResource(root:File,url:String,control:NativeDownloadControl,resourceLocks:ConcurrentHashMap<String,Mutex>):NativeEpubAsset {
         val key=MessageDigest.getInstance("SHA-256").digest(url.toByteArray()).joinToString(""){"%02x".format(it)}
@@ -255,6 +362,12 @@ internal class NativeDownloadTaskRunner(
         } finally {part.delete()}
     }
     private fun File.readTextOrNull():String?=if(isFile)runCatching{readText()}.getOrNull() else null
+    private fun writeReceipt(file: File, text: String) {
+        val atomic = OwnedAtomicFile(file)
+        val stream = atomic.startWrite()
+        try { stream.write(text.toByteArray(Charsets.UTF_8)); atomic.finishWrite(stream) }
+        catch (error: Throwable) { atomic.failWrite(stream); throw error }
+    }
     private fun fileDigest(file:File):String {
         val digest=MessageDigest.getInstance("SHA-256")
         file.inputStream().use{input->val buffer=ByteArray(64*1024);while(true){val n=input.read(buffer);if(n<0)break;if(n>0)digest.update(buffer,0,n)}}

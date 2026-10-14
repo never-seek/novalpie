@@ -33,10 +33,15 @@ internal fun PagedChapterCanvas(
     textColor: Color,
     modifier: Modifier = Modifier,
     highlightText: String? = null,
+    highlightFocus:com.novalpie.nativeapp.feature.reader.tts.ReaderSpeechFocus?=null,
+    variant:com.novalpie.nativeapp.model.ChineseVariant=com.novalpie.nativeapp.model.ChineseVariant.Original,
+    wordSpacing:Float=0f,
     image: @Composable (ChapterDocumentBlock.Image, Modifier) -> Unit,
 ) {
     val page = measured.plan.pages[pageIndex.coerceIn(measured.plan.pages.indices)]
     val density = LocalDensity.current
+    val focus=highlightFocus ?: highlightText?.let {com.novalpie.nativeapp.feature.reader.tts.ReaderSpeechFocus(measured.document.chapterId,it,null)}
+    val highlightAnchor=focus?.let {readerAnchorForSpeech(measured.document,it,variant,wordSpacing)}
     val accessibleText = page.fragments.filterIsInstance<PageFragment.Text>().joinToString("\n") { slice ->
         measured.textLayouts.getValue(slice.blockId).layoutInput.text.text.substring(slice.startOffset, slice.endOffset)
     }
@@ -45,7 +50,10 @@ internal fun PagedChapterCanvas(
             page.fragments.filterIsInstance<PageFragment.Text>().forEach { slice ->
                 clipRect(left = 0f, top = slice.yPx, right = size.width, bottom = slice.yPx + slice.heightPx) {
                     val layout=measured.textLayouts.getValue(slice.blockId)
-                    highlightText?.let {readerSpokenTextRange(layout.layoutInput.text.text,it)}?.let{range->
+                    focus?.takeIf {highlightAnchor?.blockId==slice.blockId}?.let {
+                        com.novalpie.nativeapp.feature.reader.tts.readerSpeechDisplayRange(layout.layoutInput.text.text,it,
+                            measured.document.chapterId,slice.blockId,variant,wordSpacing)
+                    }?.let{range->
                         translate(top=slice.yPx-slice.sourceTopPx) {
                             drawPath(layout.getPathForRange(range.first,range.last+1),textColor.copy(alpha=.18f))
                         }

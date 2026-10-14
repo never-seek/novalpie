@@ -7,6 +7,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ReaderDocumentPreparerTest {
+    @Test fun cacheOriginChangeRefreshesMetadataWithoutReparsingText() = runBlocking {
+        var parses=0
+        val prep=ReaderDocumentPreparer(parse={parses++;listOf(ReaderContentBlock.Text(it.content))})
+        val source=chapter(1).copy(fromCache=true)
+        val options=ReaderUiOptions();val rules=ReaderReplacementState(novelId=1)
+        prep.prepare(1,listOf(source),emptyList(),rules,options)
+        val online=prep.prepare(1,listOf(source.copy(fromCache=false)),emptyList(),rules,options)
+        assertEquals(1,parses)
+        assertFalse(online.chapters.single().chapter.fromCache)
+    }
     private fun chapter(id: Long) = ReaderChapterContent(id, "第$id 章", ReaderContent("第$id 章", "测试$id", "test"))
     @Test fun parsingHappensOffCallerThreadAndAppendingReusesPriorDocuments() = runBlocking {
         val caller = Thread.currentThread()

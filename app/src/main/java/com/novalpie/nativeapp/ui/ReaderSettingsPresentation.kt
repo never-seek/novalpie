@@ -310,6 +310,14 @@ internal fun ReaderSettingsControls(
 
     if (category == ReaderSettingsCategory.Display) {
         ReaderSettingsSection(title = "显示设置", textColor = textColor, metaColor = metaColor) {
+        ReaderToggleRow("亮度跟随系统",options.brightness<0f,textColor,metaColor) {
+            update {it.copy(brightness=if(it.brightness<0f).5f else -1f)}
+        }
+        if(options.brightness>=0f) ReaderValueSlider(
+            label="阅读亮度",valueLabel="${(options.brightness*100).toInt()}%",value=options.brightness,
+            valueRange=.01f..1f,steps=98,
+            onValueChange={value->update {it.copy(brightness=value)}},
+        )
         ReaderToggleRow("显示章节评论", options.showComments, textColor, metaColor) {
             update { it.copy(showComments = !it.showComments) }
         }

@@ -39,6 +39,7 @@ internal class AndroidEditorRepository(context: Context, private val api: NovalP
 ) : EditorRepository {
     private val application = context.applicationContext
     private val store = EditorArchiveStore(application)
+    private val resourceDirectory=File(application.filesDir,"editor-epub-resources")
     private val local = WorkspaceLocalStore(application)
     private val preparedDirectory = File(application.cacheDir, "editor-upload-files").canonicalFile
     override fun configs() = local.loadApis()
@@ -56,9 +57,9 @@ internal class AndroidEditorRepository(context: Context, private val api: NovalP
         val document = readDocument(uri)
         return if (document.displayName.endsWith(".epub", true)) {
             withContext(Dispatchers.IO) {
-                val parsed = EpubParser.parse(source(document))
+                val parsed = EpubParser.parse(source(document),resourceDirectory)
                 EditorLoadedDocument(document, EditorProcessor.toWebsiteIdentifiers(parsed.chapters),
-                    EditorBookMetadata(title = parsed.title, author = parsed.author, description = parsed.description, language = parsed.language), parsed.chapters)
+                    EditorBookMetadata(title = parsed.title, author = parsed.author, description = parsed.description, language = parsed.language,epubBundles=listOfNotNull(parsed.epubBundle)), parsed.chapters)
             }
         } else EditorLoadedDocument(document, readEditorText(document, encoding), metadata, emptyList())
     }
@@ -120,7 +121,7 @@ internal class AndroidEditorRepository(context: Context, private val api: NovalP
         documents.forEach { document ->
             when {
                 document.displayName.endsWith(".epub", ignoreCase = true) -> {
-                    imported += EpubParser.parse(source(document)).chapters
+                    imported += EpubParser.parse(source(document),resourceDirectory).chapters
                 }
                 document.displayName.endsWith(".zip", ignoreCase = true) -> {
                     val entries = EditorBatchImporter.readArchive(source(document).openStream(), charset)

@@ -70,7 +70,7 @@ internal class TtsPlaybackCoordinator(
         invalidate()
         this.settings=settings
         pendingNext=null
-        mutable.value=SpeechPlaybackState(SpeechStatus.Paused,chapter.copy(segments=chapter.segments.toList()),
+        mutable.value=SpeechPlaybackState(SpeechStatus.Paused,chapter.copy(segments=chapter.segments.toList(),positions=chapter.positions.toList()),
             startIndex.coerceIn(0,chapter.segments.lastIndex.coerceAtLeast(0)),message,serial)
     }
 
@@ -80,7 +80,7 @@ internal class TtsPlaybackCoordinator(
             mutable.value=SpeechPlaybackState(SpeechStatus.Error,chapter,message="当前章节没有可朗读的正文",generation=serial)
             return
         }
-        val snapshot=chapter.copy(segments=chapter.segments.toList())
+        val snapshot=chapter.copy(segments=chapter.segments.toList(),positions=chapter.positions.toList())
         val index=startIndex.coerceIn(snapshot.segments.indices)
         val generation=serial
         mutable.value=SpeechPlaybackState(SpeechStatus.Loading,snapshot,index,generation=generation)
@@ -89,12 +89,13 @@ internal class TtsPlaybackCoordinator(
                 onSegment={position->
                     if(generation==serial && position in snapshot.segments.indices && position>=mutable.value.segmentIndex) {
                         mutable.value=mutable.value.copy(status=SpeechStatus.Speaking,segmentIndex=position,message=null)
-                        if(snapshot.recordProgress)onPosition(snapshot,position)
+                        val current=mutable.value.chapter ?: snapshot
+                        if(current.recordProgress)onPosition(current,position)
                     }
                 },
                 onFinished={
                     if(generation==serial && mutable.value.status in setOf(SpeechStatus.Loading,SpeechStatus.Speaking)) {
-                        val next=snapshot.nextChapterId
+                        val next=mutable.value.chapter?.nextChapterId
                         if(settings.enableAutoNextChapter && next!=null && next!=snapshot.chapterId) requestNext(snapshot.bookId,next)
                         else stop()
                     }
@@ -132,11 +133,17 @@ internal class TtsPlaybackCoordinator(
     fun replaceChapter(chapter:SpeechChapter) {
         val current=mutable.value
         if(current.chapter?.bookId!=chapter.bookId||current.chapter.chapterId!=chapter.chapterId)return
-        if(current.chapter.textRevision==chapter.textRevision && current.chapter.segments==chapter.segments)return
+        val updated=chapter.copy(segments=chapter.segments.toList(),positions=chapter.positions.toList())
+        if(current.chapter.textRevision==chapter.textRevision && current.chapter.segments==chapter.segments && current.chapter.positions==chapter.positions) {
+            // Catalog/title metadata can change without changing speech. Its completion callback
+            // reads this immutable current snapshot rather than an outdated captured successor.
+            mutable.value=current.copy(chapter=updated)
+            return
+        }
         if(current.status in setOf(SpeechStatus.Loading,SpeechStatus.Speaking))play(chapter,current.segmentIndex)
         else {
             invalidate()
-            mutable.value=current.copy(chapter=chapter.copy(segments=chapter.segments.toList()),
+            mutable.value=current.copy(chapter=updated,
                 segmentIndex=current.segmentIndex.coerceIn(0,chapter.segments.lastIndex.coerceAtLeast(0)),generation=serial)
         }
     }

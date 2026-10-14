@@ -10,7 +10,8 @@ import com.novalpie.nativeapp.data.NativeEpubArchiveWriter
 import com.novalpie.nativeapp.data.NativeDownloadChapterText
 
 /** Only ambiguous duplicate chapters need a source read; task-owned snapshots are reused on retry. */
-internal class TaskExportImageReconciler(private val directory: File,
+internal class TaskExportImageReconciler(private val directory:File,
+    private val onIssue:(DownloadIntegrityIssue)->Unit={},
     private val sourceImages: suspend (Int) -> List<String>) {
 
     init {
@@ -40,7 +41,7 @@ internal class TaskExportImageReconciler(private val directory: File,
             NativeEpubArchiveWriter.writeTransformedTxt(discard, source, { number, title, body ->
                 if (hasDuplicates(body)) pending.send(number to body)
                 NativeDownloadChapterText(title, "")
-            }, awaitReady)
+            },awaitReady,preambleDirectory=directory)
         } finally { pending.close() }
         jobs.joinAll()
         sourceOnly.get()
@@ -52,6 +53,13 @@ internal class TaskExportImageReconciler(private val directory: File,
 
     suspend fun reconcile(number: Int, body: String): String = checkChapter(number, body).body
 
+    /** Retry an unknown/mismatched source without trusting a stale successful quota snapshot. */
+    fun retryUnverified() {
+        directory.listFiles().orEmpty().filter {it.isFile&&it.name.matches(Regex("[0-9]+-mismatch\\.json"))}.forEach {m->
+            val number=m.name.substringBefore('-');File(directory,"$number.json").delete();m.delete()
+        }
+    }
+
     private suspend fun checkChapter(number: Int, body: String): ExportImageReconciliation {
         require(number > 0)
         val urls = urls(body)
@@ -59,16 +67,27 @@ internal class TaskExportImageReconciler(private val directory: File,
         val hash = MessageDigest.getInstance("SHA-256").digest(body.toByteArray()).joinToString("") { "%02x".format(it) }
         val record = File(directory, "$number.json")
         val cached = if (record.isFile) runCatching { JSONObject(record.readText()) }.getOrNull() else null
-        val expected = if (cached?.optInt("schema") == 1 && cached.optString("bodyHash") == hash)
-            cached.getJSONArray("images").let { a -> (0 until a.length()).map { a.getString(it) } }
-        else try { sourceImages(number) } catch (failure: Exception) {
+        val cachedExpected=runCatching {
+            if(cached?.optInt("schema")==1&&cached.optString("bodyHash")==hash)
+                cached.getJSONArray("images").let {a->(0 until a.length()).map{a.getString(it)}} else null
+        }.getOrNull()
+        val expected=try {cachedExpected ?: try { sourceImages(number) } catch (failure: Exception) {
             if (failure !is com.novalpie.nativeapp.data.NovalPieApiException || failure.statusCode !in setOf(500, 502, 503, 504)) throw failure
             // Only a read-only chapter GET is repeated, once. Authorization/model/submit calls
             // are never inside this boundary, and cancellation interrupts the delay immediately.
             delay(700)
             sourceImages(number)
+        }}catch(cancelled:CancellationException){throw cancelled}
+        catch(failure:Exception) {
+            // A GET failure is unknown, not proof that the reader legitimately has zero pictures.
+            val issue=DownloadIntegrityIssue(DownloadIntegrityCode.ImageSourceUnavailable,number,hash)
+            onIssue(issue)
+            if(ensureDirectory())runCatching {File(directory,"$number-mismatch.json").writeText(JSONObject().put("chapterNumber",number).put("bodyHash",hash).put("issue",issue.code.name).toString())}
+            if(failure is com.novalpie.nativeapp.data.NovalPieApiException&&failure.statusCode in setOf(401,403))throw failure
+            return ExportImageReconciliation(body,0,0)
         }
         val result = try { reconcileExportImageOccurrences(body, expected) } catch (mismatch: IllegalArgumentException) {
+            onIssue(DownloadIntegrityIssue(DownloadIntegrityCode.ImageSourceMismatch,number,hash))
             if (ensureDirectory()) {
                 fun resource(value: String): String {
                     if (value.startsWith("data:", true)) return value.substringBefore(',').take(100) + ",<inline length=${value.length}>"

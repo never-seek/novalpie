@@ -78,14 +78,24 @@ internal fun BookChapterManagerScreen(
     onUploadIllustrations: (List<String>) -> Unit,
     onDeleteIllustration: (Long) -> Unit,
     onInsertIllustrationPlaceholder: (Int) -> Unit,
-    onAppend: () -> Unit
+    onAppend: () -> Unit,
+    onConfirmDiscardEditor: () -> Unit = {},
+    onCancelDiscardEditor: () -> Unit = {},
 ) {
     val chapters = (state.chapters as? LoadResult.Success)?.value.orEmpty()
     var deleteTarget by remember { mutableStateOf<Chapter?>(null) }
     var confirmBatchDelete by remember { mutableStateOf(false) }
     var confirmTranslation by remember { mutableStateOf(false) }
 
-    state.editor?.let { draft ->
+    if (state.confirmDiscardEditor) {
+        AlertDialog(
+            onDismissRequest = onCancelDiscardEditor,
+            title = { Text("放弃未保存修改？") },
+            text = { Text("章节修改还未保存。继续编辑可保留当前内容，放弃后无法恢复。") },
+            confirmButton = { TextButton(onClick = onConfirmDiscardEditor) { Text("放弃修改") } },
+            dismissButton = { TextButton(onClick = onCancelDiscardEditor) { Text("继续编辑") } },
+        )
+    } else state.editor?.let { draft ->
         ManagedChapterEditorDialog(
             draft = draft,
             busy = state.actionLoading,

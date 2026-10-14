@@ -145,7 +145,8 @@ class EditorArchiveStore(
             .put("tags", archive.metadata.tags)
             .put("isAdult", archive.metadata.isAdult)
             .put("source", archive.metadata.source)
-            .put("sourceUrl", archive.metadata.sourceUrl))
+            .put("sourceUrl", archive.metadata.sourceUrl)
+            .put("epubBundles",EpubBundleJson.encode(archive.metadata.epubBundles)))
 
     private fun fromJson(source: JSONObject, textContent: String): EditorArchive {
         val metadata = source.optJSONObject("metadata") ?: JSONObject()
@@ -162,7 +163,8 @@ class EditorArchiveStore(
                 tags = metadata.optString("tags"),
                 isAdult = metadata.optBoolean("isAdult"),
                 source = metadata.optString("source"),
-                sourceUrl = metadata.optString("sourceUrl")
+                sourceUrl = metadata.optString("sourceUrl"),
+                epubBundles=EpubBundleJson.decode(metadata.optJSONArray("epubBundles"))
             ),
             fileName = source.optString("fileName").takeIf(String::isNotBlank),
             chapterCount = source.optInt("chapterCount"),

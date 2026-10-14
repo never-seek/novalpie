@@ -1929,6 +1929,7 @@ internal fun adminShopBadgePreviewResolvedCss(css: String?): String {
         source = source.replace(Regex("""<[^>]*>"""), " ")
     }
     source = source.replace(Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL), " ")
+    source = badgeBasePaintCss(source)
     val variables = Regex(
         """(--[a-z0-9_-]+)\s*:\s*([^;{}]+)""",
         RegexOption.IGNORE_CASE,
@@ -1952,6 +1953,54 @@ internal fun adminShopBadgePreviewResolvedCss(css: String?): String {
         resolved = next
     }
     return resolved
+}
+
+/** Extract the resting badge paint, not hover/active/keyframe declarations flattened together. */
+internal fun badgeBasePaintCss(css:String):String {
+    if('{' !in css)return css
+    val result=StringBuilder()
+    var start=0;var index=0;var quote:Char?=null;var escapedDelimiter=false
+    while(index<css.length) {
+        val char=css[index]
+        if(quote!=null) {
+            if(char=='\\') {
+                if(escapedDelimiter&&css.getOrNull(index+1)==quote)quote=null
+                index++
+            } else if(char==quote)quote=null
+            index++;continue
+        }
+        if(char=='\\'&&css.getOrNull(index+1) in listOf('\'', '"')) {
+            quote=css[index+1];escapedDelimiter=true;index+=2;continue
+        }
+        if(char=='\''||char=='"'){quote=char;escapedDelimiter=false;index++;continue}
+        if(char!='{'){index++;continue}
+        var header=css.substring(start,index)
+        // CSS nesting can follow ordinary inline declarations in the same parent block.
+        val declarationEnd=header.lastIndexOf(';')
+        if(declarationEnd>=0){result.append(header.substring(0,declarationEnd+1));header=header.substring(declarationEnd+1)}
+        val bodyStart=index+1;var depth=1;index++;quote=null;escapedDelimiter=false
+        while(index<css.length&&depth>0) {
+            val c=css[index]
+            if(quote!=null){if(c=='\\') {
+                if(escapedDelimiter&&css.getOrNull(index+1)==quote)quote=null
+                index++
+            } else if(c==quote)quote=null}
+            else if(c=='\\'&&css.getOrNull(index+1) in listOf('\'', '"')) {quote=css[index+1];escapedDelimiter=true;index++}
+            else when(c){'\'', '"'->{quote=c;escapedDelimiter=false};'{'->depth++;'}'->depth--}
+            index++
+        }
+        if(depth!=0)break // Malformed source paint cannot leak into a fallback preview.
+        val selectors=header.split(',').map{it.trim()}
+        val hasBase=selectors.any {selector->
+            val positive=selector.replace(Regex(""":not\(\s*:(?:hover|active|focus(?:-visible|-within)?)\s*\)""",RegexOption.IGNORE_CASE),"")
+            !positive.startsWith('@')&&!Regex(""":(?:hover|active|focus(?:-visible|-within)?)\b""",RegexOption.IGNORE_CASE).containsMatchIn(positive)
+        }
+        if(hasBase)result.append(header).append('{').append(badgeBasePaintCss(css.substring(bodyStart,index-1))).append('}')
+        start=index
+    }
+    val tail=css.substring(start).trim()
+    if('{' !in tail&&'}' !in tail)result.append(tail)
+    return result.toString()
 }
 
 internal fun adminShopBadgePreviewColors(css: String?): List<Color> {

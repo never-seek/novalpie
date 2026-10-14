@@ -51,4 +51,16 @@ class DownloadPackageCheckpointTest {
         val incomplete=java.io.File(temp.newFolder(),"result.epub").apply{writeText("truncated zip")}
         assertFalse(DownloadPackageCheckpoint(incomplete.parentFile!!).adoptVerifiedLegacy(task,incomplete,"source",control))
     }
+
+    @Test fun oldReplacementPipelinePackagesMustBeRebuiltFromTheFrozenSourceAndRules()=runBlocking {
+        for(format in DownloadFormat.entries) {
+            val dir=temp.newFolder();val file=java.io.File(dir,"result.${format.name.lowercase()}").apply{writeText("old transformed bytes")}
+            val task=DownloadTask("old-text-nodes",1,2,"QA",format,applyReplacement=true,replacementSnapshot="frozen")
+            val cp=DownloadPackageCheckpoint(dir);val control=NativeDownloadControl();cp.record(task,file,"source",control)
+            val receipt=java.io.File(dir,"package.complete")
+            receipt.writeText(org.json.JSONObject(receipt.readText()).put("exportPipeline",4).toString())
+            assertFalse(cp.reusable(task,file,"source",control))
+            assertFalse(cp.adoptVerifiedLegacy(task.copy(completedChapters=1,totalChapters=1),file,"source",control))
+        }
+    }
 }

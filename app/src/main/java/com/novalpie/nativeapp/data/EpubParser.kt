@@ -1,6 +1,9 @@
 package com.novalpie.nativeapp.data
 
-import com.novalpie.nativeapp.model.ParsedEpub
+import com.novalpie.nativeapp.model.*
+import java.io.File
+import java.util.UUID
+import java.util.zip.ZipFile
 import com.novalpie.nativeapp.model.UploadChapter
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -20,7 +23,23 @@ object EpubParser {
     private val htmlTag = Regex("""<(?:"[^"]*"|'[^']*'|[^'">])*>""")
     private data class TocEntry(val path: String, val fragment: String?, val title: String, val depth: Int, val parents: List<String>)
 
-    fun parse(source: UploadFileSource): ParsedEpub {
+    fun parse(source:UploadFileSource,resourceDirectory:File?=null):ParsedEpub {
+        val (bundleId,archive)=EpubResourceSupport.capture(source,resourceDirectory)
+        try {
+            return parseCaptured(UploadFileSource(source.fileName,archive.length(),source.contentType){archive.inputStream()},bundleId,archive)
+        }catch(error:Throwable){EpubResourceSupport.discard(bundleId,archive);throw error}
+    }
+    private fun parseCaptured(source:UploadFileSource,bundleId:String,archive:File):ParsedEpub {
+        val archiveEntries=linkedMapOf<String,String>()
+        ZipFile(archive).use {zip->
+            val entries=zip.entries()
+            while(entries.hasMoreElements()) {
+                val entry=entries.nextElement();if(entry.isDirectory)continue
+                if(archiveEntries.size>=100000)throw IOException("EPUB资源条目过多，未提交不完整导入")
+                val name=normalizeZipPath(entry.name)
+                if(archiveEntries.put(name,entry.name)!=null)throw IOException("EPUB有重复资源路径：$name")
+            }
+        }
         val container = readEntries(source, setOf(CONTAINER_PATH), MAX_XML_BYTES)[CONTAINER_PATH]
             ?: throw IOException("EPUB 缺少 META-INF/container.xml")
         val containerDocument = parseXml(container)
@@ -36,6 +55,7 @@ object EpubParser {
         val packageDir = packagePath.substringBeforeLast('/', "")
 
         val manifest = linkedMapOf<String, String>()
+        val resourceTypes=linkedMapOf<String,Pair<String,String>>()
         var navigationPath: String? = null
         var ncxPath: String? = null
         val manifestNodes = packageDocument.getElementsByTagNameNS("*", "item")
@@ -47,11 +67,20 @@ object EpubParser {
                 if (id in manifest) throw IOException("EPUB manifest中有重复ID：$id")
                 val resolved = resolveZipPath(packageDir, decodePath(href.substringBefore('#')))
                 manifest[id] = resolved
+                resourceTypes[resolved]=item.getAttribute("media-type") to item.getAttribute("properties")
                 if ("nav" in item.getAttribute("properties").split(Regex("\\s+"))) navigationPath = resolved
                 if (item.getAttribute("media-type") == "application/x-dtbncx+xml") ncxPath = resolved
             }
         }
 
+        val coverMeta=packageDocument.getElementsByTagNameNS("*","meta")
+        for(index in 0 until coverMeta.length) {
+            val meta=coverMeta.item(index) as? Element ?: continue
+            if(meta.getAttribute("name")=="cover")manifest[meta.getAttribute("content")]?.let {path->
+                val type=resourceTypes[path] ?: return@let
+                resourceTypes[path]=type.first to (type.second.split(Regex("\\s+"))+"cover-image").filter{it.isNotBlank()}.distinct().joinToString(" ")
+            }
+        }
         val spinePaths = mutableListOf<String>()
         val spineNodes = packageDocument.getElementsByTagNameNS("*", "itemref")
         for (index in 0 until spineNodes.length) {
@@ -71,12 +100,24 @@ object EpubParser {
         requested.firstOrNull { it !in chapterEntries }?.let { throw IOException("EPUB 缺少目录声明的章节：$it；未导入不完整书籍") }
         fun chapterHtml(path: String) = chapterEntries.getValue(path).toString(Charsets.UTF_8)
         val chapters = mutableListOf<UploadChapter>()
+        val opaque=mutableListOf<EpubOpaqueNode>()
+        val origins=mutableListOf<EpubChapterOrigin>()
         fun add(path: String, html: String, title: String = "", depth: Int = 0, parents: List<String> = emptyList()) {
-            val content = htmlToPlainText(html)
+            val editable=EpubResourceSupport.opaqueEditableMarkup(bodyMarkup(html),path,bundleId,archive,opaque)
+            val content = htmlToPlainText(editable)
             if (content.isBlank()) return
             val label = title.ifBlank { extractHtmlTitle(html) }.ifBlank { "第 ${chapters.size + 1} 章" }
-            chapters += UploadChapter((parents + label).joinToString(" / "), content, chapters.size + 1,
-                hierarchyLevel = depth, sectionPath = parents, rawPath = path, spineIndex = spinePaths.indexOf(path).takeIf { it >= 0 })
+            val fullTitle=(parents+label).joinToString(" / ")
+            val key=UUID.randomUUID().toString().replace("-","")
+            val head=Regex("<head\\b[^>]*>([\\s\\S]*?)</head\\s*>",RegexOption.IGNORE_CASE).find(chapterHtml(path))?.groupValues?.get(1).orEmpty()
+            val originalDocument=chapterHtml(path)
+            val htmlOpen=Regex("<html\\b[^>]*>",RegexOption.IGNORE_CASE).find(originalDocument)?.value ?: "<html xmlns=\"http://www.w3.org/1999/xhtml\">"
+            val bodyOpen=Regex("<body\\b[^>]*>",RegexOption.IGNORE_CASE).find(originalDocument)?.value ?: "<body>"
+            val stored="$htmlOpen<head>$head</head>$bodyOpen${bodyMarkup(html)}</body></html>"
+            val fileName=EpubResourceSupport.writeMarkup(archive,"chapter-$key.xhtml",stored)
+            origins+=EpubChapterOrigin(key,fullTitle,path,fileName,EpubResourceSupport.digest(content),depth,parents,EpubResourceSupport.digest(stored))
+            chapters += UploadChapter(fullTitle,content,chapters.size+1,
+                hierarchyLevel=depth,sectionPath=parents,rawPath=path,spineIndex=spinePaths.indexOf(path).takeIf{it>=0})
         }
         if (toc.isEmpty()) spinePaths.forEach { path -> add(path, chapterHtml(path)) }
         else {
@@ -103,13 +144,26 @@ object EpubParser {
         }
         if (chapters.isEmpty()) throw IOException("EPUB 未解析到有效章节")
 
+        val assets=archiveEntries.filterKeys {path->path!=tocPath&&path!=CONTAINER_PATH&&path!="mimetype"&&path!=normalizeZipPath(packagePath)}
+            .map { (path,raw)->val type=resourceTypes[path];EpubResourceDescriptor(path,raw,type?.first?.takeIf{it.isNotBlank()} ?: resourceMime(path),type?.second.orEmpty()) }
+        // Every declared non-chapter local resource must exist; missing pictures/fonts are not success.
+        resourceTypes.entries.firstOrNull {it.key !in archiveEntries&&it.value.first !in setOf("application/xhtml+xml","text/html")}?.key?.let {throw IOException("EPUB声明的资源缺失：$it；原文件保留")}
+        val bundle=EpubDocumentBundle(bundleId,archive.canonicalPath,archive.length(),EpubResourceSupport.digest(archive),normalizeZipPath(packagePath),assets,opaque,origins)
         return ParsedEpub(
             title = elementText(packageDocument, "title"),
             author = elementText(packageDocument, "creator"),
             description = elementText(packageDocument, "description"),
             language = elementText(packageDocument, "language").ifBlank { "zh" },
-            chapters = chapters
+            chapters = chapters.mapIndexed {index,chapter->chapter.copy(epubSource=EpubChapterSource(bundle,origins[index].id))},
+            epubBundle = bundle
         )
+    }
+
+    private fun resourceMime(path:String):String=when(path.substringAfterLast('.',"").lowercase()) {
+        "png"->"image/png";"jpg","jpeg"->"image/jpeg";"gif"->"image/gif";"webp"->"image/webp";"svg"->"image/svg+xml"
+        "css"->"text/css";"woff"->"font/woff";"woff2"->"font/woff2";"ttf"->"font/ttf";"otf"->"font/otf"
+        "xhtml","html","htm"->"application/xhtml+xml";"xml","ncx"->"application/xml";"js"->"text/javascript"
+        "mp3"->"audio/mpeg";"mp4"->"video/mp4";"ogg"->"audio/ogg";else->"application/octet-stream"
     }
 
     private fun readEntries(

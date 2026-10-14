@@ -104,6 +104,7 @@ internal enum class BookDetailMenuAction {
     ManageChapters,
     AppendChapters,
     TranslateInWorkspace,
+    RetranslateChapters,
 }
 
 internal fun bookDetailMenuActions(
@@ -111,11 +112,13 @@ internal fun bookDetailMenuActions(
     nativeDownloadsVisible: Boolean,
     canManageBook: Boolean,
     translationVisible: Boolean = false,
+    retranslationVisible: Boolean = false,
 ): List<BookDetailMenuAction> = buildList {
     add(BookDetailMenuAction.Terminology)
     add(BookDetailMenuAction.Share)
     if (requestNewChapterVisible) add(BookDetailMenuAction.RequestNewChapter)
     if (translationVisible) add(BookDetailMenuAction.TranslateInWorkspace)
+    if (retranslationVisible) add(BookDetailMenuAction.RetranslateChapters)
     if (nativeDownloadsVisible) {
         add(BookDetailMenuAction.DownloadEpub)
         add(BookDetailMenuAction.DownloadTxt)
@@ -330,9 +333,14 @@ internal fun chapterCommentActionTarget(
  * Apply a book-review mutation without erasing a failed composer. The source can return HTTP 200
  * with `success=false`, so transport success alone must not clear the reply target.
  */
+internal data class BookCommentSubmissionSnapshot(val draft:String,val replyId:Long?,val replyName:String?) {
+    fun matches(state:BookDetailState)=state.commentDraft==draft&&state.replyingToCommentId==replyId&&state.replyingToName==replyName
+}
+
 internal fun bookCommentAfterSubmission(
     state: BookDetailState,
     result: Result<ForumActionResult>,
+    submitted: BookCommentSubmissionSnapshot? = null,
 ): BookDetailState = result.fold(
     onSuccess = { action ->
         if (!action.success) {
@@ -341,10 +349,11 @@ internal fun bookCommentAfterSubmission(
                 actionMessage = action.message ?: "评论提交失败",
             )
         } else {
+            val sameComposer = submitted == null || submitted.matches(state)
             state.copy(
-                commentDraft = "",
-                replyingToCommentId = null,
-                replyingToName = null,
+                commentDraft = if (sameComposer) "" else state.commentDraft,
+                replyingToCommentId = if (sameComposer) null else state.replyingToCommentId,
+                replyingToName = if (sameComposer) null else state.replyingToName,
                 actionLoading = false,
                 actionMessage = action.message ?: "评论已提交",
             )

@@ -78,6 +78,8 @@ internal fun NativePagedReader(
     modifier:Modifier=Modifier,
     followText:String?=null,
     highlightText:String?=null,
+    followFocus:com.novalpie.nativeapp.feature.reader.tts.ReaderSpeechFocus?=null,
+    highlightFocus:com.novalpie.nativeapp.feature.reader.tts.ReaderSpeechFocus?=null,
     backgroundImageUri:String?=null,
     onPageProgress:(Float)->Unit = {},
     comments:@Composable ()->Unit,
@@ -190,13 +192,12 @@ internal fun NativePagedReader(
             catch(failure:Exception){if(generation.isCurrent(ticket))error=failure.message ?: "分页失败，请调整字号后重试"}
             finally {if(generation.isCurrent(ticket))measuring=false}
         }
-        LaunchedEffect(followText,measured) {
-            val query=followText?.takeIf(String::isNotBlank)?.let{convertChineseVariantText(it,chineseVariant)} ?: return@LaunchedEffect
+        LaunchedEffect(followText,followFocus,measured) {
             val current=measured ?: return@LaunchedEffect
-            val block=current.document.blocks.filterIsInstance<ChapterDocumentBlock.Paragraph>().firstNotNullOfOrNull {paragraph->
-                readerSpokenTextRange(paragraph.text.text,query)?.let{paragraph to it.first}
+            val focus=followFocus ?: followText?.takeIf(String::isNotBlank)?.let {
+                com.novalpie.nativeapp.feature.reader.tts.ReaderSpeechFocus(chapterId,it,null)
             } ?: return@LaunchedEffect
-            val target=ReaderAnchor(bookId,chapterId,block.first.id,block.second)
+            val target=readerAnchorForSpeech(current.document,focus,chineseVariant,options.wordSpacing) ?: return@LaunchedEffect
             pageIndex=current.plan.pageForAnchor(target)
             anchor=current.plan.pages[pageIndex].startAnchor
             navigator?.jump(current.plan,anchor)
@@ -252,7 +253,8 @@ internal fun NativePagedReader(
                             )
                         }.pointerInput(bookId,chapterId) {
                             detectTapGestures(onTap={latestTap(it.x/size.width,it.y/size.height)})
-                        },highlightText=highlightText?.let{convertChineseVariantText(it,chineseVariant)}) { image, placement ->
+                        },highlightText=highlightText?.let{convertChineseVariantText(it,chineseVariant)},
+                        highlightFocus=highlightFocus,variant=chineseVariant,wordSpacing=options.wordSpacing) { image, placement ->
                         PageIllustration(image,placement,textColor,
                             onPreview={onPreview(ReaderContentBlock.Image(image.url,image.alt,image.originalUrl),image.alt ?: "正文插图")},
                             onDimensions={value->if(images[image.id]!=value)images=images+(image.id to value)})

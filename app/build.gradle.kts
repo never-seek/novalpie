@@ -23,8 +23,8 @@ android {
         applicationId = "com.novalpie.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 2026100101
-        versionName = "2.0.0-native-beta7"
+        versionCode = 2026101501
+        versionName = "2.0.0-native-beta7-r2"
         testInstrumentationRunner = if (providers.gradleProperty("betaBlackBox").orNull == "true")
             "com.novalpie.nativeapp.ui.BetaSdkInstrumentation" else "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -448,7 +448,7 @@ class NovalPieApi(
         streamResponse(
             label = "/downloads/$safeName",
             requestBuilder = baseRequestBuilder(url.toString()).header("accept", "text/plain, */*"),
-            consumer = { input, _ -> consumer(input) },
+            consumer = { input, type -> consumer(validatedNovelTextStream(input, type)) },
             callTimeoutSeconds = EPUB_DOWNLOAD_CALL_TIMEOUT_SECONDS,
             readTimeoutSeconds = EPUB_DOWNLOAD_READ_TIMEOUT_SECONDS,
         )
@@ -462,7 +462,7 @@ class NovalPieApi(
         val resolved = resolveAssetUrl(url)
             ?: throw IOException("插图链接无效")
         streamResponse(
-            label = resolved.toString(),
+            label = resolved.newBuilder().query(null).fragment(null).username("").password("").build().toString(),
             requestBuilder = baseRequestBuilder(resolved.toString()).header("accept", "*/*"),
             consumer = consumer,
             callTimeoutSeconds = ASSET_CALL_TIMEOUT_SECONDS,
@@ -1288,22 +1288,17 @@ class NovalPieApi(
     }
 
     suspend fun updateCurrentUserCheckinSettings(
-        showCheckin: Boolean,
-        autoCheckin: Boolean
+        showCheckin:Boolean?,
+        autoCheckin:Boolean?
     ): UserCheckinAction = withContext(Dispatchers.IO) {
-        val source = unwrapObject(
-            patch(
-            "/api/users/me/checkins/settings",
-            JSONObject()
-                .put("show_checkin", showCheckin)
-                .put("auto_checkin", autoCheckin)
-            ),
-            "data",
-            "result"
-        )
+        val raw=patch("/api/users/me/checkins/settings",JSONObject().apply {
+            showCheckin?.let {put("show_checkin",it)};autoCheckin?.let {put("auto_checkin",it)}
+        })
+        val source=unwrapObject(raw,"data","result")
+        val outer=raw as? JSONObject
         UserCheckinAction(
-            success = source.firstBooleanOrNull("success", "ok") ?: true,
-            message = source.firstStringOrNull("message", "msg", "detail")
+            success=(outer?.firstBooleanOrNull("success","ok")!=false)&&(source.firstBooleanOrNull("success","ok") ?: true),
+            message=source.firstStringOrNull("message","msg","detail") ?: outer?.firstStringOrNull("message","msg","detail")
         )
     }
 
@@ -1350,15 +1345,17 @@ class NovalPieApi(
 
     suspend fun checkinCurrentUser(): UserCheckinAction = withContext(Dispatchers.IO) {
         try {
-            val source = unwrapObject(post("/api/users/me/checkins", JSONObject()), "data", "result")
+            val raw=post("/api/users/me/checkins",JSONObject())
+            val source=unwrapObject(raw,"data","result")
+            val outer=raw as? JSONObject
             UserCheckinAction(
-                success = source.firstBooleanOrNull("success", "ok") ?: true,
-                message = source.firstStringOrNull("message", "msg", "detail"),
+                success=(outer?.firstBooleanOrNull("success","ok")!=false)&&(source.firstBooleanOrNull("success","ok") ?: true),
+                message=source.firstStringOrNull("message","msg","detail") ?: outer?.firstStringOrNull("message","msg","detail"),
                 points = source.longOrNull("points") ?: source.longOrNull("point")
             )
         } catch (e: NovalPieApiException) {
             val msg = e.serverMessage.orEmpty()
-            if (msg.contains("已签到") || msg.contains("already", ignoreCase = true)) {
+            if(e.statusCode in 400..499&&com.novalpie.nativeapp.feature.profile.checkinAlreadyCompletedMessage(msg)) {
                 UserCheckinAction(
                     success = false,
                     message = msg.ifBlank { "今日已签到" },
@@ -1910,6 +1907,17 @@ class NovalPieApi(
     suspend fun requestNovelChapters(novelId: Long): ForumActionResult = withContext(Dispatchers.IO) {
         require(novelId > 0) { "novel id must be positive" }
         normalizeForumActionResult(post("/api/v2/novels/$novelId/chapters/request", JSONObject()))
+    }
+
+    /** Current website RetranslateModalV2 protocol; use ordinal numbers, not chapter IDs. */
+    suspend fun retranslateNovelChapters(novelId:Long,chapterNumbers:List<Int>):ForumActionResult = withContext(Dispatchers.IO) {
+        require(novelId>0&&chapterNumbers.isNotEmpty()&&chapterNumbers.size<=100_000&&chapterNumbers.all{it>0})
+        val raw=post("/api/v2/novels/$novelId/chapters/retranslate",
+            JSONObject().put("chapter_range",JSONArray(chapterNumbers.distinct().sorted())))
+        val source=unwrapObject(raw,"data","result")
+        val success=(raw as? JSONObject)?.firstBooleanOrNull("success","ok") ?: source.firstBooleanOrNull("success","ok")
+            ?: throw java.io.IOException("重翻响应没有明确确认")
+        ForumActionResult(success,source.firstStringOrNull("message","msg") ?: (raw as? JSONObject)?.firstStringOrNull("message","msg"))
     }
 
     /** Writes the same authenticated reader position used by the website reader. */
@@ -4671,7 +4679,7 @@ class NovalPieApi(
                 "created_at",
                 "createdAt"
             ),
-            excerpt = plainSnippet(
+            richExcerpt =
                 source.firstStringOrNull(
                     "excerpt",
                     "summary",
@@ -4680,8 +4688,8 @@ class NovalPieApi(
                     "fullContent",
                     "body",
                     "text"
-                )
-            ),
+                )?.trim()?.takeIf(String::isNotBlank),
+            excerpt=plainSnippet(source.firstStringOrNull("excerpt","summary","content","full_content","fullContent","body","text")),
             tags = tags.toList().take(5),
             pinned = source.firstBooleanOrNull("pinned", "is_pinned", "isPinned", "top", "is_top", "isTop") ?: false,
             featured = source.firstBooleanOrNull(
@@ -4954,7 +4962,10 @@ class NovalPieApi(
                 ?: source.intOrNull("replies_count")
                 ?: source.intOrNull("repliesCount")
                 ?: replies.size.takeIf { it > 0 },
-            createdAt = source.firstStringOrNull("created_at", "createdAt", "updated_at", "updatedAt")
+            createdAt = source.firstStringOrNull("created_at", "createdAt", "updated_at", "updatedAt"),
+            helpfulCount=source.intOrNull("helpful_count") ?: source.intOrNull("helpfulCount"),
+            notHelpfulCount=source.intOrNull("not_helpful_count") ?: source.intOrNull("notHelpfulCount"),
+            funnyCount=source.intOrNull("funny_count") ?: source.intOrNull("funnyCount"),
         )
     }
 
@@ -5089,7 +5100,10 @@ class NovalPieApi(
                     ?: source.intOrNull("replies_count")
                     ?: source.intOrNull("repliesCount")
                     ?: replies.size.takeIf { it > 0 },
-                createdAt = source.firstStringOrNull("created_at", "createdAt", "updated_at", "updatedAt")
+                createdAt = source.firstStringOrNull("created_at", "createdAt", "updated_at", "updatedAt"),
+                helpfulCount=source.intOrNull("helpful_count") ?: source.intOrNull("helpfulCount"),
+                notHelpfulCount=source.intOrNull("not_helpful_count") ?: source.intOrNull("notHelpfulCount"),
+                funnyCount=source.intOrNull("funny_count") ?: source.intOrNull("funnyCount"),
             )
     }
 

@@ -236,7 +236,37 @@ private fun detectNativeEpubMediaType(declared: String?, header: ByteArray): Str
     ) {
         return "image/svg+xml"
     }
+    if (textHeader.startsWith("{") || textHeader.startsWith("[") ||
+        (normalized != null && !normalized.startsWith("image/") && normalized !in setOf("application/octet-stream", "binary/octet-stream"))) {
+        throw java.io.IOException("图片服务返回了非图片数据，未写入 EPUB")
+    }
     return normalized?.takeUnless { it == "application/octet-stream" || it == "binary/octet-stream" }
+}
+
+/** Preserve animated containers; static opaque pictures still honor the user's compression choice. */
+private fun nativeEpubAssetIsAnimated(file: File, type: String?, header: ByteArray): Boolean {
+    if (type == "image/webp") {
+        // VP8X feature byte, Animation flag A (MSB0 bit 6). Google WebP RIFF specification:
+        // https://developers.google.com/speed/webp/docs/riff_container#extended_file_format
+        return header.size >= 21 && String(header, 12, 4, Charsets.US_ASCII) == "VP8X" &&
+            (header[20].toInt() and 0x02) != 0
+    }
+    if (type != "image/png") return false
+    // acTL precedes image data in APNG. Seek across metadata rather than trusting only 512 bytes.
+    return java.io.RandomAccessFile(file, "r").use { input ->
+        var offset = 8L
+        repeat(2048) {
+            if (offset + 12 > input.length()) return@use false
+            input.seek(offset)
+            val size = input.readInt().toLong() and 0xffffffffL
+            val name = ByteArray(4).also(input::readFully).toString(Charsets.US_ASCII)
+            if (name == "acTL") return@use true
+            if (name == "IDAT" || name == "IEND") return@use false
+            if (size > input.length() - offset - 12) return@use true
+            offset += size + 12
+        }
+        true // Unknown over-budget container: retain original bytes instead of flattening it.
+    }
 }
 
 /** Bounded inspection of a task-owned original; bytes are never rewritten or decoded here. */
@@ -295,7 +325,8 @@ internal suspend fun stageNativeEpubFile(
             var finalSize = size
             var finalCrc = crc.value
 
-            if (compressImages && detectedType in setOf("image/jpeg", "image/png", "image/webp")) {
+            if (compressImages && detectedType in setOf("image/jpeg", "image/png", "image/webp") &&
+                !nativeEpubAssetIsAnimated(temporary, detectedType, header.copyOf(headerSize))) {
                 val compressed = File.createTempFile("novalpie-compressed-", ".jpg", destination.parentFile)
                 val result = compressStagedImageIfPossible(temporary, compressed, imageQuality)
                 if (result != null) {
@@ -337,7 +368,7 @@ internal fun compressStagedImageIfPossible(
 ): Pair<Long, Long>? {
     return try {
         val boundsOptions = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        android.graphics.BitmapFactory.decodeFile(sourceFile.absolutePath, boundsOptions)
+        sourceFile.inputStream().use { android.graphics.BitmapFactory.decodeStream(it, null, boundsOptions) }
         val origW = boundsOptions.outWidth
         val origH = boundsOptions.outHeight
         if (origW <= 0 || origH <= 0) return null
@@ -346,7 +377,11 @@ internal fun compressStagedImageIfPossible(
         val targetH = maxOf(1, (origH * scale).toInt())
         val sampleSize = maxOf(1, minOf(origW / targetW, origH / targetH))
         val decodeOptions = android.graphics.BitmapFactory.Options().apply { inSampleSize = sampleSize }
-        val bitmap = android.graphics.BitmapFactory.decodeFile(sourceFile.absolutePath, decodeOptions) ?: return null
+        val bitmap = sourceFile.inputStream().use { android.graphics.BitmapFactory.decodeStream(it, null, decodeOptions) } ?: return null
+        if (bitmap.hasAlpha()) {
+            bitmap.recycle()
+            return null // JPEG cannot represent alpha, including layered/phantom covers.
+        }
         val scaled = if (bitmap.width != targetW || bitmap.height != targetH) {
             val s = android.graphics.Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
             if (s != bitmap) bitmap.recycle()
@@ -377,8 +412,6 @@ internal fun compressStagedImageIfPossible(
  */
 object NativeEpubArchiveWriter {
     private const val EPUB_MIMETYPE = "application/epub+zip"
-    private const val IMAGE_TOKEN_PREFIX = "__NOVALPIE_IMAGE_"
-    private const val IMAGE_TOKEN_SUFFIX = "__"
     private const val IMAGE_OPEN_MAX_ATTEMPTS = 5
     private fun calculateImageRetryDelay(attempt: Int): Long {
         val expDelay = 400L * (1L shl attempt.coerceIn(0, 4))
@@ -507,7 +540,9 @@ object NativeEpubArchiveWriter {
         imageConcurrency: Int = DEFAULT_IMAGE_CONCURRENCY,
         compressImages: Boolean = false,
         imageQuality: Int = DEFAULT_DOWNLOAD_IMAGE_QUALITY,
-        zipCompressionLevel: Int = DEFAULT_DOWNLOAD_ZIP_COMPRESSION_LEVEL,
+        // Preserve this utility's historical default Deflate behavior. App download tasks always
+        // pass the selected setting explicitly, including a genuine no-compression level 0.
+        zipCompressionLevel: Int = 6,
         stagingDirectory: File? = null,
         stagedAssetCacheMaxBytes: Long = DEFAULT_STAGED_ASSET_CACHE_MAX_BYTES,
         allowMissingCover: Boolean = false,
@@ -532,7 +567,7 @@ object NativeEpubArchiveWriter {
 
         try {
             ZipOutputStream(output.buffered()).use { zip ->
-                if (zipCompressionLevel in 1..9) {
+                if (zipCompressionLevel in 0..9) {
                     zip.setLevel(zipCompressionLevel)
                 }
                 awaitIfPaused()
@@ -796,74 +831,92 @@ object NativeEpubArchiveWriter {
     }
 
     /**
-     * Streams a source TXT through the exact same chapter boundary rules as EPUB. The metadata
-     * preamble is copied byte-for-character at line granularity, while only recognized chapter
-     * titles/bodies reach [transformChapter]. This avoids materializing an entire paid download.
+     * A prefix is metadata only after a real chapter header is found. Until then it is held in a
+     * bounded buffer/task-owned spool; a genuinely headerless source is a body with no invented title.
      */
     suspend fun writeTransformedTxt(
-        output: Writer,
-        source: Reader,
-        transformChapter: suspend (chapterOrder: Int, title: String, body: String) -> NativeDownloadChapterText,
-        awaitIfPaused: suspend () -> Unit = {},
+        output:Writer,source:Reader,
+        transformChapter:suspend (chapterOrder:Int,title:String,body:String)->NativeDownloadChapterText,
+        awaitIfPaused:suspend ()->Unit={},
+        preambleDirectory:File?=null,
     ) {
-        val writer = output.buffered()
-        BufferedReader(source).use { reader ->
-            var currentTitle: String? = null
-            val currentBody = StringBuilder()
-            var lastChapterNumber: Int? = null
-            var nextChapterIndex = 1
-            var firstLine = true
-
-            suspend fun flushCurrentChapter() {
-                val sourceTitle = currentTitle ?: return
-                val transformed = transformChapter(
-                    chapterNumber(sourceTitle) ?: nextChapterIndex,
-                    sourceTitle,
-                    currentBody.toString(),
-                )
-                writer.write(transformed.title.ifBlank { sourceTitle })
-                writer.write('\n'.code)
-                val original = transformed.originalBody
-                val textTransform = transformed.transformTextNode
-                if (original != null && textTransform != null) {
-                    var cursor = 0
-                    imageMatches(original).forEach { image ->
-                        writer.write(textTransform(original.substring(cursor, image.range.first)))
-                        writer.write(original.substring(image.range.first, image.range.last + 1))
-                        cursor = image.range.last + 1
-                    }
-                    writer.write(textTransform(original.substring(cursor)))
-                } else writer.write(transformed.body)
-                writer.write('\n'.code)
-                nextChapterIndex += 1
-            }
-
-            while (true) {
+        val writer=output.buffered()
+        val prefix=DeferredTxtPreamble(preambleDirectory)
+        try {BufferedReader(source).use {reader->
+            var currentTitle:String?=null
+            val body=StringBuilder()
+            var bodyLines=0
+            var lastChapterNumber:Int?=null
+            var nextChapterIndex=1
+            var firstLine=true
+            suspend fun writeChapter(title:String,content:String,withTitle:Boolean) {
                 awaitIfPaused()
-                val rawLine = reader.readLine() ?: break
-                val line = if (firstLine) rawLine.removePrefix("\uFEFF") else rawLine
-                firstLine = false
-                val heading = chapterHeadingPattern.matchEntire(line.trim())?.groupValues?.getOrNull(1)
-                if (heading != null && isChapterBoundary(heading, lastChapterNumber)) {
-                    if (currentTitle != null) {
-                        flushCurrentChapter()
-                        currentBody.clear()
-                    }
-                    currentTitle = heading.trim()
-                    lastChapterNumber = chapterNumber(currentTitle.orEmpty()) ?: lastChapterNumber
-                } else if (currentTitle == null) {
-                    // Preserve the source preamble as-is; it is not reader prose and should never
-                    // be mistaken for a replacement target.
-                    writer.write(line)
-                    writer.write('\n'.code)
-                } else {
-                    if (currentBody.isNotEmpty()) currentBody.append('\n')
-                    currentBody.append(line)
-                }
+                val transformed=transformChapter(chapterNumber(title) ?: nextChapterIndex,title,content)
+                if(withTitle){writer.write(transformed.title.ifBlank{title});writer.write('\n'.code)}
+                val original=transformed.originalBody
+                val callback=transformed.transformTextNode
+                writer.write(if(original!=null&&callback!=null)
+                    com.novalpie.nativeapp.feature.reader.text.DerivedTextPipeline.transformTxtTextNodes(original,callback)
+                    else transformed.body)
+                writer.write('\n'.code)
+                nextChapterIndex++
             }
-            flushCurrentChapter()
+            while(true) {
+                awaitIfPaused()
+                val raw=reader.readLine() ?: break
+                val line=if(firstLine)raw.removePrefix("\uFEFF")else raw
+                firstLine=false
+                val heading=chapterHeadingPattern.matchEntire(line.trim())?.groupValues?.getOrNull(1)
+                if(heading!=null&&isChapterBoundary(heading,lastChapterNumber)) {
+                    if(currentTitle!=null)writeChapter(currentTitle!!,body.toString(),true)
+                    else prefix.copyMetadataTo(writer,awaitIfPaused)
+                    body.clear();bodyLines=0
+                    currentTitle=heading.trim()
+                    lastChapterNumber=chapterNumber(currentTitle!!) ?: lastChapterNumber
+                } else if(currentTitle==null)prefix.appendLine(line)
+                else {if(bodyLines++>0)body.append('\n');body.append(line)}
+            }
+            if(currentTitle!=null)writeChapter(currentTitle!!,body.toString(),true)
+            else if(prefix.lineCount>0)writeChapter("",prefix.bodyText(),false)
             writer.flush()
+        }}finally{prefix.close()}
+    }
+
+    /** Prefix storage is bounded while discovering the first real header; only its own spool is removed. */
+    private class DeferredTxtPreamble(private val directory:File?):java.io.Closeable {
+        private val memory=StringBuilder()
+        private var spool:File?=null
+        private var disk:Writer?=null
+        var lineCount=0L;private set
+        fun appendLine(line:String) {
+            if(disk==null&&memory.length.toLong()+line.length+1>64*1024) {
+                if(directory!=null&&!directory.isDirectory&&!directory.mkdirs())throw java.io.IOException("无法暂存TXT前言")
+                val file=File.createTempFile("novalpie-txt-preamble-",".part",directory)
+                spool=file
+                disk=file.writer(Charsets.UTF_8).buffered()
+                disk!!.write(memory.toString());memory.clear()
+            }
+            val destination=disk
+            if(destination!=null){if(lineCount>0)destination.write('\n'.code);destination.write(line)}
+            else {if(lineCount>0)memory.append('\n');memory.append(line)}
+            lineCount++
         }
+        private fun finishDisk(){disk?.close();disk=null}
+        suspend fun copyMetadataTo(output:Writer,paused:suspend()->Unit) {
+            if(lineCount==0L)return
+            finishDisk()
+            val file=spool
+            if(file==null)output.write(memory.toString())else file.reader(Charsets.UTF_8).use {input->
+                val buffer=CharArray(32*1024)
+                while(true){paused();val n=input.read(buffer);if(n<0)break;if(n>0)output.write(buffer,0,n)}
+            }
+            output.write('\n'.code)
+            close()
+        }
+        // The existing chapter transformer consumes String; a single enormous chapter remains an
+        // explicit resource-risk audit item, not a reason to silently skip rules or split their scope.
+        fun bodyText():String {finishDisk();return spool?.readText(Charsets.UTF_8) ?: memory.toString()}
+        override fun close(){runCatching{disk?.close()};disk=null;spool?.delete();spool=null;memory.clear();lineCount=0}
     }
 
     private suspend fun renderBody(
@@ -928,30 +981,24 @@ object NativeEpubArchiveWriter {
                 awaitIfPaused = awaitIfPaused,
             )
             imageRecords += record
-            val index = imageRecords.lastIndex
-            onImageResult(url, record.path != null, record.error)
-            val token = "$IMAGE_TOKEN_PREFIX${index}$IMAGE_TOKEN_SUFFIX"
-            rendered.append(token)
+            onImageResult(url,record.path!=null,record.error)
+            // Image structure comes only from the actual source match, never from transformed prose.
+            rendered.append(if(record.path!=null)
+                "<img class=\"chapter-image\" src=\"${escapeXml(record.path)}\" alt=\"插图\"/>"
+                else "<span class=\"image-missing\">[${escapeXml(record.error?.takeIf(String::isNotBlank) ?: "插图获取失败")}]</span>")
             cursor = match.range.last + 1
         }
         rendered.append(renderStyledText(rawBody.substring(cursor), transformTextNode))
 
-        val tokenPattern = Regex("${Regex.escape(IMAGE_TOKEN_PREFIX)}(\\d+)${Regex.escape(IMAGE_TOKEN_SUFFIX)}")
-        val withImages = tokenPattern.replace(rendered.toString()) { result ->
-            val index = result.groupValues[1].toIntOrNull() ?: return@replace ""
-            val record = imageRecords.getOrNull(index)
-            if (record?.path != null) {
-                "<img class=\"chapter-image\" src=\"${escapeXml(record.path)}\" alt=\"插图\"/>"
-            } else {
-                val error = record?.error?.takeIf(String::isNotBlank) ?: "插图获取失败"
-                "<p class=\"image-missing\">[${escapeXml(error)}]</p>"
-            }
-        }
-        return paragraphs(withImages)
+        return paragraphs(rendered.toString())
     }
 
     /** Parse authored emphasis before replacement; replacement output can only become XML text. */
-    private fun renderStyledText(source: String, transform: (String) -> String): String {
+    private fun renderStyledText(source:String,transform:(String)->String):String =
+        com.novalpie.nativeapp.feature.reader.text.DerivedTextPipeline.renderSourceTextNodes(
+            source,{visible->renderMarkdownText(visible,transform)},::escapeXml)
+
+    private fun renderMarkdownText(source:String,transform:(String)->String):String {
         val formatted = com.novalpie.nativeapp.ui.applyMarkdownRanges(com.novalpie.nativeapp.ui.ReaderFormattedParagraph(source))
         val boundaries = (listOf(0, formatted.text.length) + formatted.spanStyles.flatMap { listOf(it.start, it.end) }).distinct().sorted()
         return buildString {
@@ -961,7 +1008,7 @@ object NativeEpubArchiveWriter {
                 val italic = styles.any { it.fontStyle == androidx.compose.ui.text.font.FontStyle.Italic }
                 val underline = styles.any { it.textDecoration?.contains(androidx.compose.ui.text.style.TextDecoration.Underline) == true }
                 val strike = styles.any { it.textDecoration?.contains(androidx.compose.ui.text.style.TextDecoration.LineThrough) == true }
-                val text = escapeXml(transform(formatted.text.substring(start, end))).replace("\r", "")
+                val text=escapeXml(transform(formatted.text.substring(start,end))).replace("\r", "")
                 text.split(Regex("\n\\s*\n")).forEachIndexed { index, part ->
                     if (index > 0) append("\n\n")
                     if (part.isNotEmpty()) {

@@ -43,6 +43,7 @@ internal fun DownloadHistoryPanel(accountId:Long,onOpenBook:(Long)->Unit) {
                     Text(task.title,style=MaterialTheme.typography.titleMedium)
                     Text("${task.format.name.uppercase()} · ${if(task.applyReplacement)"应用替换"else"原文"} · 并发 ${task.requestedConcurrency}",style=MaterialTheme.typography.labelMedium)
                     Text(downloadStatusText(DownloadUiState(task,entry.running)),style=MaterialTheme.typography.bodySmall)
+                    task.integrityIssues.forEach {issue->Text(issue.message,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)}
                     if(task.totalChapters>0||task.totalAssets>0)Text("章节 ${task.completedChapters}/${task.totalChapters} · 图片 ${task.completedAssets}/${task.totalAssets}",style=MaterialTheme.typography.labelSmall)
                     if(entry.running&&task.phase!=DownloadPhase.Paused)LinearProgressIndicator(Modifier.fillMaxWidth())
                     FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {

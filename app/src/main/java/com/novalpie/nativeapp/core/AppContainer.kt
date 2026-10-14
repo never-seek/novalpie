@@ -49,6 +49,15 @@ internal class AppContainer(context: Context) {
     private val speechProgress by lazy {com.novalpie.nativeapp.feature.reader.tts.SpeechProgressRecorder(application,api,applicationScope,readingProgressSync){environment.revision}}
     private val playbackDelegate = lazy { TtsPlaybackCoordinator(speechEngine,WebsiteSpeechChapterSource(application,api),applicationScope,speechProgress::record) }
     val playback by playbackDelegate
+    fun stopPlaybackIfInitialized() {
+        pendingSpeech = null
+        if (playbackDelegate.isInitialized()) playback.stop()
+    }
+    fun stopPlaybackForChapterIfInitialized(bookId:Long,chapterId:Long) {
+        pendingSpeech?.chapter?.takeIf {it.bookId==bookId&&it.chapterId==chapterId}?.let {pendingSpeech=null}
+        if(playbackDelegate.isInitialized())playback.state.value.chapter
+            ?.takeIf {it.bookId==bookId&&it.chapterId==chapterId}?.let {playback.stop()}
+    }
     fun refreshEnvironmentFromStores() {
         val revision=environment.revision
         environment.setToken(AuthSessionStore(application).loadToken())

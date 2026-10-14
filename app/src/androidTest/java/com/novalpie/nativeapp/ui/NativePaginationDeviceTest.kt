@@ -32,6 +32,35 @@ import java.util.concurrent.atomic.AtomicReference
 class NativePaginationDeviceTest {
     @get:Rule val compose=createAndroidComposeRule<com.novalpie.nativeapp.audit.ReaderTestActivity>()
 
+    @Test fun repeatedSpeechFollowsTheCorrectParagraphInBothDirections() {
+        val chapterId=System.currentTimeMillis()
+        val repeated="重复句，不能只按文字定位。"
+        val content=ReaderContent(null,"<p>$repeated</p><p>"+"这是两次重复句之间的填充正文。".repeat(180)+"</p><p>$repeated</p><p>QA_LAST_PAGE_MARKER</p>","fixture")
+        val speech=com.novalpie.nativeapp.feature.reader.tts.buildSpeechChapter(900110,chapterId,"QA",content,null,1,1,0)
+        val first=com.novalpie.nativeapp.feature.reader.tts.ReaderSpeechFocus(chapterId,speech.segments.first(),speech.positions.first())
+        val secondIndex=speech.positions.indexOfLast {it.blockId=="$chapterId:p:2"}
+        assertTrue(secondIndex>0)
+        val second=com.novalpie.nativeapp.feature.reader.tts.ReaderSpeechFocus(chapterId,speech.segments[secondIndex],speech.positions[secondIndex])
+        var focus by mutableStateOf<com.novalpie.nativeapp.feature.reader.tts.ReaderSpeechFocus?>(null)
+        val anchor=AtomicReference<ReaderViewportAnchor?>()
+        compose.setContent {MaterialTheme {
+            NativePagedReader(900110,chapterId,content,content,ReaderUiOptions(pageTurnMode=true,pageTurnEffect="none",showComments=false),
+                ReaderChapterEntryPosition.Start,null,FontFamily.Default,Color.Black,Color.White,false,false,
+                onTap={_,_->},onBoundary={},registerTurn={},onAnchor={anchor.set(it)},onPreview={_,_->},modifier=Modifier.fillMaxSize(),
+                followFocus=focus,highlightFocus=focus){}
+        }}
+        compose.waitUntil(15000){anchor.get()!=null}
+        val initial=anchor.get()
+        compose.runOnIdle{focus=second}
+        // A paragraph after the spoken one may legitimately belong to the following page.
+        // Prove this is the other occurrence: it is visible on a later anchored page, not page0.
+        compose.waitUntil(10000){anchor.get()!=initial && compose.onAllNodesWithText(repeated,substring=true).fetchSemanticsNodes().isNotEmpty()}
+        assertTrue(anchor.get()!!.itemIndexWithinChapter>0)
+        compose.runOnIdle{focus=first}
+        compose.waitUntil(10000){anchor.get()==initial}
+        compose.onAllNodesWithText("QA_LAST_PAGE_MARKER",substring=true).assertCountEquals(0)
+    }
+
     @Test fun replacementMarkupStaysTextAndReflowDoesNotInventAnIllustrationPage() {
         val chapterId = System.currentTimeMillis()
         val original = ReaderContent(null, "<p>前面 <b>Alice</b> 后面</p>", "test")
@@ -118,7 +147,9 @@ class NativePaginationDeviceTest {
         val anchor=AtomicReference<ReaderViewportAnchor?>()
         val boundaries=CopyOnWriteArrayList<Int>()
         val chapterId=System.currentTimeMillis()
-        val content=ReaderContent("分页测试","<p>这是一段必须跨越多页的中文长段落。🙂".plus("真实行边界不能截断，也不能跳过或重复。".repeat(90))+"</p><p>最后一段完整可见。</p>","test")
+        // Must have at least three pages even on the 600dp MuMu/tablet viewport. A two-page
+        // fixture makes its first swipe an actual chapter boundary, not a third-page move.
+        val content=ReaderContent("分页测试","<p>这是一段必须跨越多页的中文长段落。🙂".plus("真实行边界不能截断，也不能跳过或重复。".repeat(360))+"</p><p>最后一段完整可见。</p>","test")
         compose.activityRule.scenario.onActivity {it.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
         compose.setContent {
             MaterialTheme {

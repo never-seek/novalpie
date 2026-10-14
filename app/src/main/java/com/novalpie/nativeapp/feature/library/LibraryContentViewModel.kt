@@ -58,7 +58,8 @@ internal class LibraryContentViewModel(
         state=HomeState(user=tokenProfile?.let{LoadResult.Success(it)} ?: LoadResult.Loading,groups=LoadResult.Loading,
             favorites=retained?.let{LoadResult.Success(it.map(FavoriteEntry::book))} ?: if(next.tab==FavoritesContentTab.Favorites)LoadResult.Loading else LoadResult.Idle,
             favoriteEntries=retained?.let{LoadResult.Success(it)} ?: if(next.tab==FavoritesContentTab.Favorites)LoadResult.Loading else LoadResult.Idle,
-            favoriteTotal=favoriteTotal,history=if(next.tab==FavoritesContentTab.History)LoadResult.Loading else LoadResult.Idle,
+            favoriteTotal=favoriteTotal,favoriteTotalPages=state.favoriteTotalPages.takeIf {same||next.tab==FavoritesContentTab.History},
+            historyTotalPages=state.historyTotalPages.takeIf{same||next.tab==FavoritesContentTab.Favorites},history=if(next.tab==FavoritesContentTab.History)LoadResult.Loading else LoadResult.Idle,
             favoritesPage=next.page,options=options.copy(currentPage=next.page),selectedFavoriteGroupId=next.groupId,actionMessage=message)
         requests=work.launch {
             supervisorScope {
@@ -74,8 +75,8 @@ internal class LibraryContentViewModel(
                         if(serial!=generation)return@launch
                         val entries=reconcile(refreshed.associateBy{it.book.id}.values.toList())
                         state=if(next.tab==FavoritesContentTab.Favorites)state.copy(favorites=LoadResult.Success(entries.map(FavoriteEntry::book)),
-                            favoriteEntries=LoadResult.Success(entries),favoriteTotal=response.total ?: favoriteTotal,favoritesPage=response.page,favoritesCanLoadMore=response.hasMore())
-                        else state.copy(history=LoadResult.Success(entries),historyTotal=response.total,favoritesPage=response.page,favoritesCanLoadMore=response.hasMore())
+                            favoriteEntries=LoadResult.Success(entries),favoriteTotal=response.total ?: favoriteTotal,favoriteTotalPages=response.knownTotalPages(),favoritesPage=response.page,favoritesCanLoadMore=response.hasMore())
+                        else state.copy(history=LoadResult.Success(entries),historyTotal=response.total,historyTotalPages=response.knownTotalPages(),favoritesPage=response.page,favoritesCanLoadMore=response.hasMore())
                         onLoaded()
                     }catch(cancelled:CancellationException){throw cancelled}
                     catch(failure:Exception){if(serial==generation)state=if(next.tab==FavoritesContentTab.Favorites)state.copy(
@@ -108,8 +109,8 @@ internal class LibraryContentViewModel(
                 val previous=if(current.tab==FavoritesContentTab.Favorites)(state.favoriteEntries as? LoadResult.Success)?.value.orEmpty()
                     else (state.history as? LoadResult.Success)?.value.orEmpty()
                 val entries=reconcile((previous+response.items).associateBy{it.book.id}.values.toList())
-                state=if(current.tab==FavoritesContentTab.Favorites)state.copy(favorites=LoadResult.Success(entries.map(FavoriteEntry::book)),favoriteEntries=LoadResult.Success(entries),favoriteTotal=response.total ?: state.favoriteTotal)
-                    else state.copy(history=LoadResult.Success(entries),historyTotal=response.total ?: state.historyTotal)
+                state=if(current.tab==FavoritesContentTab.Favorites)state.copy(favorites=LoadResult.Success(entries.map(FavoriteEntry::book)),favoriteEntries=LoadResult.Success(entries),favoriteTotal=response.total ?: state.favoriteTotal,favoriteTotalPages=response.knownTotalPages() ?: state.favoriteTotalPages)
+                    else state.copy(history=LoadResult.Success(entries),historyTotal=response.total ?: state.historyTotal,historyTotalPages=response.knownTotalPages() ?: state.historyTotalPages)
                 state=state.copy(favoritesPage=response.page,options=state.options.copy(currentPage=response.page),favoritesCanLoadMore=response.hasMore(),favoritesLoadingMore=false,favoritesLoadMoreError=null)
                 onLoaded()
             }catch(cancelled:CancellationException){throw cancelled}
@@ -132,5 +133,8 @@ internal class LibraryContentViewModel(
     }
     fun environmentChanged(){generation++;requests?.cancel();query=null;state=HomeState(options=state.options.copy(currentPage=1))}
     fun close(){generation++;work.cancel()}
+    private fun FavoritePage.knownTotalPages():Int?=totalPages?.coerceAtLeast(0) ?: total?.takeIf{it>=0}?.let {
+        if(pageSize<=0)null else ((it.toLong()+pageSize-1)/pageSize).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    }
     private fun FavoritePage.hasMore()=totalPages?.let{page<it} ?: total?.let{page.toLong()*pageSize<it} ?: (items.size>=pageSize)
 }
