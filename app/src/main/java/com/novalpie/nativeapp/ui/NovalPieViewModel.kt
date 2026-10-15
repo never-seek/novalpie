@@ -794,6 +794,7 @@ data class ReaderState(
     /** Local-only action state for the reader settings' targeted cache cleanup. */
     val clearingChapterCache: Boolean = false,
     val chapterCacheActionMessage: String? = null,
+    val catalogRefreshing: Boolean = false,
 )
 
 enum class SearchViewMode {
@@ -815,7 +816,8 @@ data class SearchOptions(
     val advancedSyntaxEnabled: Boolean = false,
     val viewMode: SearchViewMode = SearchViewMode.Grid,
     /** Local source-compatible policy: retain search preferences across launches or not. */
-    val cacheEnabled: Boolean = true
+    val cacheEnabled: Boolean = true,
+    val cacheMode: String = if(cacheEnabled) "all" else "none",
 )
 
 data class ReaderUiOptions(
@@ -1541,8 +1543,9 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     /** Mirrors the source toolbar: keep the active filters, but opt in/out of retaining them locally. */
     fun toggleSearchSettingsCache() {
-        searchFeature.toggleCache()
+        searchFeature.cycleCacheMode()
     }
+    fun selectSearchCacheMode(mode:String)=searchFeature.setCacheMode(mode)
 
     fun saveSearchConditions() = searchFeature.saveConditions()
 
@@ -2076,7 +2079,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val route = currentRoute as? AppRoute.Reader ?: return
         val state = readerState
         if (
-            state.loadingNextChapter || state.loadingPreviousChapter ||
+            state.loadingNextChapter || state.loadingPreviousChapter || state.catalogRefreshing ||
             (direction > 0 && (state.nextChapterExhausted || state.nextChapterWaitingForCatalog))
         ) return
         val chapters = (state.chapters as? LoadResult.Success)?.value
@@ -2269,62 +2272,48 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     /** Refreshes only the chapter catalog, preserving the current body and LazyColumn position. */
     fun refreshReaderCatalog() {
         val route = currentRoute as? AppRoute.Reader ?: return
-        val state = readerState
-        if (state.bookId != route.bookId || state.chapterId != route.chapterId) return
-        if (state.chapters is LoadResult.Loading) return
-
-        val requestSerial = ++readerCatalogRequestSerial
-        readerState = state.copy(
-            chapters = LoadResult.Loading,
-            nextChapterError = null,
-            nextChapterWaitingForCatalog = false,
-            nextChapterExhausted = false,
-        )
+        val before = readerState
+        if (before.bookId != route.bookId || before.chapterId != route.chapterId ||
+            before.catalogRefreshing || before.chapters is LoadResult.Loading) return
+        val serial = ++readerCatalogRequestSerial
+        val continuing = before.nextChapterEndConfirmationRequested || before.nextChapterWaitingForCatalog
+        val edgeId = if (continuing) before.chapterContents.lastOrNull()?.chapterId ?: before.visibleChapterId ?: route.chapterId
+            else route.chapterId
+        val oldCatalog = (before.chapters as? LoadResult.Success)?.value
+        readerState = before.copy(catalogRefreshing = true,
+            chapters = if (oldCatalog == null) LoadResult.Loading else before.chapters,
+            nextChapterError = null)
+        val cacheStore = readerChapterCacheStore.forCurrentAccount()
         val replaceMode = readerUiOptions.replaceMode
         val showImages = readerUiOptions.showImages
+        fun fresh() = serial == readerCatalogRequestSerial && currentRoute == route &&
+            readerState.bookId == route.bookId && readerState.chapterId == route.chapterId
         viewModelScope.launch {
-            val result = runCatching { api.chapters(route.bookId) }
-            if (
-                requestSerial != readerCatalogRequestSerial ||
-                currentRoute != route ||
-                readerState.bookId != route.bookId ||
-                readerState.chapterId != route.chapterId
-            ) return@launch
-
-            val refreshed = result.getOrNull()
-            val hasCurrentChapter = refreshed != null && !readerCatalogIsIncomplete(
-                currentChapterId = route.chapterId,
-                chapters = refreshed,
-            )
-            val loadedIds = readerState.chapterContents.map { it.chapterId }.toSet()
-                .ifEmpty { setOf(route.chapterId) }
-            val next = refreshed?.let {
-                nextReaderChapterForInfiniteScroll(route.chapterId, it, loadedIds)
-            }
-            val cacheStates = refreshed?.let { chapters ->
-                withContext(Dispatchers.IO) {
-                    readerChapterCacheStore.cacheStates(
-                        bookId = route.bookId,
-                        replaceMode = replaceMode,
-                        showImages = showImages,
-                        chapters = chapters,
-                    )
-                }
-            }.orEmpty()
+            val result = try { Result.success(kotlinx.coroutines.withTimeout(15_000) { api.chapters(route.bookId) }) }
+                catch (timeout: kotlinx.coroutines.TimeoutCancellationException) { Result.failure(timeout) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (failure: Exception) { Result.failure(failure) }
+            if (!fresh()) return@launch
+            val catalog = result.getOrNull()
+            val complete = catalog != null && !readerCatalogIsIncomplete(edgeId,catalog)
+            val loaded = readerState.chapterContents.map {it.chapterId}.toSet().ifEmpty {setOf(route.chapterId)}
+            val successor = catalog?.let {nextReaderChapterForInfiniteScroll(edgeId,it,loaded)}
             readerState = readerState.copy(
-                chapters = result.toLoadResult("阅读器目录"),
-                nextChapterWaitingForCatalog = result.isSuccess && !hasCurrentChapter,
-                // A refresh that was explicitly requested to confirm an apparent end may now
-                // close the book; ordinary initial catalog loads still leave the confirmation to
-                // loadNextReaderChapter so the user never gets a false terminal state.
+                catalogRefreshing = false,
+                chapters = if (result.isSuccess) LoadResult.Success(catalog.orEmpty())
+                    else if (oldCatalog != null) LoadResult.Success(oldCatalog) else result.toLoadResult("阅读器目录"),
+                nextChapterWaitingForCatalog = result.isSuccess && !complete,
                 nextChapterEndConfirmationRequested = false,
-                nextChapterExhausted = result.isSuccess &&
-                    hasCurrentChapter &&
-                    next == null &&
-                    state.nextChapterEndConfirmationRequested,
-                nextChapterError = null,
-                chapterCacheStates = cacheStates,
+                nextChapterExhausted = result.isSuccess && complete && successor == null && continuing,
+                nextChapterError = if(result.isFailure&&oldCatalog!=null) "章节目录确认失败，请重试：${result.exceptionOrNull()?.message ?: "网络异常"}" else null,
             )
+            // The directory decides the terminal state immediately; disk-cache scanning must not
+            // leave an image-heavy book displaying placeholder cards below the final paragraph.
+            if(catalog!=null) launch {
+                val states=withContext(Dispatchers.IO) {cacheStore.cacheStates(route.bookId,replaceMode,showImages,catalog)}
+                if(fresh())readerState=readerState.copy(chapterCacheStates=states)
+            }
+            if(continuing&&complete&&successor!=null&&fresh())loadNextReaderChapter(edgeId)
         }
     }
 
@@ -2449,7 +2438,8 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             readerProgressRevision = readerProgressRevision,
             syncedProgressRevision = syncedCollectionProgressRevision,
         ) || homeState.favoriteEntries is LoadResult.Idle || homeState.favoriteEntries is LoadResult.Error
-        FavoritesContentTab.History -> homeState.history is LoadResult.Idle || homeState.history is LoadResult.Error
+        FavoritesContentTab.History -> collectionRefreshRequired(readerProgressRevision,syncedCollectionProgressRevision) ||
+            homeState.history is LoadResult.Idle || homeState.history is LoadResult.Error
     }
 
     private fun shouldLoadForumOnTabEntry(): Boolean =
@@ -4901,7 +4891,6 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                 loadBookDetail(detail.bookId)
             }
             if (
-                favoritesUiOptions.tab == FavoritesContentTab.Favorites &&
                 collectionRefreshRequired(
                     readerProgressRevision = readerProgressRevision,
                     syncedProgressRevision = syncedCollectionProgressRevision,
@@ -4933,7 +4922,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             options=options,
             tokenProfile=authToken?.let(::decodeAuthTokenProfile),
             message=actionMessage,
-            retain=options.tab==FavoritesContentTab.Favorites&&collectionRefreshRequired(readerProgressRevision,syncedCollectionProgressRevision),
+            retain=collectionRefreshRequired(readerProgressRevision,syncedCollectionProgressRevision),
         )
         resolveMissingReaderProgressBookTitle()
     }
@@ -5621,12 +5610,16 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
 
     /** Keep a loaded shelf visually current before its one post-reader source refresh returns. */
     private fun updateLoadedCollectionProgress() {
-        val entries = (homeState.favoriteEntries as? LoadResult.Success)?.value ?: return
-        val updatedEntries = favoriteEntriesWithLocalReaderProgress(entries, recentReaderProgresses)
-        if (updatedEntries == entries) return
-        homeState = homeState.copy(
-            favorites = LoadResult.Success(updatedEntries.map(FavoriteEntry::book)),
-            favoriteEntries = LoadResult.Success(updatedEntries),
+        val current=homeState
+        val entries=(current.favoriteEntries as? LoadResult.Success)?.value
+        val history=(current.history as? LoadResult.Success)?.value
+        val updated=entries?.let{favoriteEntriesWithLocalReaderProgress(it,recentReaderProgresses)}
+        val updatedHistory=history?.let{favoriteEntriesWithLocalReaderProgress(it,recentReaderProgresses)}
+        if(updated==entries&&updatedHistory==history)return
+        homeState=current.copy(
+            favorites=updated?.let{LoadResult.Success(it.map(FavoriteEntry::book))} ?: current.favorites,
+            favoriteEntries=updated?.let{LoadResult.Success(it)} ?: current.favoriteEntries,
+            history=updatedHistory?.let{LoadResult.Success(it)} ?: current.history,
         )
     }
 

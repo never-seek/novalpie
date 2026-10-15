@@ -242,3 +242,9 @@ private fun discoverChoices(
     values.map { (value, label) ->
         DiscoverFilterChoice(value = value, label = label, selected = selected == value)
     }
+
+internal fun searchCachePolicyActionLabel(mode:String)=when(mode) {
+    "none"->"不缓存搜索设置（点击切换）"
+    "no-query"->"不缓存搜索框信息（点击切换）"
+    else->"缓存所有内容（点击切换）"
+}

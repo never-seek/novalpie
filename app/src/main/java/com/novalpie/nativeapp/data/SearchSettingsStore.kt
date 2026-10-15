@@ -17,7 +17,9 @@ data class PersistedSearchSettings(
     /** Mirrors the source's local `novel_search_settings.viewMode` value. */
     val viewMode: String = "grid",
     /** Mirrors the source toolbar's local "do not cache search settings" switch. */
-    val cacheEnabled: Boolean = true
+    val cacheEnabled: Boolean = true,
+    val cacheMode: String = if(cacheEnabled) "all" else "none",
+    val keyword: String = "",
 )
 
 class SearchSettingsStore(context: Context) {
@@ -26,6 +28,7 @@ class SearchSettingsStore(context: Context) {
     fun load(): PersistedSearchSettings {
         val cacheEnabled = prefs.getBoolean(KEY_CACHE_ENABLED, true)
         if (!cacheEnabled) return PersistedSearchSettings(cacheEnabled = false)
+        val mode=prefs.getString("cache_mode","all").takeIf{it in listOf("all","no-query")} ?: "all"
         val storedAdultFilter = prefs.getString(KEY_ADULT_FILTER, null)?.takeIf { it.isNotBlank() }
         return PersistedSearchSettings(
             sortBy = prefs.getString(KEY_SORT_BY, null)?.takeIf { it.isNotBlank() } ?: PersistedSearchSettings().sortBy,
@@ -43,7 +46,9 @@ class SearchSettingsStore(context: Context) {
             viewMode = prefs.getString(KEY_VIEW_MODE, null)
                 ?.takeIf { it == VIEW_MODE_GRID || it == VIEW_MODE_LIST }
                 ?: PersistedSearchSettings().viewMode,
-            cacheEnabled = true
+            cacheEnabled = true,
+            cacheMode = mode,
+            keyword = if(mode=="all")prefs.getString("keyword","").orEmpty() else "",
         )
     }
 
@@ -54,6 +59,8 @@ class SearchSettingsStore(context: Context) {
         }
         prefs.edit()
             .putBoolean(KEY_CACHE_ENABLED, true)
+            .putString("cache_mode",settings.cacheMode.takeIf{it in listOf("all","no-query")} ?: "all")
+            .putString("keyword",if(settings.cacheMode=="all")settings.keyword else "")
             .putString(KEY_SORT_BY, settings.sortBy)
             .putString(KEY_SORT_ORDER, settings.sortOrder)
             .putString(KEY_SCOPE, settings.scope)
@@ -82,6 +89,7 @@ class SearchSettingsStore(context: Context) {
     /** Drops stored values but retains the source-equivalent cache policy toggle. */
     fun clearCachedSettings() {
         prefs.edit()
+            .remove("keyword")
             .remove(KEY_SORT_BY)
             .remove(KEY_SORT_ORDER)
             .remove(KEY_SCOPE)

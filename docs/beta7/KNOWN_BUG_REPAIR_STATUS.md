@@ -138,3 +138,15 @@
 - 真实搜索GET/标签GET在后半程发生网络超时，已记录；uiautomator退出SIGSEGV为shell工具，不冒报App崩溃。实际Save反馈后冷启恢复通过，失败驱动保留。
 - 报告 `D:/NovalPie/agent-bridge/artifacts/beta7-search-retranslate-20261008/GITHUB-HISTORY-REPAIR-REPORT.md`；仓库 `docs/beta7/20261008-github-history-search-retranslation-audit.md`。未commit/push/tag/release，不误称GitHub公开资产已更新。
 - Owner仍Codex，持续审计未完成；消息/工作区未知回执、超大章资源/复杂EPUB/历史迁移/全部线上角色与适配性能证据等仍必须继续，不把本轮绿灯当成完整Beta7完成。
+
+## 2026-10-15 R2用户实机反馈：重翻/确切末章/搜索小控件
+- 原生预检把配置列表缺approval_status误当无可用API。真实帐号3条healthyactive、approval均省略；精确book358153最新89章v2POST真实接受，修后原生UI再点收到409任务处理中。改用服务端权威判断，保留未知回执/owner与取消防重。
+- 末章后台目录确认不丢旧目录/不显示大型书卡骨架，按真实windowedge判定；先发布终态后扫描缓存；15s真实HTTP预算包含认证回退，无目录时失败重试仍可用。确切用户书89章实机自动已读完，无手动retry。
+- 搜索控件实点：补none/no-query/all三态，主动保存关键词+完整条件，清快照不清当前tag；11组实际query全成功，来源/字数结果断言。用户设置未改。
+- 最终1468tests/208suites全绿，Debug/AndroidTest构建exit0，MuMu22设备全通过；初次组合1个正文准备驱动race已修等待语义并保留日志。最后共享deadline小改后未重跑Lint/R8（前一版Lint0error19warning1info），最终为Debug验证包，不误称优化发布包。
+- 安装包SHA256 `de178792a1eeeb1b26ac9fd2f26ab03183857aada86cfba82e7a14c28bd589eb`，设备hash相同，登录保留。未commit/push/tag/替换GitHub，现公开R2不含本批；报告D:/NovalPie/agent-bridge/artifacts/beta7-runtime-feedback-20261015/RUNTIME-FEEDBACK-REPAIR-REPORT.md。Owner仍Codex，完整审计继续。
+
+## 2026-10-15 历史自动同步 + R2同日更新2发布准备
+- 修历史遗漏3处：根入口dirty进度刷新、阅读器返回、localprogress reconciliation；LibraryContentViewModel后台刷新保留历史行/多页，不混收藏记录。
+- 4条新回归旧9tests/4fail，现1472单测/208suites全绿；同源码Debug MuMu23设备全通过。历史UI1/20→返回4/20→底导航返回5/20，不点同步。此前重翻/章末/搜索未公开修复也包含。
+- 用户明确要求更新GitHub推荐3MBR2，versionCode2026101502递增，仍同Release，不改旧21MB对照资产。发布收据待R8实际安装和远端digest复核。

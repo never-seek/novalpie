@@ -5,7 +5,7 @@
 [![UI Toolkit](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4.svg?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![Architecture](https://img.shields.io/badge/Architecture-Clean%20%2B%20MVI%2FMVVM-blue.svg)](docs/beta7/architecture-and-migration.md)
 [![Release](https://img.shields.io/badge/Release-v2.0.0--native--beta7-orange.svg)](https://github.com/never-seek/novalpie/releases/tag/v2.0.0-native-beta7)
-[![Tests](https://img.shields.io/badge/Tests-1461%20Passing%20(0%20Failures)-brightgreen.svg)](docs/beta7/STATUS.md)
+[![Tests](https://img.shields.io/badge/Tests-1472%20Passing%20(0%20Failures)-brightgreen.svg)](docs/beta7/STATUS.md)
 
 NovalPie 2.0 是专为 [novalpie.cc](https://novalpie.cc) 社区量身打造的高性能、现代原生 Android 客户端。
 
@@ -14,6 +14,10 @@ NovalPie 2.0 是专为 [novalpie.cc](https://novalpie.cc) 社区量身打造的�
 ---
 
 ## 2026-10-15 · Beta 7 R2 修订发布
+
+**同日追加修复（版本号 2026101502）**：修复本人 API 配置审核字段缺失导致重翻误拦截；《浪漫奇幻的NTR故事》章末自动确认完成且不再铺大片占位；搜索补源站三态缓存和保存关键词；历史记录与收藏一样在读后返回自动同步，保留已加载行与页码。此前仅在MuMu安装的修复本次一并放入R2公开优化包。
+
+**3MB 左右的 APK 是完整优化版，不是补丁包。** 关闭调试并经R8/资源压缩减小体积；可直接覆盖旧版。小说/封面仍从网站按权限加载，系统TTS依赖设备语音引擎，文件小不等于删除这些功能。
 
 **不另开 Beta 8：新版和 2026-10-01 旧版保留在同一个 [Beta 7 Release](https://github.com/never-seek/novalpie/releases/tag/v2.0.0-native-beta7)。推荐下载名称包含 `beta7-r2-20261015` 的新版；旧 APK 标为“旧版”，原下载链接不变。**
 
@@ -24,7 +28,7 @@ NovalPie 2.0 是专为 [novalpie.cc](https://novalpie.cc) 社区量身打造的�
 - 下载与编辑：原生 EPUB/TXT 保留原图、替换快照和并发控制；完整性异常必须选择重试或明确接受，发布恢复避免重复授权/重复文件；编辑器保留原资源与元数据。
 - 收藏/个人：真实总页数、签到防重、部分保存结果和反应分项修复；徽章常态预览不再被 hover 样式污染。
 
-**版本**：`2.0.0-native-beta7-r2`，`versionCode = 2026101501`。包名与签名沿用旧版；可覆盖升级，**无需卸载**。新旧包不能并排安装；旧版只供对比，Android 通常不允许直接用更低版本号覆盖回退，请不要为回退随意清数据。
+**版本**：`2.0.0-native-beta7-r2`，`versionCode = 2026101502`。包名与签名沿用旧版；可覆盖升级，**无需卸载**。新旧包不能并排安装；旧版只供对比，Android 通常不允许直接用更低版本号覆盖回退，请不要为回退随意清数据。
 
 源码修订将同步到当前原生分支，并以 `v2.0.0-native-beta7-r2` 独立标签标记；既有 Beta 7 Release 标签不改写。
 
@@ -184,7 +188,7 @@ app/src/main/java/com/novalpie/nativeapp/
 - **网络与序列化**：OkHttp 4 + org.json 协议归一化
 - **图片与多媒体加载**：Coil 2（图片与 GIF / WebP；复杂装扮另有受限渲染，非任意 SVG 解码器）
 - **构建体系**：Gradle 8.9 + Android Gradle Plugin (AGP) 8.7.3
-- **质量保障**：JUnit4 + Robolectric + MockWebServer（共计 **1,461 项自动化单元测试**；覆盖范围与未验事项见修复台账）
+- **质量保障**：JUnit4 + Robolectric + MockWebServer（共计 **1,472 项自动化单元测试**；覆盖范围与未验事项见修复台账）
 
 ---
 

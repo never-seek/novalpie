@@ -153,6 +153,7 @@ import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.BookmarkAdded
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -692,6 +693,7 @@ fun NovalPieApp(
                     onWordCountRangeChange = viewModel::updateSearchWordCountRange,
                     onAdvancedSyntaxEnabledChange = viewModel::updateSearchAdvancedSyntaxEnabled,
                     onSaveConditions = viewModel::saveSearchConditions,
+                    onSelectCacheMode = viewModel::selectSearchCacheMode,
                     onToggleSettingsCache = viewModel::toggleSearchSettingsCache,
                     onClearSettingsCache = viewModel::clearSearchSettingsCache,
                     onToggleViewMode = viewModel::toggleSearchViewMode,
@@ -3927,6 +3929,7 @@ private fun SearchScreen(
     onWordCountRangeChange: (String) -> Unit,
     onAdvancedSyntaxEnabledChange: (Boolean) -> Unit,
     onSaveConditions: () -> Unit,
+    onSelectCacheMode: (String) -> Unit,
     onToggleSettingsCache: () -> Unit,
     onClearSettingsCache: () -> Unit,
     onToggleViewMode: () -> Unit,
@@ -4114,6 +4117,7 @@ private fun SearchScreen(
                         onSourceChange = onSourceChange,
                         onWordCountRangeChange = onWordCountRangeChange,
                         onSaveConditions = onSaveConditions,
+                        onSelectCacheMode = onSelectCacheMode,
                         onToggleSettingsCache = onToggleSettingsCache,
                         onClearSettingsCache = onClearSettingsCache
                     )
@@ -4493,7 +4497,8 @@ internal fun SourceSearchFilterPanel(
     onWordCountRangeChange: (String) -> Unit,
     onSaveConditions: () -> Unit,
     onToggleSettingsCache: () -> Unit,
-    onClearSettingsCache: () -> Unit
+    onClearSettingsCache: () -> Unit,
+    onSelectCacheMode: (String) -> Unit = {},
 ) {
     var page by remember { mutableStateOf(searchFilterRules) }
     var showUsage by remember { mutableStateOf(false) }
@@ -4522,25 +4527,15 @@ internal fun SourceSearchFilterPanel(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(NovalPieSpacing.md),
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("缓存搜索设置", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                if (options.cacheEnabled) "下次打开 App 时恢复当前设置" else "本次设置不会在下次启动时恢复",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                    Text("自动保存范围",style=MaterialTheme.typography.titleSmall)
+                    listOf("none" to "不缓存搜索设置","no-query" to "不缓存搜索框信息","all" to "缓存所有内容").forEach { (mode,label) ->
+                        Row(Modifier.fillMaxWidth().clickable { onSelectCacheMode(mode) },verticalAlignment=Alignment.CenterVertically) {
+                            RadioButton(selected=options.cacheMode==mode,onClick={onSelectCacheMode(mode)})
+                            Text(label,style=MaterialTheme.typography.bodyMedium)
                         }
-                        Switch(
-                            checked = options.cacheEnabled,
-                            onCheckedChange = { enabled ->
-                                if (enabled != options.cacheEnabled) onToggleSettingsCache()
-                            },
-                        )
                     }
+                    Text("只影响下次启动恢复，不删除当前规则或包含/屏蔽标签。保存按钮可随时保存全部条件。",style=MaterialTheme.typography.bodySmall)
+
                 }
             },
             confirmButton = { TextButton(onClick = { showSettings = false }) { Text("完成") } }
@@ -4550,7 +4545,7 @@ internal fun SourceSearchFilterPanel(
         AlertDialog(
             onDismissRequest = { confirmClearCache = false },
             title = { Text("清除已保存条件") },
-            text = { Text("只清除本地筛选、标签和视图设置；搜索历史与网站数据不受影响。") },
+            text = { Text("仅删除下次启动恢复的快照。当前规则、包含/屏蔽标签、字数和结果保留，搜索历史不受影响。") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmClearCache = false
@@ -4604,10 +4599,10 @@ internal fun SourceSearchFilterPanel(
                     Icon(Icons.Filled.Save, contentDescription="保存当前搜索条件", tint=MaterialTheme.colorScheme.primary,
                         modifier=Modifier.size(NovalPieSize.iconSm))
                 }
-                IconButton(onClick = { onToggleSettingsCache(); conditionNotice=if(options.cacheEnabled) "已关闭自动保存，当前条件不变" else "已开启自动保存" }, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = { onToggleSettingsCache(); conditionNotice="已切换自动保存范围，当前条件保留" }, modifier = Modifier.size(32.dp)) {
                     Icon(
-                        if(options.cacheEnabled) Icons.Filled.BookmarkAdded else Icons.Filled.Block,
-                        contentDescription = if (options.cacheEnabled) "不缓存搜索设置" else "缓存搜索设置",
+                        when(options.cacheMode){"none"->Icons.Filled.Block;"no-query"->Icons.Filled.RemoveCircleOutline;else->Icons.Filled.BookmarkAdded},
+                        contentDescription = searchCachePolicyActionLabel(options.cacheMode),
                         tint = if (options.cacheEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(NovalPieSize.iconSm)
                     )
@@ -11930,7 +11925,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readerBodyItems(
  * stable LazyColumn key above observes this item entering the viewport and starts the request.
  */
 @Composable
-private fun ReaderInfiniteScrollEnd(
+internal fun ReaderInfiniteScrollEnd(
     state: ReaderState,
     chapters: List<Chapter>,
     chapterContents: List<ReaderChapterContent>,
@@ -11947,8 +11942,13 @@ private fun ReaderInfiniteScrollEnd(
             retryLabel = "重试下一章",
             onRetry = onRetryNextChapter,
         )
-        state.chapters is LoadResult.Idle || state.chapters is LoadResult.Loading ->
-            LibraryLoadingBlock("正在同步章节目录")
+        state.catalogRefreshing || state.chapters is LoadResult.Idle || state.chapters is LoadResult.Loading ->
+            Row(Modifier.fillMaxWidth().padding(vertical=12.dp),horizontalArrangement=Arrangement.Center,
+                verticalAlignment=Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(18.dp),strokeWidth=2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("正在确认章节目录…",style=MaterialTheme.typography.bodySmall)
+            }
         state.chapters is LoadResult.Error -> NpErrorState(
             message = (state.chapters as LoadResult.Error).message,
             retryLabel = retryActionLabel("章节目录"),

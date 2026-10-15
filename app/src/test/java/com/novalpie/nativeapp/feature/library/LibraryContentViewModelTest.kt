@@ -62,4 +62,16 @@ class LibraryContentViewModelTest {
         assertEquals(listOf(1L,2L),(model.state.favoriteEntries as LoadResult.Success).value.map{it.book.id})
         assertEquals(2,model.state.favoritesPage)
     }
+    @Test fun historyAutoRefreshRetainsItsRowsAndPagesUntilTheNewReplyArrives()=runTest {
+        var refreshing=false;val reply=CompletableDeferred<FavoritePage>()
+        val repository=Repository{if(refreshing&&it.page==1)reply.await()else page(it.page,it.page.toLong())}
+        val model=LibraryContentViewModel(repository,backgroundScope)
+        model.load(LibraryQuery(tab=FavoritesContentTab.History));runCurrent();model.loadMore();runCurrent()
+        val previous=(model.state.history as LoadResult.Success).value
+        refreshing=true;model.load(LibraryQuery(tab=FavoritesContentTab.History,page=2),retain=true);runCurrent()
+        assertEquals("History needs the same non-destructive refresh as Favorites",previous,(model.state.history as? LoadResult.Success)?.value)
+        reply.complete(page(1,11));runCurrent()
+        assertEquals(listOf(11L,2L),(model.state.history as LoadResult.Success).value.map{it.book.id})
+        assertEquals(2,model.state.favoritesPage)
+    }
 }

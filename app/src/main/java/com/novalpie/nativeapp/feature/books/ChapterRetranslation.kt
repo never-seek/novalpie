@@ -41,14 +41,10 @@ internal fun retranslationChapterNumbers(input:String,available:List<Int>):List<
 
 internal interface ChapterRetranslationRepository {
     suspend fun chapters(bookId:Long):List<Chapter>
-    suspend fun hasApprovedPersonalModel():Boolean
     suspend fun submit(bookId:Long,numbers:List<Int>):ForumActionResult
 }
 internal class WebsiteChapterRetranslationRepository(private val api:NovalPieApi):ChapterRetranslationRepository {
     override suspend fun chapters(bookId:Long)=api.chapters(bookId)
-    override suspend fun hasApprovedPersonalModel()=api.workspaceApiConfigs().any {
-        it.isActive&&it.isHealthy==true&&it.approvalStatus=="approved"
-    }
     override suspend fun submit(bookId:Long,numbers:List<Int>)=api.retranslateNovelChapters(bookId,numbers)
 }
 internal data class ChapterRetranslationState(
@@ -117,10 +113,8 @@ internal class ChapterRetranslationController(
         scope.launch {
             var written=false
             try {
-                if(!repository.hasApprovedPersonalModel()) {
-                    if(state.bookId==before.bookId&&owner==ownerEpoch)state=state.copy(message="请先在工作区上传并激活已审核、健康的本人 API。仅本机 API 请使用工作区自助翻译。")
-                    return@launch
-                }
+                // Listing metadata can omit approval_status even for an allowed account.
+                // The same v2 POST as the website is the authoritative permission decision.
                 if(owner!=ownerEpoch)return@launch
                 if(environment!=environmentRevision()) {
                     if(state.bookId==before.bookId)state=state.copy(message="网络配置已变化，本次尚未提交；请重新确认后提交")

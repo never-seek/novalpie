@@ -27,6 +27,40 @@ import java.util.concurrent.atomic.AtomicInteger
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk=[35])
 class RootStateRegressionTest {
+    @Test fun returningFromReaderAutomaticallyRefreshesTheActiveHistoryTab(){
+        Sandbox{null}.use{s->
+            s.model.selectFavoritesContentTab(FavoritesContentTab.History)
+            s.pumpUntil("history loaded",{s.model.homeState.history is LoadResult.Success})
+            val before=s.requests.count{it=="/api/favorites/history"}
+            s.model.javaClass.getDeclaredField("readerProgressRevision").apply{isAccessible=true}.setLong(s.model,10L)
+            s.nav(AppRoute.Home,AppRoute.Reader(2,10));s.model.goBack();s.pump()
+            assertTrue("Reading in History never triggered the automatic source refresh",s.requests.count{it=="/api/favorites/history"}>before)
+            assertEquals(FavoritesContentTab.History,s.model.homeState.options.tab)
+        }
+    }
+    @Test fun reenteringCollectionWithUnsyncedProgressRefreshesHistoryToo(){
+        Sandbox{null}.use{s->
+            s.model.selectFavoritesContentTab(FavoritesContentTab.History)
+            s.pumpUntil("history loaded",{s.model.homeState.history is LoadResult.Success})
+            val before=s.requests.count{it=="/api/favorites/history"}
+            s.model.openTab(BottomTab.Tools);s.pump()
+            s.model.javaClass.getDeclaredField("readerProgressRevision").apply{isAccessible=true}.setLong(s.model,10L)
+            s.model.openTab(BottomTab.Collection);s.pump()
+            assertTrue("History was incorrectly exempted from the dirty-progress refresh policy",s.requests.count{it=="/api/favorites/history"}>before)
+        }
+    }
+    @Test fun localReadingProgressUpdatesLoadedHistoryEvenWithoutFavoriteRows(){
+        Sandbox{null}.use{s->
+            s.pump()
+            val feature=s.field("libraryFeature") as com.novalpie.nativeapp.feature.library.LibraryContentViewModel
+            val entry=FavoriteEntry(book=NovelCard(980123,"QA local history"),lastChapter=1,chapterCount=20)
+            feature.present{it.copy(history=LoadResult.Success(listOf(entry)),favoriteEntries=LoadResult.Idle,options=it.options.copy(tab=FavoritesContentTab.History))}
+            ReaderProgressStore(s.app).save(980123,98012304,"Chapter4",bookTitle="QA local history",chapterNumber=4,chapterCountAtLastRead=20)
+            s.pump()
+            assertEquals("History was skipped by local progress reconciliation",4,(s.model.homeState.history as LoadResult.Success).value.single().lastChapter)
+            ReaderProgressStore(s.app).clear(980123)
+        }
+    }
     private class Sandbox(val scenario:(RecordedRequest)->MockResponse?) : AutoCloseable {
         val scheduler=StandardTestDispatcher()
         val app=ApplicationProvider.getApplicationContext<Application>()

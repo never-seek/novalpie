@@ -25,7 +25,7 @@ internal fun ChapterRetranslationDialog(
             Text(if(state.loading)"正在读取章节目录…" else preview.fold(
                 {"${if(state.range.isBlank())"全部章节" else "已选章节"}：共 ${it.size} 章"},
                 {it.message ?: "章节范围无效"}),style=MaterialTheme.typography.bodySmall)
-            Text("留空选择全书。与网页相同，重翻使用本人 API：服务端 API 需已激活、健康且审核通过；仅保存在本机的 API 请在工作区自助翻译。任务会消耗您自己的 API 配额。",style=MaterialTheme.typography.bodySmall)
+            Text("留空选择全书。使用与源站相同的重翻接口，由服务器核验本人 API 和可用状态；App 不会根据配置列表缺失的审核字段拦截。仅保存在本机的 API 可前往工作区自助翻译。任务可能消耗本人 API 配额。",style=MaterialTheme.typography.bodySmall)
             state.message?.let { Text(it,color=if(state.confirmed)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error) }
             TextButton(onClick=onWorkspace,enabled=!state.submitting) { Text("前往工作区") }
             if(state.confirmed)TextButton(onClick=onRefresh) { Text("任务完成后刷新正文 / 目录") }

@@ -45,7 +45,8 @@ internal class SearchViewModel(
     private val repository: SearchRepository,
     private val preferences: SearchPreferences,
 ) : ViewModel() {
-    var state by mutableStateOf(SearchUiState(history=preferences.history(), options=preferences.settings().toSearchOptions()))
+    private val initialSettings=preferences.settings()
+    var state by mutableStateOf(SearchUiState(keyword=initialSettings.keyword,history=preferences.history(), options=initialSettings.toSearchOptions()))
         private set
     private var generation = 0L
     private var tagGeneration = 0L
@@ -64,13 +65,14 @@ internal class SearchViewModel(
         if (state.keyword == keyword) return
         invalidate()
         state = state.copy(keyword=keyword,results=LoadResult.Idle,page=1,envelope=null,scroll=GridScrollPosition(),pageError=null)
+        preferences.save(state.options.persisted(keyword))
         if (visible && keyword.isBlank()) submit("")
     }
     fun updateOptions(next: SearchOptions, refresh: Boolean = visible) {
         if (next == state.options) return
         val queryChanged = resolveSearchRequest(state.keyword,state.options) != resolveSearchRequest(state.keyword,next)
         state = state.copy(options=next)
-        preferences.save(next.persisted())
+        preferences.save(next.persisted(state.keyword))
         if (queryChanged) {
             invalidate()
             state=state.copy(results=LoadResult.Idle,page=1,envelope=null,pageError=null,scroll=GridScrollPosition())
@@ -80,11 +82,16 @@ internal class SearchViewModel(
     fun toggleViewMode() = updateOptions(state.options.copy(
         viewMode=if(state.options.viewMode==SearchViewMode.Grid) SearchViewMode.List else SearchViewMode.Grid,
     )).also { saveScroll(0,0) }
-    fun toggleCache() = updateOptions(state.options.copy(cacheEnabled=!state.options.cacheEnabled))
+    fun toggleCache() = setCacheMode(if(state.options.cacheEnabled)"none"else"all")
+    fun setCacheMode(mode:String) {
+        require(mode in listOf("none","no-query","all"))
+        updateOptions(state.options.copy(cacheEnabled=mode!="none",cacheMode=mode))
+    }
+    fun cycleCacheMode()=setCacheMode(when(state.options.cacheMode){"all"->"none";"none"->"no-query";else->"all"})
     fun saveConditions() {
         // An explicit Save must also work after opting out of automatic retention.
-        val next=state.options.copy(cacheEnabled=true)
-        preferences.save(next.persisted())
+        val next=state.options.copy(cacheEnabled=true,cacheMode="all")
+        preferences.save(next.persisted(state.keyword))
         state=state.copy(options=next)
     }
     fun clearOptions() {
@@ -95,7 +102,7 @@ internal class SearchViewModel(
     fun openTarget(target: BookDetailSearchTarget) {
         invalidate()
         val options=bookDetailSearchOptions(state.options,target)
-        preferences.save(options.persisted())
+        preferences.save(options.persisted(target.keyword))
         state=state.copy(keyword=target.keyword,options=options,scroll=GridScrollPosition())
         visible=true
         submit(target.keyword)
@@ -119,6 +126,7 @@ internal class SearchViewModel(
     fun submit(submittedKeyword: String? = null) {
         val keyword=searchKeywordForSubmission(state.keyword,submittedKeyword)
         state=state.copy(keyword=keyword)
+        preferences.save(state.options.persisted(keyword))
         if(keyword.isNotBlank()) { preferences.remember(keyword); state=state.copy(history=preferences.history()) }
         requestPage(1)
     }

@@ -50,7 +50,7 @@ class SearchRetranslationDeviceTest {
             }
         }
         try {
-            compose.onNodeWithContentDescription("不缓存搜索设置").performClick()
+            compose.onNodeWithContentDescription("缓存所有内容（点击切换）").performClick()
             compose.onNodeWithContentDescription("保存当前搜索条件").performClick()
             compose.runOnIdle { assertEquals(chosen,store.load()) }
             compose.onNodeWithContentDescription("清除搜索设置缓存").performClick()
@@ -70,7 +70,6 @@ class SearchRetranslationDeviceTest {
         compose.runOnIdle {
             controller=ChapterRetranslationController(object:ChapterRetranslationRepository {
                 override suspend fun chapters(bookId:Long)=emptyList<Chapter>()
-                override suspend fun hasApprovedPersonalModel()=true
                 override suspend fun submit(bookId:Long,numbers:List<Int>):ForumActionResult {
                     posts++;submitted=numbers;return ForumActionResult(true)
                 }

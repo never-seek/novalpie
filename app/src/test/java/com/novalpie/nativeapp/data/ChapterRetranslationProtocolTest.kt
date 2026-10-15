@@ -57,10 +57,10 @@ class ChapterRetranslationProtocolTest {
             try {
                 controller.open(1,"QA",listOf(Chapter(901,"EP1",number=1)));controller.submit()
                 withTimeout(10_000) {flow {while(true){emit(controller.state.submitting);delay(10)}}.first{!it}}
-                assertEquals("The write reached the actual API route",2,server.requestCount)
+                assertEquals("The write reached the actual API route",1,server.requestCount)
                 assertTrue("Cancelled stale response does not prove the POST failed",controller.state.uncertain)
                 controller.transportChanged();controller.open(1,"QA",listOf(Chapter(901,"EP1",number=1)));controller.submit()
-                assertTrue(controller.state.uncertain);assertEquals(2,server.requestCount)
+                assertTrue(controller.state.uncertain);assertEquals(1,server.requestCount)
             }finally {scope.cancel()}
         }
     }

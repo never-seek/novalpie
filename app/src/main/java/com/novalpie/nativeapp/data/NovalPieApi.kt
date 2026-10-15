@@ -2398,10 +2398,12 @@ class NovalPieApi(
         )
     }
 
-    suspend fun chapters(bookId: Long): List<Chapter> = withContext(Dispatchers.IO) {
+    suspend fun chapters(bookId: Long,deadlineSeconds:Long=15): List<Chapter> = withContext(Dispatchers.IO) {
         // Current source detail pages request the v2 directory endpoint.  It includes per-chapter
         // image_count and is the contract used by the web catalogue.
-        normalizeChapters(get("/api/v2/novels/$bookId/chapters"))
+        require(deadlineSeconds in 1..30)
+        normalizeChapters(get("/api/v2/novels/$bookId/chapters",
+            callTimeoutSeconds=deadlineSeconds,readTimeoutSeconds=deadlineSeconds))
     }
 
     suspend fun chapterContent(
@@ -2890,6 +2892,7 @@ class NovalPieApi(
         callTimeoutSeconds: Long? = null,
         readTimeoutSeconds: Long? = null,
     ): Any {
+        val deadlineNanos=callTimeoutSeconds?.let { System.nanoTime()+TimeUnit.SECONDS.toNanos(it) }
         val requestRevision=requestRevisionProvider()
         if (includeSession) applySessionHeaders(requestBuilder)
 
@@ -2929,8 +2932,13 @@ class NovalPieApi(
             val replayable = request.body == null ||
                 request.body?.contentType()?.toString()?.startsWith("application/json") == true
             if (!replayable) throw failure
+            val replayClient=deadlineNanos?.let {deadline->
+                val remaining=deadline-System.nanoTime()
+                if(remaining<=0)throw SocketTimeoutException("请求总时限已到，未再次请求")
+                callClient.newBuilder().callTimeout(remaining,TimeUnit.NANOSECONDS).build()
+            } ?: callClient
             executeRequest(
-                callClient,
+                replayClient,
                 path,
                 request.newBuilder()
                     .removeHeader("authorization")

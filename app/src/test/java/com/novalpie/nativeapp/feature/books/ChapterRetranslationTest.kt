@@ -17,9 +17,8 @@ class ChapterRetranslationTest {
             assertTrue(bad,runCatching{retranslationChapterNumbers(bad,listOf(1,3,4))}.isFailure)
     }
     private open class Repo:ChapterRetranslationRepository {
-        var calls=0;var numbers:List<Int> = emptyList();var allowed=true
+        var calls=0;var numbers:List<Int> = emptyList()
         override suspend fun chapters(bookId:Long)=emptyList<Chapter>()
-        override suspend fun hasApprovedPersonalModel()=allowed
         override suspend fun submit(bookId:Long,numbers:List<Int>):ForumActionResult {
             calls++;this.numbers=numbers;return ForumActionResult(true)
         }
@@ -30,10 +29,12 @@ class ChapterRetranslationTest {
         assertEquals(listOf(3),repo.numbers);assertEquals(1,repo.calls)
         assertTrue(c.state.confirmed);assertFalse(c.state.submitting)
     }
-    @Test fun missingOrUnapprovedPersonalModelCannotSubmit()=runTest {
-        val repo=Repo().also{it.allowed=false};val c=ChapterRetranslationController(repo,backgroundScope){0}
-        c.open(1,"Book",catalog);c.submit();runCurrent()
-        assertEquals(0,repo.calls);assertFalse(c.state.confirmed);assertTrue(c.state.message!!.contains("API"))
+    @Test fun serverRejectedPersonalModelIsShownWithoutPretendingItWasQueued()=runTest {
+        val repo=object:Repo(){override suspend fun submit(bookId:Long,numbers:List<Int>):ForumActionResult {
+            calls++;return ForumActionResult(false,"本人 API 暂不可用")
+        }}
+        val c=ChapterRetranslationController(repo,backgroundScope){0};c.open(1,"Book",catalog);c.submit();runCurrent()
+        assertEquals(1,repo.calls);assertFalse(c.state.confirmed);assertTrue(c.state.message!!.contains("API"))
     }
     @Test fun transportFailureIsUncertainAndDoesNotBlindlyReplayAfterReopen()=runTest {
         val repo=object:Repo(){override suspend fun submit(bookId:Long,numbers:List<Int>):ForumActionResult {calls++;throw IOException("lost ack")}}
@@ -48,11 +49,10 @@ class ChapterRetranslationTest {
         c.open(2,"B",catalog,4);response.complete(ForumActionResult(true));runCurrent()
         assertEquals(2L,c.state.bookId);assertEquals("4",c.state.range);assertFalse(c.state.confirmed);assertFalse(c.state.submitting)
     }
-    @Test fun changedAccountAfterModelCheckNeverPostsForOldAccount()=runTest {
-        val allowed=CompletableDeferred<Boolean>();var revision=0L
-        val repo=object:Repo(){override suspend fun hasApprovedPersonalModel()=allowed.await()}
+    @Test fun changedAccountBeforeQueuedWriteNeverPostsForOldAccount()=runTest {
+        var revision=0L;val repo=Repo()
         val c=ChapterRetranslationController(repo,backgroundScope){revision}
-        c.open(1,"A",catalog);c.submit();runCurrent();revision++;c.environmentChanged();allowed.complete(true);runCurrent()
+        c.open(1,"A",catalog);c.submit();revision++;c.environmentChanged();runCurrent()
         assertEquals(0,repo.calls);assertFalse(c.state.open)
     }
     @Test fun reopeningDuringSubmissionDoesNotLeaveAPermanentlyBusyDialog()=runTest {

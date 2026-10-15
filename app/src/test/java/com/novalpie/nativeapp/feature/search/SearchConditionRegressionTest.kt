@@ -62,7 +62,7 @@ class SearchConditionRegressionTest {
     }
     @Test fun enablingConditionRetentionSavesTheWholeActiveSnapshotForRestart() = runTest(dispatcher) {
         val vm=model();vm.toggleCache()
-        assertEquals(chosen.toSearchOptions().copy(cacheEnabled=false),vm.state.options)
+        assertEquals(chosen.toSearchOptions().copy(cacheEnabled=false,cacheMode="none"),vm.state.options)
         vm.toggleCache()
         assertEquals(chosen,store.load())
         assertEquals(vm.state.options,model().state.options)
@@ -73,5 +73,21 @@ class SearchConditionRegressionTest {
         vm.clearOptions();assertEquals(chosen.toSearchOptions(),vm.state.options)
         vm.saveConditions();assertEquals(chosen,store.load())
         assertEquals(vm.state.options,model().state.options)
+    }
+    @Test fun saveAllConditionsAlsoRestoresTheSearchTextLikeTheWebsite()=runTest(dispatcher) {
+        val vm=model();vm.updateKeyword("QA saved search");vm.saveConditions()
+        assertEquals("QA saved search",model().state.keyword)
+    }
+    @Test fun websiteThreeStateCacheModePreservesTagsButCanExcludeQueryOnRestart()=runTest(dispatcher) {
+        val vm=model();vm.updateKeyword("Private query")
+        vm.cycleCacheMode();assertEquals("none",vm.state.options.cacheMode)
+        vm.cycleCacheMode();assertEquals("no-query",vm.state.options.cacheMode)
+        assertEquals("Private query",vm.state.keyword)
+        assertEquals(listOf("奇幻"),vm.state.options.requiredTags)
+        val restored=model();assertEquals("",restored.state.keyword)
+        assertEquals("no-query",restored.state.options.cacheMode)
+        assertEquals(vm.state.options,restored.state.options)
+        vm.cycleCacheMode();assertEquals("all",vm.state.options.cacheMode)
+        assertEquals("Private query",model().state.keyword)
     }
 }

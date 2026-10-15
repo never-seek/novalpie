@@ -50,16 +50,20 @@ internal class LibraryContentViewModel(
         val firstLoad=query==null
         val next=requested.copy(page=if(firstLoad)1 else requested.page.coerceAtLeast(1))
         val same=query?.copy(page=1)==next.copy(page=1)
-        val retained=if(retain&&same)(state.favoriteEntries as? LoadResult.Success)?.value else null
+        val retained=if(retain&&same) {
+            val active=if(next.tab==FavoritesContentTab.History)state.history else state.favoriteEntries
+            (active as? LoadResult.Success)?.value
+        } else null
         val favoriteTotal=if(same||next.tab==FavoritesContentTab.History)state.favoriteTotal else null
         val serial=++generation
         requests?.cancel()
         query=next
         state=HomeState(user=tokenProfile?.let{LoadResult.Success(it)} ?: LoadResult.Loading,groups=LoadResult.Loading,
-            favorites=retained?.let{LoadResult.Success(it.map(FavoriteEntry::book))} ?: if(next.tab==FavoritesContentTab.Favorites)LoadResult.Loading else LoadResult.Idle,
-            favoriteEntries=retained?.let{LoadResult.Success(it)} ?: if(next.tab==FavoritesContentTab.Favorites)LoadResult.Loading else LoadResult.Idle,
+            favorites=if(next.tab==FavoritesContentTab.Favorites)retained?.let{LoadResult.Success(it.map(FavoriteEntry::book))} ?: LoadResult.Loading else LoadResult.Idle,
+            favoriteEntries=if(next.tab==FavoritesContentTab.Favorites)retained?.let{LoadResult.Success(it)} ?: LoadResult.Loading else LoadResult.Idle,
             favoriteTotal=favoriteTotal,favoriteTotalPages=state.favoriteTotalPages.takeIf {same||next.tab==FavoritesContentTab.History},
-            historyTotalPages=state.historyTotalPages.takeIf{same||next.tab==FavoritesContentTab.Favorites},history=if(next.tab==FavoritesContentTab.History)LoadResult.Loading else LoadResult.Idle,
+            historyTotalPages=state.historyTotalPages.takeIf{same||next.tab==FavoritesContentTab.Favorites},history=if(next.tab==FavoritesContentTab.History)retained?.let{LoadResult.Success(it)} ?: LoadResult.Loading else LoadResult.Idle,
+            historyTotal=state.historyTotal.takeIf{same||next.tab==FavoritesContentTab.Favorites},
             favoritesPage=next.page,options=options.copy(currentPage=next.page),selectedFavoriteGroupId=next.groupId,actionMessage=message)
         requests=work.launch {
             supervisorScope {

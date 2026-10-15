@@ -54,11 +54,11 @@ internal class StoredSearchPreferences(
 internal fun PersistedSearchSettings.toSearchOptions() = SearchOptions(
     sortBy, sortOrder, scope, matchType, adultFilter, source, wordCountRange,
     requiredTags, blockedTags, advancedSyntaxEnabled,
-    if (viewMode == "list") SearchViewMode.List else SearchViewMode.Grid, cacheEnabled,
+    if (viewMode == "list") SearchViewMode.List else SearchViewMode.Grid, cacheEnabled, cacheMode,
 )
 
-internal fun SearchOptions.persisted() = PersistedSearchSettings(
+internal fun SearchOptions.persisted(keyword:String="") = PersistedSearchSettings(
     sortBy, sortOrder, scope, matchType, adultFilter, source, wordCountRange,
     requiredTags, blockedTags, advancedSyntaxEnabled,
-    if (viewMode == SearchViewMode.List) "list" else "grid", cacheEnabled,
+    if (viewMode == SearchViewMode.List) "list" else "grid", cacheEnabled,cacheMode,keyword,
 )
