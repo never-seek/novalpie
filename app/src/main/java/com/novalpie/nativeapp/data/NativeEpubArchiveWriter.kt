@@ -15,6 +15,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.launch
 import java.util.Locale
 import java.util.zip.CRC32
@@ -22,6 +24,8 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 private const val NATIVE_EPUB_LOG_TAG = "NovalPieEpub"
+// Network concurrency stays configurable; only the memory-heavy bitmap encoders are bounded.
+private val nativeImageCompressionPermits = Semaphore(2)
 
 /** Container compression is lossless and independent of optional image re-encoding. */
 private class EpubZipOutputStream(output: OutputStream, level: Int) : ZipOutputStream(output) {
@@ -333,13 +337,13 @@ internal suspend fun stageNativeEpubFile(
 
             if (compressImages && detectedType in setOf("image/jpeg", "image/png", "image/webp") &&
                 !nativeEpubAssetIsAnimated(temporary, detectedType, header.copyOf(headerSize))) {
-                val compressed = File.createTempFile("novalpie-compressed-", ".jpg", destination.parentFile)
-                val result = compressStagedImageIfPossible(temporary, compressed, imageQuality)
+                val compressed = File.createTempFile("novalpie-compressed-", ".asset", destination.parentFile)
+                val result = nativeImageCompressionPermits.withPermit { compressStagedImageIfPossible(temporary, compressed, imageQuality) }
                 if (result != null) {
                     finalFile = compressed
-                    finalSize = result.first
-                    finalCrc = result.second
-                    detectedType = "image/jpeg"
+                    finalSize = result.bytes
+                    finalCrc = result.crc
+                    detectedType = result.mediaType
                     temporary.delete()
                 } else {
                     compressed.delete()
@@ -365,49 +369,91 @@ internal suspend fun stageNativeEpubFile(
     }
 }
 
+internal data class NativeImageCompressionResult(val bytes: Long, val crc: Long, val mediaType: String)
+
 internal fun compressStagedImageIfPossible(
     sourceFile: File,
     targetFile: File,
     imageQuality: Int,
     maxWidth: Int = 1080,
     maxHeight: Int = 1920,
-): Pair<Long, Long>? {
-    return try {
-        val boundsOptions = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        sourceFile.inputStream().use { android.graphics.BitmapFactory.decodeStream(it, null, boundsOptions) }
-        val origW = boundsOptions.outWidth
-        val origH = boundsOptions.outHeight
-        if (origW <= 0 || origH <= 0) return null
-        val scale = minOf(1.0, maxWidth.toDouble() / origW, maxHeight.toDouble() / origH)
-        val targetW = maxOf(1, (origW * scale).toInt())
-        val targetH = maxOf(1, (origH * scale).toInt())
-        val sampleSize = maxOf(1, minOf(origW / targetW, origH / targetH))
-        val decodeOptions = android.graphics.BitmapFactory.Options().apply { inSampleSize = sampleSize }
-        val bitmap = sourceFile.inputStream().use { android.graphics.BitmapFactory.decodeStream(it, null, decodeOptions) } ?: return null
-        if (bitmap.hasAlpha()) {
+): NativeImageCompressionResult? {
+    var decoded: android.graphics.Bitmap? = null
+    var encoded: android.graphics.Bitmap? = null
+    try {
+        // Eight-bit codecs cannot promise exact pixels for high-bit-depth PNG input.
+        val header = ByteArray(26)
+        val headerBytes = sourceFile.inputStream().use { it.read(header) }
+        if (headerBytes == header.size && header[0] == 0x89.toByte() && header[1] == 80.toByte() &&
+            (header[24].toInt() and 255) > 8) return null
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        sourceFile.inputStream().use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+        val originalWidth = bounds.outWidth
+        val originalHeight = bounds.outHeight
+        if (originalWidth <= 0 || originalHeight <= 0) return null
+        val scale = minOf(1.0, maxWidth.toDouble() / originalWidth, maxHeight.toDouble() / originalHeight)
+        val width = maxOf(1, (originalWidth * scale).toInt())
+        val height = maxOf(1, (originalHeight * scale).toInt())
+        fun decode(sample: Int) = sourceFile.inputStream().use {
+            android.graphics.BitmapFactory.decodeStream(it, null, android.graphics.BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+                // Preserve real RGBA values before a lossless alpha encode, not rounded premultiplication.
+                inPremultiplied = false
+            })
+        }
+        var bitmap = decode(maxOf(1, minOf(originalWidth / width, originalHeight / height))) ?: return null
+        decoded = bitmap
+        var transparent = (bitmap.hasAlpha() || bounds.outMimeType in setOf("image/png", "image/webp")) &&
+            nativeImageContainsTransparency(sourceFile, bitmap, originalWidth, originalHeight)
+        if (transparent && (bitmap.width != originalWidth || bitmap.height != originalHeight)) {
+            if (originalWidth.toLong() * originalHeight > 8L * 1024 * 1024) return null
             bitmap.recycle()
-            return null // JPEG cannot represent alpha, including layered/phantom covers.
+            bitmap = decode(1) ?: return null
+            decoded = bitmap
+            transparent = nativeImageContainsTransparency(sourceFile, bitmap, originalWidth, originalHeight)
         }
-        val scaled = if (bitmap.width != targetW || bitmap.height != targetH) {
-            val s = android.graphics.Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
-            if (s != bitmap) bitmap.recycle()
-            s
+        val format: android.graphics.Bitmap.CompressFormat
+        val quality: Int
+        val mediaType: String
+        if (transparent) {
+            // Fully transparent pixels may carry hidden RGB, which platform decoders/encoders
+            // can discard. Preserve those originals. Other alpha images can be optimized without
+            // changing resolution, a single RGBA pixel, or their appearance on either background.
+            if (nativeBitmapContainsFullyTransparentPixels(bitmap)) return null
+            if (android.os.Build.VERSION.SDK_INT >= 26 && bitmap.colorSpace?.isSrgb == false) return null
+            encoded = bitmap
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                format = android.graphics.Bitmap.CompressFormat.WEBP_LOSSLESS
+                quality = 100
+                mediaType = "image/webp"
+            } else {
+                format = android.graphics.Bitmap.CompressFormat.PNG
+                quality = 100
+                mediaType = "image/png"
+            }
         } else {
-            bitmap
+            bitmap.setHasAlpha(false) // Opacity was verified, so normal scaling is safe.
+            encoded = if (bitmap.width == width && bitmap.height == height) bitmap else
+                android.graphics.Bitmap.createScaledBitmap(bitmap, width, height, true)
+            format = android.graphics.Bitmap.CompressFormat.JPEG
+            quality = normalizeDownloadImageQuality(imageQuality)
+            mediaType = "image/jpeg"
         }
-        val quality = imageQuality.coerceIn(1, 95)
         val crc = CRC32()
-        val bos = java.io.ByteArrayOutputStream()
-        val compressedOk = scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, bos)
-        scaled.recycle()
-        if (!compressedOk) return null
-        val bytes = bos.toByteArray()
-        if (bytes.isEmpty()) return null
-        crc.update(bytes)
-        targetFile.outputStream().use { it.write(bytes) }
-        Pair(bytes.size.toLong(), crc.value)
-    } catch (_: Throwable) {
-        null
+        val success = targetFile.outputStream().buffered().use { output ->
+            java.util.zip.CheckedOutputStream(output, crc).use { checked -> encoded!!.compress(format, quality, checked) }
+        }
+        val bytes = targetFile.length()
+        // A high JPEG quality cannot improve an already encoded source, only inflate its size.
+        if (!success || bytes <= 0 || bytes >= sourceFile.length()) return null
+        return NativeImageCompressionResult(bytes, crc.value, mediaType)
+    } catch (cancelled: CancellationException) { throw cancelled
+    } catch (_: Exception) { return null
+    } catch (_: OutOfMemoryError) { return null
+    } finally {
+        if (encoded !== decoded) encoded?.recycle()
+        decoded?.recycle()
     }
 }
 

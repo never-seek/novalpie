@@ -1996,7 +1996,7 @@ private fun ProfileDownloadSettingsCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("压缩插图", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                     Text(
-                        if (compressImages) "按比例缩放至最大1080×1920并转为JPEG" else "保留原始格式与原图尺寸",
+                        if (compressImages) "普通图按画质缩放；透明图无损优化，动图及隐藏层保留原样" else "保留原始格式与原图尺寸",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2014,7 +2014,7 @@ private fun ProfileDownloadSettingsCard(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("图片画质", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                        Text("普通图片画质", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                         Spacer(Modifier.weight(1f))
                         Text("${imageQuality}%", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     }

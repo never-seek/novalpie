@@ -145,9 +145,11 @@ internal class NativeDownloadTaskRunner(
         val transformed=current.get().replacementSnapshot?.let(DownloadRulesSnapshot::decode)
         val finished=File(work,if(task.format==DownloadFormat.Epub)"result.epub"else"result.txt")
         val packageCheckpoint=DownloadPackageCheckpoint(work)
+        // Freeze this run's export settings before deciding whether any old package is reusable.
+        val downloadSettings = DownloadSettingsStore(app).load()
         val sourceDigest=JSONObject(sourceComplete.readText()).getString("sha256")
-        val reusePackage=packageCheckpoint.reusable(current.get(),finished,sourceDigest,control) ||
-            (sourceWasReused&&packageCheckpoint.adoptVerifiedLegacy(current.get(),finished,sourceDigest,control))
+        val reusePackage=packageCheckpoint.reusable(current.get(),finished,sourceDigest,control,downloadSettings) ||
+            (sourceWasReused&&packageCheckpoint.adoptVerifiedLegacy(current.get(),finished,sourceDigest,control,downloadSettings))
         if(reusePackage)save(current.get().copy(integrityIssues=packageCheckpoint.integrityIssuesForReuse(task)))
         if(!reusePackage) {
         save(current.get().copy(phase=DownloadPhase.Packaging), "正在生成章节文本...")
@@ -189,7 +191,6 @@ internal class NativeDownloadTaskRunner(
                 if(!confirmed) {imageReconciler.retryUnverified();imageCatalog=null}
             }while(!confirmed)
             save(current.get(),"开始生成 EPUB（下载插图并打包）...")
-            val downloadSettings = DownloadSettingsStore(app).load()
 
             var continueToPublish = false
             while (!continueToPublish) {
@@ -289,10 +290,10 @@ internal class NativeDownloadTaskRunner(
         if(!finished.isFile||finished.length()==0L)throw IOException("下载生成结果为空")
         if(current.get().integrityIssues.any{it.key !in current.get().acknowledgedIntegrityKeys})
             throw DownloadIntegrityConfirmationRequired(current.get().integrityIssues.filter{it.key !in current.get().acknowledgedIntegrityKeys})
-        packageCheckpoint.record(current.get(),finished,sourceDigest,control)
+        packageCheckpoint.record(current.get(),finished,sourceDigest,control,downloadSettings)
         }
         save(current.get().copy(phase=DownloadPhase.Saving), "正在保存文件到系统存储...")
-        val fingerprint=packageCheckpoint.publicationFingerprint(current.get(),finished,sourceDigest)
+        val fingerprint=packageCheckpoint.publicationFingerprint(current.get(),finished,sourceDigest,downloadSettings)
         // Reject an unsupported receipt before creating any destination. Reserve ample URI space.
         publicationReceipt.validateJsonSize(completionPublication(current.get().copy(destinationUri="x".repeat(8192)),fingerprint))
         val destination=if(publish!=null)publish.invoke(current.get(),finished,control::awaitIfPaused)

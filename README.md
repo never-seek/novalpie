@@ -5,7 +5,7 @@
 [![UI Toolkit](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4.svg?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![Architecture](https://img.shields.io/badge/Architecture-Clean%20%2B%20MVI%2FMVVM-blue.svg)](docs/beta7/architecture-and-migration.md)
 [![Release](https://img.shields.io/badge/Release-v2.0.0--native--beta7-orange.svg)](https://github.com/never-seek/novalpie/releases/tag/v2.0.0-native-beta7)
-[![Tests](https://img.shields.io/badge/Tests-1492%20Passing%20(0%20Failures)-brightgreen.svg)](docs/beta7/STATUS.md)
+[![Tests](https://img.shields.io/badge/Tests-1503%20Passing%20(0%20Failures)-brightgreen.svg)](docs/beta7/STATUS.md)
 
 NovalPie 2.0 是专为 [novalpie.cc](https://novalpie.cc) 社区量身打造的高性能、现代原生 Android 客户端。
 
@@ -13,7 +13,20 @@ NovalPie 2.0 的业务主体使用 **Kotlin + Jetpack Compose 原生界面**，�
 
 ---
 
-## 2026-10-16 · Beta 7 R2 功能回归修订
+## 2026-10-17 · Beta7 R2 图片压缩修订
+
+**这次实际比对图片编码，不只验证ZIP等级。** 真实PNG插图`9,356,727→7,370,856`、`9,135,461→7,126,602`字节，透明度及全部RGBA像素保持一致；普通JPEG按25%画质`95,820→33,818`字节。结果更大时保留原图，不用升高JPEG画质把文件反而撑大。
+
+- 不再一律跳过RGBA/部分透明图片：普通图按画质缩放，透明静态图优先无损优化；动画与全透明隐藏RGB等不安全情况保留原始字节。
+- 修复保存失败重试沿用旧压缩设置的检查点；设置变更后重新打包，但不重新申请下载授权。
+- **普通图片画质**和透明图无损策略区分；透明图不降低画质。部分透明图采用无损WebP，请使用支持WebP的EPUB阅读器；关闭压缩保留原格式。
+- 版本`2.0.0-native-beta7-r2` / `2026101701`，仍同Beta7 Release，仅保留最新完整优化APK与SHA256；源码标签`v2.0.0-native-beta7-r2-20261017`。不另开Beta8，不要求卸载。
+
+[最新下载与中文说明](https://github.com/never-seek/novalpie/releases/tag/v2.0.0-native-beta7) · [真实样本与修复记录](docs/beta7/20261017-image-quality-compression.md)
+
+以下10月16日内容为历史修订记录，不代表当前下载文件名或最新测试总数。
+
+## 历史：2026-10-16 · Beta 7 R2 功能回归修订
 
 **本次新增修复（versionCode `2026101602`）**：
 

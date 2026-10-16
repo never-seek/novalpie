@@ -1,6 +1,9 @@
 package com.novalpie.nativeapp.feature.download
 
 import com.novalpie.nativeapp.data.NativeDownloadControl
+import com.novalpie.nativeapp.data.DownloadSettings
+import com.novalpie.nativeapp.data.normalizeDownloadImageQuality
+import com.novalpie.nativeapp.data.normalizeDownloadZipCompressionLevel
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
@@ -10,9 +13,9 @@ import java.util.zip.ZipFile
 /** Final archive survives a failed MediaStore publication; it never needs another authorization. */
 internal class DownloadPackageCheckpoint(private val directory:File) {
     private val receipt=File(directory,"package.complete")
-    suspend fun record(task:DownloadTask,file:File,sourceDigest:String,control:NativeDownloadControl) {
+    suspend fun record(task:DownloadTask,file:File,sourceDigest:String,control:NativeDownloadControl,settings:DownloadSettings=DownloadSettings()) {
         val data=JSONObject().put("task",task.id).put("format",task.format.name).put("source",sourceDigest)
-            .put("exportPipeline", 6)
+            .put("exportPipeline", 7).put("exportSettings", settingsDigest(task,settings))
             .put("rules",rulesDigest(task)).put("bytes",file.length()).put("sha256",digest(file,control))
             .put("integrityIssues",DownloadIntegrityJson.encode(task.integrityIssues))
         receipt.writeText(data.toString())
@@ -22,28 +25,28 @@ internal class DownloadPackageCheckpoint(private val directory:File) {
     fun integrityIssuesForReuse(task:DownloadTask):List<DownloadIntegrityIssue> {
         val data=JSONObject(receipt.readText())
         return if(data.has("integrityIssues")) DownloadIntegrityJson.decode(data.getJSONArray("integrityIssues"))
-            else task.integrityIssues // Existing pipeline-6 packages retain their task disclosure.
+            else task.integrityIssues // The task disclosure is retained when no optional issue array exists.
     }
-    suspend fun reusable(task:DownloadTask,file:File,sourceDigest:String,control:NativeDownloadControl):Boolean {
+    suspend fun reusable(task:DownloadTask,file:File,sourceDigest:String,control:NativeDownloadControl,settings:DownloadSettings=DownloadSettings()):Boolean {
         if(!file.isFile||file.length()==0L||!receipt.isFile)return false
         val data=runCatching{JSONObject(receipt.readText())}.getOrNull() ?: return false
-        return data.optInt("exportPipeline")==6 && data.optString("task")==task.id&&data.optString("format")==task.format.name&&data.optString("source")==sourceDigest&&
+        return data.optInt("exportPipeline")==7 && data.optString("exportSettings")==settingsDigest(task,settings) && data.optString("task")==task.id&&data.optString("format")==task.format.name&&data.optString("source")==sourceDigest&&
             data.optString("rules")==rulesDigest(task)&&data.optLong("bytes")==file.length()&&data.optString("sha256")==digest(file,control)
     }
 
     /** Fingerprint was computed by record()/reusable(); publisher verifies emitted bytes against it. */
-    fun publicationFingerprint(task:DownloadTask,file:File,sourceDigest:String):PublicationFingerprint {
+    fun publicationFingerprint(task:DownloadTask,file:File,sourceDigest:String,settings:DownloadSettings=DownloadSettings()):PublicationFingerprint {
         val data=JSONObject(receipt.readText())
-        require(data.optString("task")==task.id&&data.optString("format")==task.format.name&&data.optString("source")==sourceDigest&&
+        require(data.optInt("exportPipeline")==7 && data.optString("exportSettings")==settingsDigest(task,settings) && data.optString("task")==task.id&&data.optString("format")==task.format.name&&data.optString("source")==sourceDigest&&
             data.optString("rules")==rulesDigest(task)&&data.optLong("bytes")==file.length()) {"下载打包检查点与发布文件不一致"}
         return PublicationFingerprint(data.getLong("bytes"),data.getString("sha256")).also {require(it.sha256.matches(Regex("[a-f0-9]{64}")))}
     }
 
     /** One-time adoption for a pre-checkpoint package that reached Saving before failing. */
-    suspend fun adoptVerifiedLegacy(task:DownloadTask,file:File,sourceDigest:String,control:NativeDownloadControl):Boolean {
+    suspend fun adoptVerifiedLegacy(task:DownloadTask,file:File,sourceDigest:String,control:NativeDownloadControl,settings:DownloadSettings=DownloadSettings()):Boolean {
         // Old image-bearing archives were checked only against export markers, not the reader.
         // Rebuild them from retained source/assets; text-only CRC adoption remains safe.
-        if (task.applyReplacement || task.totalAssets > 0 || task.completedAssets > 0) return false
+        if (task.applyReplacement || task.totalAssets > 0 || task.completedAssets > 0 || settings.compressImages || normalizeDownloadZipCompressionLevel(settings.zipCompressionLevel) != 0) return false
         if(receipt.exists()||task.format!=DownloadFormat.Epub||task.completedChapters<=0||task.totalChapters!=task.completedChapters||
             task.failedAssets!=0||task.totalAssets!=task.completedAssets||!file.isFile)return false
         val valid=try {
@@ -65,8 +68,13 @@ internal class DownloadPackageCheckpoint(private val directory:File) {
                 chapters==task.completedChapters&&images==task.completedAssets
             }
         }catch(cancelled:kotlinx.coroutines.CancellationException){throw cancelled}catch(_:Exception){false}
-        if(valid)record(task,file,sourceDigest,control)
+        if(valid)record(task,file,sourceDigest,control,settings)
         return valid
+    }
+    private fun settingsDigest(task:DownloadTask,settings:DownloadSettings):String {
+        val value=if(task.format==DownloadFormat.Txt) "txt" else
+            "rgba-lossless-v3:${settings.compressImages}:${if(settings.compressImages) normalizeDownloadImageQuality(settings.imageQuality) else 0}:${normalizeDownloadZipCompressionLevel(settings.zipCompressionLevel)}"
+        return MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString(""){"%02x".format(it)}
     }
     private fun rulesDigest(task:DownloadTask)=MessageDigest.getInstance("SHA-256")
         .digest(("${task.applyReplacement}:"+task.replacementSnapshot.orEmpty()).toByteArray()).joinToString(""){"%02x".format(it)}
