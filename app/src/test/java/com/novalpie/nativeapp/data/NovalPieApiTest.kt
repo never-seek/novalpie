@@ -4450,4 +4450,20 @@ class NovalPieApiTest {
         assertEquals("reset-token", resetBody.getString("token"))
         assertEquals("NewPass1", resetBody.getString("password"))
     }
+    @Test fun addFavoritePostsTheChosenFolderAndReadsTheConfirmedServerGroup() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"success":true}"""))
+        server.enqueue(MockResponse().setBody("""{"data":{"is_favorited":true,"group_id":17}}"""))
+        val result = api.toggleFavorite(42, false, 17)
+        val posted = server.takeRequest()
+        assertEquals("POST", posted.method)
+        assertEquals("/api/favorites", posted.requestUrl?.encodedPath)
+        val body = JSONObject(posted.body.readUtf8())
+        assertEquals(42L, body.getLong("object_id"))
+        assertEquals("add", body.getString("action"))
+        assertEquals(17L, body.getLong("group_id"))
+        assertEquals("GET", server.takeRequest().method)
+        assertTrue(result.isFavorited)
+        assertEquals(17L, result.groupId)
+    }
+
 }

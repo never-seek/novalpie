@@ -30,12 +30,29 @@ internal fun libraryOverview(
 )
 
 /** Never confuse a loaded page index with the source total-page count. */
-internal fun libraryOverviewForState(hasAuthToken:Boolean,state:HomeState):LibraryOverview=libraryOverview(
-    hasAuthToken=hasAuthToken,
-    favoriteCount=state.favoriteTotal ?: (state.favoriteEntries as? com.novalpie.nativeapp.model.LoadResult.Success)?.value?.size,
-    groupCount=(state.groups as? com.novalpie.nativeapp.model.LoadResult.Success)?.value?.size,
-    recentCount=state.historyTotal ?: (state.history as? com.novalpie.nativeapp.model.LoadResult.Success)?.value?.size,
-    pageCount=state.favoriteTotalPages)
+internal fun libraryOverviewForState(hasAuthToken: Boolean, state: HomeState): LibraryOverview {
+    val history = state.options.tab == FavoritesContentTab.History
+    val active = if (history) state.history else state.favoriteEntries
+    val sync = when {
+        !hasAuthToken -> "未同步"
+        active is com.novalpie.nativeapp.model.LoadResult.Success -> "已同步"
+        active is com.novalpie.nativeapp.model.LoadResult.Error -> "同步失败"
+        active == com.novalpie.nativeapp.model.LoadResult.Loading -> "同步中"
+        else -> "待同步"
+    }
+    val recent = state.historyTotal ?: (state.history as? com.novalpie.nativeapp.model.LoadResult.Success)?.value?.size
+    val pages = if (history) state.historyTotalPages else state.favoriteTotalPages
+    if (history) return LibraryOverview(
+        title = "阅读历史", subtitle = "最近阅读与各设备进度", syncLabel = sync,
+        stats = listOf("记录 ${recent ?: "—"}", "总页数 ${pages ?: "—"}"),
+    )
+    return libraryOverview(
+        hasAuthToken = hasAuthToken,
+        favoriteCount = state.favoriteTotal ?: (state.favoriteEntries as? com.novalpie.nativeapp.model.LoadResult.Success)?.value?.size,
+        groupCount = (state.groups as? com.novalpie.nativeapp.model.LoadResult.Success)?.value?.size,
+        recentCount = recent, pageCount = pages,
+    ).copy(syncLabel = sync)
+}
 
 /** A paged shelf must report the source total, never merely the currently rendered page size. */
 internal fun collectionFavoriteCount(sourceTotal: Int?, loadedCount: Int): Int =

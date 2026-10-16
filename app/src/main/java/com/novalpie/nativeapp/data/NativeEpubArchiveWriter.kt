@@ -23,6 +23,12 @@ import java.util.zip.ZipOutputStream
 
 private const val NATIVE_EPUB_LOG_TAG = "NovalPieEpub"
 
+/** Container compression is lossless and independent of optional image re-encoding. */
+private class EpubZipOutputStream(output: OutputStream, level: Int) : ZipOutputStream(output) {
+    val compressionLevel = normalizeDownloadZipCompressionLevel(level)
+    init { setLevel(compressionLevel) }
+}
+
 private fun logNativeEpubDiagnostic(message: String, failure: Throwable? = null) {
     // Local JVM tests use the Android SDK's "not mocked" stubs. Diagnostics must never change
     // the cache/export result when the platform logger is unavailable, so keep logging best-effort.
@@ -566,10 +572,7 @@ object NativeEpubArchiveWriter {
         var nextImageNumber = 1
 
         try {
-            ZipOutputStream(output.buffered()).use { zip ->
-                if (zipCompressionLevel in 0..9) {
-                    zip.setLevel(zipCompressionLevel)
-                }
+            EpubZipOutputStream(output.buffered(), zipCompressionLevel).use { zip ->
                 awaitIfPaused()
                 writeStoredText(zip, "mimetype", EPUB_MIMETYPE)
                 writeText(zip, "META-INF/container.xml", containerXml())
@@ -922,7 +925,7 @@ object NativeEpubArchiveWriter {
     private suspend fun renderBody(
         rawBody: String,
         transformTextNode: (String) -> String,
-        zip: ZipOutputStream,
+        zip: EpubZipOutputStream,
         imageRecords: MutableList<ImageRecord>,
         stagedAssets: NativeEpubStagedAssetCache,
         openAsset: suspend (String) -> NativeEpubAsset,
@@ -1186,7 +1189,7 @@ object NativeEpubArchiveWriter {
     }
 
     private suspend fun writeStagedImage(
-        zip: ZipOutputStream,
+        zip: EpubZipOutputStream,
         staged: StagedAsset,
         path: String,
         awaitIfPaused: suspend () -> Unit,
@@ -1196,9 +1199,9 @@ object NativeEpubArchiveWriter {
         }
         awaitIfPaused()
         val entry = ZipEntry("OEBPS/$path").apply {
-            method = ZipEntry.STORED
+            method = if (zip.compressionLevel == 0) ZipEntry.STORED else ZipEntry.DEFLATED
             this.size = staged.size
-            compressedSize = staged.size
+            if (method == ZipEntry.STORED) compressedSize = staged.size
             this.crc = staged.crc
         }
         zip.putNextEntry(entry)
@@ -1275,14 +1278,17 @@ object NativeEpubArchiveWriter {
             "<p>${paragraph.replace("\n", "<br />")}</p>"
         }
 
-    private fun writeStoredText(zip: ZipOutputStream, path: String, text: String) {
+    private fun writeStoredText(zip: EpubZipOutputStream, path: String, text: String) {
         val bytes = text.toByteArray(Charsets.US_ASCII)
         writeStoredBytes(zip, path, bytes)
     }
 
-    private fun writeText(zip: ZipOutputStream, path: String, text: String) {
-        // Deflate changes the container size, not the decoded text. Original image entries and
-        // the required first mimetype entry remain STORED; no image is decoded/re-encoded here.
+    private fun writeText(zip: EpubZipOutputStream, path: String, text: String) {
+        if (zip.compressionLevel == 0) {
+            writeStoredBytes(zip, path, text.toByteArray(Charsets.UTF_8))
+            return
+        }
+        // Deflate changes only container bytes; extracted text and images remain identical.
         zip.putNextEntry(ZipEntry(path).apply { method = ZipEntry.DEFLATED })
         try {
             zip.write(text.toByteArray(Charsets.UTF_8))
@@ -1291,7 +1297,7 @@ object NativeEpubArchiveWriter {
         }
     }
 
-    private fun writeStoredBytes(zip: ZipOutputStream, path: String, bytes: ByteArray) {
+    private fun writeStoredBytes(zip: EpubZipOutputStream, path: String, bytes: ByteArray) {
         val crc = CRC32().apply { update(bytes) }
         val entry = ZipEntry(path).apply {
             method = ZipEntry.STORED

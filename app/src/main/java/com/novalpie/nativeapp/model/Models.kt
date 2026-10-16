@@ -95,14 +95,18 @@ data class ReaderProgress(
     /**
      * Full source catalogue size observed when this reading position was saved.
      *
-     * It is deliberately separate from [chapterNumber]: a shelf can only call a newer chapter an
-     * update when the app actually observed that the reader had completed the previous catalogue.
-     * Old records legitimately omit this value and then show progress without guessing an update.
+     * This is an observation, not the unread position or the last completed catalogue. The
+     * separate [completedCatalogueSize] preserves proven completion across partial new reads.
+     * Legacy records that reached this observed total infer completion without resetting data.
      */
     val chapterCountAtLastRead: Int? = null,
     /** Same-chapter native viewport anchor; website sync intentionally remains chapter-level. */
     val viewportItemIndex: Int? = null,
     val viewportItemScrollOffsetPx: Int? = null,
+    /** Last catalogue actually completed, retained separately while reading some later updates. */
+    val completedCatalogueSize: Int? = chapterCountAtLastRead?.takeIf {
+        it > 0 && (chapterNumber ?: 0) >= it
+    },
 )
 
 /** A stable reader body item plus an intra-item offset, persisted only on this device. */

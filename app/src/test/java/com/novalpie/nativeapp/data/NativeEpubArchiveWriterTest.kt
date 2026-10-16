@@ -713,7 +713,7 @@ class NativeEpubArchiveWriterTest {
     }
 
     @Test
-    fun deflatesTextLosslesslyWhileMimetypeAndOriginalImagesRemainStored() = runBlocking {
+    fun deflatesTextAndOriginalImageBytesLosslesslyWhileMimetypeRemainsStored() = runBlocking {
         val output = ByteArrayOutputStream()
         val prose = "正文无损压缩，保留标点和人物名字。".repeat(2000)
         // Opaque binary fixtures: the archive must not decode, resize or flatten any image.
@@ -746,7 +746,7 @@ class NativeEpubArchiveWriterTest {
                 assertTrue(zip.getInputStream(zip.getEntry("OEBPS/chapter-1.xhtml")).use { it.readBytes().toString(Charsets.UTF_8) }.contains(prose))
                 for ((extension, bytes) in originals) {
                     val entry = entries.single { it.name.startsWith("OEBPS/images/") && it.name.endsWith(".$extension") }
-                    assertEquals(ZipEntry.STORED, entry.method)
+                    assertEquals(ZipEntry.DEFLATED, entry.method)
                     assertEquals(bytes.size.toLong(), entry.size)
                     assertArrayEquals(bytes, zip.getInputStream(entry).use { it.readBytes() })
                 }

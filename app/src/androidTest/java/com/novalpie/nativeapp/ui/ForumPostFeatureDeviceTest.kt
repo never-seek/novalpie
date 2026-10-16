@@ -14,19 +14,23 @@ import org.junit.Test
 class ForumPostFeatureDeviceTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
     @Test fun postBookReferenceReturnAndReplyTargetRemainBoundToTheRightPost() {
+        val arguments = androidx.test.platform.app.InstrumentationRegistry.getArguments()
+        val postId = arguments.getString("forumPostId")?.toLongOrNull() ?: 1871L
+        val otherPostId = arguments.getString("otherForumPostId")?.toLongOrNull() ?: 1934L
+        require(postId > 0 && otherPostId > 0 && postId != otherPostId)
         val model = ViewModelProvider(compose.activity)[NovalPieViewModel::class.java]
-        compose.runOnIdle { model.openForumPost(1871) }
+        compose.runOnIdle { model.openForumPost(postId) }
         compose.waitUntil(45000) { model.forumPostDetailState.detail is LoadResult.Success && model.forumPostDetailState.comments is LoadResult.Success }
-        assertEquals(1871L, model.forumPostDetailState.postId)
+        assertEquals(postId, model.forumPostDetailState.postId)
         val comments = (model.forumPostDetailState.comments as LoadResult.Success).value
         assertTrue(comments.isNotEmpty())
         val target = comments.first()
         compose.runOnIdle { model.replyToForumComment(target); model.updateForumCommentDraft("Beta7未发送草稿") }
-        compose.runOnIdle { model.openForumPost(1934) }
-        compose.waitUntil(45000) { model.forumPostDetailState.detail is LoadResult.Success && model.forumPostDetailState.postId == 1934L }
+        compose.runOnIdle { model.openForumPost(otherPostId) }
+        compose.waitUntil(45000) { model.forumPostDetailState.detail is LoadResult.Success && model.forumPostDetailState.postId == otherPostId }
         assertEquals("", model.forumPostDetailState.commentDraft)
         compose.runOnIdle { assertTrue(model.goBack()) }
-        compose.waitUntil(5000) { model.forumPostDetailState.postId == 1871L }
+        compose.waitUntil(5000) { model.forumPostDetailState.postId == postId }
         assertEquals("Beta7未发送草稿", model.forumPostDetailState.commentDraft)
         assertEquals(target.authorName, model.forumPostDetailState.replyingToName)
         compose.runOnIdle { model.cancelForumReply(); model.updateForumCommentDraft("") }

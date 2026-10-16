@@ -40,11 +40,13 @@ class HistoryAutoSyncDeviceTest {
             override suspend fun user()=UserProfile(1,"QA")
         }
         try {
-            compose.runOnIdle {
+            // Install the controlled fixture immediately, not after waiting for the user's
+            // previously restored network/GIF screen to become Compose-idle.
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
                 repoField.set(feature,repository);vm.openTab(BottomTab.Collection)
                 vm.selectFavoritesContentTab(FavoritesContentTab.History);vm.loadHome()
             }
-            compose.waitUntil(10_000){vm.homeState.history is LoadResult.Success}
+            compose.waitUntil(10_000){(vm.homeState.history as? LoadResult.Success)?.value?.singleOrNull()?.book?.id==980501L}
             compose.onNodeWithText("1/20").assertExists()
             val initial=calls.get()
             compose.runOnIdle {

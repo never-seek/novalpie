@@ -1099,6 +1099,41 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
     val forumPostDetailState: ForumPostDetailState get() = forumPostFeature.state
     var forumCreateState by mutableStateOf(ForumCreateState())
         private set
+    private val favoriteDestination = com.novalpie.nativeapp.feature.library.FavoriteDestinationViewModel(
+        repository = object : com.novalpie.nativeapp.feature.library.FavoriteDestinationRepository {
+            override suspend fun groups() = api.favoriteGroups()
+            override suspend fun create(name: String) = api.createFavoriteGroup(name)
+            override suspend fun add(bookId: Long, groupId: Long): com.novalpie.nativeapp.model.FavoriteStatus {
+                // Re-read before a manual retry: never blindly resend a possibly accepted add.
+                val current = api.favoriteStatus(bookId)
+                if (current.isFavorited) {
+                    check(current.groupId == groupId || groupId == 0L && current.groupId == null) {
+                        "该书已在收藏中，请在收藏页长按书籍移动分组"
+                    }
+                    return current
+                }
+                return api.toggleFavorite(bookId, false, groupId)
+            }
+        },
+        scope = viewModelScope,
+        onSaved = { bookId, status ->
+            if (bookDetailState.bookId == bookId) bookDetailState = bookDetailState.copy(
+                favoriteStatus = LoadResult.Success(status), actionMessage = "已加入所选收藏夹")
+            if (readerState.bookId == bookId) readerState = readerState.copy(
+                favoriteStatus = LoadResult.Success(status), actionMessage = "已加入所选收藏夹")
+            loadHome()
+        },
+        onGroups = { groups -> homeState = homeState.copy(groups = LoadResult.Success(groups)) },
+    )
+    internal val favoriteDestinationState get() = favoriteDestination.state
+    fun dismissFavoriteDestination() = favoriteDestination.dismiss()
+    fun chooseFavoriteDestination(groupId: Long) = favoriteDestination.choose(groupId)
+    fun retryFavoriteDestinations() = favoriteDestination.refresh()
+    fun startFavoriteDestinationCreate() = favoriteDestination.startCreate()
+    fun cancelFavoriteDestinationCreate() = favoriteDestination.cancelCreate()
+    fun updateFavoriteDestinationName(name: String) = favoriteDestination.updateName(name)
+    fun createFavoriteDestinationAndAdd() = favoriteDestination.createAndChoose()
+
     var homeState:HomeState
         get()=libraryFeature.state
         private set(value){libraryFeature.present{value}}
@@ -1243,7 +1278,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
                         com.novalpie.nativeapp.data.readerCacheAccountScope(next.first)
                     managedChapterEditorRevision++
                     val editorAccountChanged = previous.first?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0)?.id } != next.first?.let { decodeAuthTokenProfile(it, nowEpochSeconds = 0)?.id }
-                    previous=next;searchFeature.environmentChanged();forumFeature.environmentChanged();libraryFeature.environmentChanged();bookFeature.environmentChanged()
+                    previous=next;favoriteDestination.invalidate();searchFeature.environmentChanged();forumFeature.environmentChanged();libraryFeature.environmentChanged();bookFeature.environmentChanged()
                     if(readerAccountChanged)retranslationFeature.environmentChanged() else retranslationFeature.transportChanged()
                     messageInboxFeature.environmentChanged();messageDetailFeature.environmentChanged();conversationFeature.environmentChanged();messageSettingsFeature.environmentChanged()
                     profileFeature.environmentChanged()
@@ -2546,10 +2581,10 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
             current.copy(zipCompressionLevel = normalized),
         )
         val desc = when (normalized) {
-            0 -> "仅存储/体积最大"
-            in 1..4 -> "轻度压缩/体积较大"
-            in 5..8 -> "标准压缩/体积适中"
-            else -> "极限压缩/体积最小"
+            0 -> "仅存储/不做ZIP压缩"
+            in 1..4 -> "轻度ZIP压缩"
+            in 5..8 -> "标准ZIP压缩"
+            else -> "最高ZIP压缩等级"
         }
         profileState = profileState.copy(
             downloadZipCompressionLevel = normalized,
@@ -5054,6 +5089,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val bookId=state.bookId
         val current=(state.favoriteStatus as? LoadResult.Success)?.value ?: return
         if(bookId<=0||currentRoute!=AppRoute.BookDetail(bookId))return
+        if (!current.isFavorited) { favoriteDestination.open(bookId); return }
         val environment=dependencies.environment.revision
         val ticket=bookFeature.beginAction(com.novalpie.nativeapp.feature.books.BookActionLane.Favorite) ?: return
         viewModelScope.launch {
@@ -5525,6 +5561,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         val bookId = readerState.bookId
         val current = (readerState.favoriteStatus as? LoadResult.Success)?.value ?: return
         if (bookId <= 0 || readerState.favoriteLoading) return
+        if (!current.isFavorited) { favoriteDestination.open(bookId); return }
         readerState = readerState.copy(favoriteLoading = true, actionMessage = null)
         viewModelScope.launch {
             val result = runCatching { api.toggleFavorite(bookId, current.isFavorited, current.groupId ?: 0L) }
@@ -5861,6 +5898,7 @@ class NovalPieViewModel(application: Application) : AndroidViewModel(application
         forumFeature.close()
         forumPostFeature.close()
         libraryFeature.close()
+        favoriteDestination.invalidate()
         bookFeature.close()
         bookManagementFeature.close()
         messageInboxFeature.close()

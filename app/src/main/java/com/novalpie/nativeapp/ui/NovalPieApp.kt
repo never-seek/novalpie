@@ -1145,6 +1145,16 @@ fun NovalPieApp(
     }
     // Compose this after the route BackHandler so a visible preview always consumes Back before
     // the underlying detail/reader route can navigate away.
+    FavoriteDestinationDialog(
+        state = viewModel.favoriteDestinationState,
+        onDismiss = viewModel::dismissFavoriteDestination,
+        onChoose = viewModel::chooseFavoriteDestination,
+        onRetry = viewModel::retryFavoriteDestinations,
+        onStartCreate = viewModel::startFavoriteDestinationCreate,
+        onCancelCreate = viewModel::cancelFavoriteDestinationCreate,
+        onNameChange = viewModel::updateFavoriteDestinationName,
+        onCreate = viewModel::createFavoriteDestinationAndAdd,
+    )
     ImagePreviewHost(
         state = viewModel.imagePreviewState,
         onDismiss = viewModel::dismissImagePreview,
@@ -9532,13 +9542,9 @@ private fun LibraryOverviewBlock(
                 label = overview.syncLabel,
                 tone = if (overview.syncLabel == "已同步") NpChipTone.Status else NpChipTone.Warning
             )
-            overview.stats.take(4).forEachIndexed { index, stat ->
+            overview.stats.take(4).forEach { stat ->
                 LibraryMetricCell(
-                    label = if (index == 3) "总页数" else when (index) {
-                        0 -> "收藏"
-                        1 -> "分组"
-                        else -> "最近"
-                    },
+                    label = stat.substringBefore(' '),
                     value = stat.substringAfter(' ',"—")
                 )
             }

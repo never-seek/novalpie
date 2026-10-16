@@ -20,18 +20,20 @@ class ReaderRealFinalChapterDeviceTest {
         Assume.assumeTrue(InstrumentationRegistry.getArguments().getString("liveNovalPie")=="1")
         val vm=ViewModelProvider(compose.activity)[NovalPieViewModel::class.java]
         val app=InstrumentationRegistry.getInstrumentation().targetContext
-        val report=JSONObject().put("bookId",358153).put("chapterId",11725813)
-        compose.runOnIdle {vm.openReader(358153,11725813)}
+        // The source publishes new chapters; never hardcode yesterday's final chapter.
+        val last = kotlinx.coroutines.runBlocking { com.novalpie.nativeapp.core.AppContainer.from(app).api.chapters(358153).last() }
+        val report=JSONObject().put("bookId",358153).put("chapterId",last.id)
+        compose.runOnIdle {vm.openReader(358153,last.id)}
         compose.waitUntil(150_000){vm.readerState.content is LoadResult.Success&&vm.readerState.chapters is LoadResult.Success}
         compose.runOnIdle {
             val chapters=(vm.readerState.chapters as LoadResult.Success).value
-            assertEquals(11725813L,chapters.last().id)
+            assertEquals(last.id,chapters.last().id)
             report.put("catalogSize",chapters.size)
         }
         // Source success precedes off-main parsing/layout; do not race the single loading item.
         compose.waitUntil(20_000) {
             compose.onAllNodesWithTag("reader-continuous-list").fetchSemanticsNodes().any {
-                it.config.getOrNull(ReaderWindowChapterIds)?.contains(11725813L)==true
+                it.config.getOrNull(ReaderWindowChapterIds)?.contains(last.id)==true
             }
         }
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("本章结束"))

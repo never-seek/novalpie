@@ -24,8 +24,8 @@ public final class BetaSdkInstrumentation extends Instrumentation {
     }
     @Override public void onStart() {
         try {
-            if ("prepare".equals(phase)) prepare();
-            else if ("verify".equals(phase)) verify();
+            if ("prepare".equals(phase) || "prepare-r2".equals(phase)) prepare();
+            else if ("verify".equals(phase) || "verify-r2".equals(phase)) verify();
             else throw new IllegalArgumentException("Unknown black-box phase");
             Bundle result = new Bundle(); result.putString("stream", "BETA7_SDK_OK " + phase); finish(0, result);
         } catch (Throwable failure) {
@@ -36,11 +36,16 @@ public final class BetaSdkInstrumentation extends Instrumentation {
     @SuppressWarnings("deprecation") private PackageInfo version() throws Exception {
         return getTargetContext().getPackageManager().getPackageInfo(getTargetContext().getPackageName(), 0);
     }
-    private File snapshotFile() { return new File(getTargetContext().getNoBackupFilesDir(), "beta7-upgrade-test/snapshot.json"); }
+    private boolean currentR2() { return phase.endsWith("-r2"); }
+    private File snapshotFile() { return new File(getTargetContext().getNoBackupFilesDir(), currentR2() ? "beta7-r2-upgrade-test/snapshot.json" : "beta7-upgrade-test/snapshot.json"); }
     private void prepare() throws Exception {
         PackageInfo version = version();
-        require(version.versionName != null && version.versionName.startsWith("2.0.0-native-beta6"), "Must prepare on the actual Beta6 package");
-        require(version.versionCode == 2026090101, "Wrong baseline code");
+        if (currentR2()) {
+            require(version.versionName != null && version.versionName.startsWith("2.0.0-native-beta7-r2"), "Expected installed R2 baseline");
+        } else {
+            require(version.versionName != null && version.versionName.startsWith("2.0.0-native-beta6"), "Must prepare on the actual Beta6 package");
+            require(version.versionCode == 2026090101, "Wrong baseline code");
+        }
         JSONObject snapshot = capture();
         require(!snapshot.isNull("accountId"), "A retained real login is required");
         require(snapshot.getJSONObject("preferences").length() > 0, "Missing existing preference state");
@@ -49,9 +54,10 @@ public final class BetaSdkInstrumentation extends Instrumentation {
     }
     private void verify() throws Exception {
         PackageInfo version = version(); Context context = getTargetContext();
-        require("2.0.0-native-beta7".equals(version.versionName) && version.versionCode > 2026090101, "Wrong upgrade version");
+        require((currentR2() ? "2.0.0-native-beta7-r2" : "2.0.0-native-beta7").equals(version.versionName) && version.versionCode > 2026090101, "Wrong upgrade version");
         require((context.getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0, "Beta must not be debuggable");
         JSONObject before = new JSONObject(read(snapshotFile())); JSONObject after = capture();
+        require(version.versionCode >= before.getInt("baselineCode"), "Version code went backwards");
         JSONObject oldPrefs = before.getJSONObject("preferences"), newPrefs = after.getJSONObject("preferences");
         int keyCount = 0;
         Iterator<String> names = oldPrefs.keys();
@@ -85,7 +91,7 @@ public final class BetaSdkInstrumentation extends Instrumentation {
                 .put("preservedPreferenceKeys", keyCount).put("preservedFiles", oldFiles.length())
                 .put("legacyPathAliasesResolved", aliases)
                 .put("retainedAccountIdentity", true).put("launcherStarted", true).put("allBusinessRuntimeVerified", false);
-            write(new File(context.getCacheDir(), "beta7-upgrade-test-report/upgrade.json"), report.toString(2));
+            write(new File(context.getCacheDir(), currentR2() ? "beta7-r2-upgrade-test-report/upgrade.json" : "beta7-upgrade-test-report/upgrade.json"), report.toString(2));
             Bundle status = new Bundle(); status.putString("beta7UpgradeReport", report.toString()); sendStatus(0, status);
         } finally { runOnMainSync(activity::finish); }
     }

@@ -87,6 +87,7 @@ internal fun readerProgressAfterRemoteFavoriteProgress(
         } else {
             localProgress?.chapterCountAtLastRead
         },
+        completedCatalogueSize = if (remoteCompletedCurrentCatalogue) sourceChapterCount else localProgress?.completedCatalogueSize,
         viewportItemIndex = localProgress?.viewportItemIndex?.takeIf { sameChapter },
         viewportItemScrollOffsetPx = localProgress?.viewportItemScrollOffsetPx?.takeIf { sameChapter },
     )
@@ -120,10 +121,13 @@ internal fun favoriteBookUpdateLabel(
 ): String? {
     if (localProgress?.bookId != entry.book.id) return null
     val currentTotal = (entry.chapterCount ?: entry.book.chapterCount)?.takeIf { it > 0 } ?: return null
-    val completedCatalogueSize = localProgress.chapterCountAtLastRead?.takeIf { it > 0 } ?: return null
-    val localChapterNumber = localProgress.chapterNumber?.takeIf { it > 0 } ?: return null
-    if (localChapterNumber < completedCatalogueSize || currentTotal <= completedCatalogueSize) return null
-    return "更新 ${currentTotal - completedCatalogueSize} 章"
+    val completedCatalogueSize = localProgress.completedCatalogueSize?.takeIf { it > 0 } ?: return null
+    val effectiveRead = maxOf(entry.lastChapter?.coerceAtLeast(0) ?: 0, localProgress.chapterNumber?.coerceAtLeast(0) ?: 0)
+    if (effectiveRead <= 0 || currentTotal <= completedCatalogueSize) return null
+    // Keep the badge consistent with the same local/remote maximum used by N/total. A completed
+    // old catalogue is evidence of an update, not a frozen "unread" position on another device.
+    val remaining = currentTotal - maxOf(completedCatalogueSize, effectiveRead.coerceAtMost(currentTotal))
+    return remaining.takeIf { it > 0 }?.let { "更新 $it 章" }
 }
 
 internal fun compactUploadedBookCardPresentation(

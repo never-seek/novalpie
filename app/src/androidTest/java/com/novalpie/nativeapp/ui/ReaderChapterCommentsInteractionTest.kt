@@ -221,7 +221,9 @@ class ReaderChapterCommentsInteractionTest {
         val content = ReaderContent(
             title = "测试章节",
             content = "<p>这是用于点击回归的短正文。</p>" + if (showTts||paged) {
-                (1..20).joinToString("") { "<p>后台朗读验证段落$it，离开页面之后也应该保持朗读，不重复或漏掉句子。</p>" }
+                // A 600dp tablet can fit the old 20 short paragraphs on one page.
+                // Guarantee multiple real pages; keep the same forward/back tap assertions.
+                (1..if (paged) 120 else 20).joinToString("") { "<p>后台朗读验证段落$it，离开页面之后也应该保持朗读，不重复或漏掉句子。</p>" }
             } else "",
             source = "test",
         )

@@ -5,34 +5,31 @@
 [![UI Toolkit](https://img.shields.io/badge/UI-Jetpack%20Compose-4285F4.svg?logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![Architecture](https://img.shields.io/badge/Architecture-Clean%20%2B%20MVI%2FMVVM-blue.svg)](docs/beta7/architecture-and-migration.md)
 [![Release](https://img.shields.io/badge/Release-v2.0.0--native--beta7-orange.svg)](https://github.com/never-seek/novalpie/releases/tag/v2.0.0-native-beta7)
-[![Tests](https://img.shields.io/badge/Tests-1472%20Passing%20(0%20Failures)-brightgreen.svg)](docs/beta7/STATUS.md)
+[![Tests](https://img.shields.io/badge/Tests-1492%20Passing%20(0%20Failures)-brightgreen.svg)](docs/beta7/STATUS.md)
 
 NovalPie 2.0 是专为 [novalpie.cc](https://novalpie.cc) 社区量身打造的高性能、现代原生 Android 客户端。
 
-告别旧版 WebView 简单网页套壳体验，NovalPie 2.0 采用 **100% 现代 Android 原生架构**（Kotlin 2.x + Jetpack Compose + 响应式数据流），将书架、海量搜索、沉浸式阅读器、论坛社区互动、个人装扮以及多线程流式 EPUB 打包下载全面原生化，在保持与源站数据无缝同步的同时，为移动端读者与创作者带来毫秒级响应、真机高刷新率丝滑滑动以及高度可定制的阅读享受。
+NovalPie 2.0 的业务主体使用 **Kotlin + Jetpack Compose 原生界面**，提供书架、搜索、阅读、论坛、装扮和原生 EPUB/TXT 下载。安全验证及少量特殊素材仍需要 WebView；在线数据与权限以网站为准。性能与兼容性按具体设备、构建及测试记录说明，不承诺所有真机都有相同帧率或网络延迟。
 
 ---
 
-## 2026-10-15 · Beta 7 R2 修订发布
+## 2026-10-16 · Beta 7 R2 功能回归修订
 
-**同日追加修复（版本号 2026101502）**：修复本人 API 配置审核字段缺失导致重翻误拦截；《浪漫奇幻的NTR故事》章末自动确认完成且不再铺大片占位；搜索补源站三态缓存和保存关键词；历史记录与收藏一样在读后返回自动同步，保留已加载行与页码。此前仅在MuMu安装的修复本次一并放入R2公开优化包。
+**本次新增修复（versionCode `2026101602`）**：
 
-**3MB 左右的 APK 是完整优化版，不是补丁包。** 关闭调试并经R8/资源压缩减小体积；可直接覆盖旧版。小说/封面仍从网站按权限加载，系统TTS依赖设备语音引擎，文件小不等于删除这些功能。
+- **收藏页分组右侧 `+` 直接创建收藏夹**；详情页和阅读器首次收藏先选择去向，也可创建并收藏，不再只能进入默认夹。
+- **历史页按自身加载结果显示同步状态、记录数和总页数**，不再已加载却仍显示待同步。
+- **更新章数跟随实际已读进度**：例如 `141/147` 显示更新6章，而非旧追平点计算的43章；部分续读继续递减，读完移除，新章再提醒。保持原断点与追平证据。
+- **EPUB ZIP等级实际应用于正文、元数据和图片条目**：0级仅存储，1–9级无损Deflate，图片解包字节不变。已经压缩的JPEG/WebP可能几乎不再变小；ZIP等级与可选图片画质压缩是两个独立设置。
+- 保留10月15日的本人API重翻、章末自动确认、搜索三态缓存/保存条件和读后历史自动同步修复。
 
-**不另开 Beta 8：[Beta 7 Release](https://github.com/never-seek/novalpie/releases/tag/v2.0.0-native-beta7) 只保留当前最新 R2 APK 及校验文件。下载名称包含 `beta7-r2-20261015` 的完整安装包；旧 APK 已移除，避免误下。**
+**约3MB的APK是完整优化安装包，不是补丁。** 非调试版、R8与资源压缩；直接覆盖安装，无需卸载。书籍图片仍联网按权限获取，听书需要设备可用的中文系统TTS引擎。
 
-- 搜索：清已保存快照不再重置当前条件；包含/屏蔽 tag、来源、成人筛选、字数与排序保留。新增明确的保存条件按钮，支持重启后恢复。
-- 重翻：书籍详情菜单、阅读器导航提供原生章节范围选择，按网站本人 API 条件提交；仅本机配置仍走工作区自助翻译。不把“任务已提交”冒充“译文已完成”。
-- 阅读与听书：修复重复段落定位、旧回调、章评/连续阅读状态和返回身份；增加阅读亮度，离开阅读器恢复原窗口亮度。
-- 论坛：补齐嵌套 fold/details、黑幕、代码/转义保护、书籍卡片与发帖预览；旧发送回执不会清掉新草稿。
-- 下载与编辑：原生 EPUB/TXT 保留原图、替换快照和并发控制；完整性异常必须选择重试或明确接受，发布恢复避免重复授权/重复文件；编辑器保留原资源与元数据。
-- 收藏/个人：真实总页数、签到防重、部分保存结果和反应分项修复；徽章常态预览不再被 hover 样式污染。
+**不另开Beta8：[Beta7 Release](https://github.com/never-seek/novalpie/releases/tag/v2.0.0-native-beta7)仅保留最新版APK与SHA-256文件。** 推荐下载名称含`beta7-r2-20261016`的APK，签名及包身份沿用旧版。
 
-**版本**：`2.0.0-native-beta7-r2`，`versionCode = 2026101502`。包名与签名沿用旧版；可覆盖升级，**无需卸载**。Android 通常不允许直接用更低版本号覆盖回退，请不要为回退随意清数据。
+源码使用独立标签`v2.0.0-native-beta7-r2-20261016`，既有公开Release标签不移动。具体回归结果、验证边界与发布收据见[本次全模块验证报告](docs/beta7/20261016-full-functional-verification.md)。旧审计文档保留当时状态，不代表本次包的验收结果。
 
-源码修订将同步到当前原生分支，并以 `v2.0.0-native-beta7-r2` 独立标签标记；既有 Beta 7 Release 标签不改写。
-
-> 验证范围必须分清：已完成回归测试和 MuMu 验证不代表所有真机/OEM、超大书及线上写入都已认证。真实重翻后台执行仍以网站/本人 API 结果为准。完整历史审计继续，本版不宣称“零 Bug”。
+> 全量仓库回归不等于所有线上写入、所有尺寸/OEM及超大书均已认证。本轮区分受控设备测试、真实站点读取/自有QA写入和最终R8安装验收，不宣称“零Bug”。
 
 ## 📑 目录
 
@@ -152,7 +149,7 @@ NovalPie 2.0 经历了持续的高强度迭代与架构重塑，以下为历代�
 
 | 选择 | APK | 说明 |
 |---|---|---|
-| **新版 · 推荐** | `NovalPie-native-2.0.0-beta7-r2-20261015.apk` | 优化 Beta 构建，关闭调试，R8 与资源压缩；版本号单调增加 |
+| **新版 · 推荐** | `NovalPie-native-2.0.0-beta7-r2-20261016.apk` | 优化 Beta 构建，关闭调试，R8 与资源压缩；版本号单调增加 |
 
 - [发布页与校验文件](https://github.com/never-seek/novalpie/releases/tag/v2.0.0-native-beta7)
 - 文件大小、SHA-256、源码提交与实际验证范围均列在 Release 中，避免把历史包的校验码当成新版。

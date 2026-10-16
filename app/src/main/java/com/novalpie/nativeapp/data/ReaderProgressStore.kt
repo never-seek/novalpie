@@ -26,7 +26,7 @@ class ReaderProgressStore(context: Context) {
         if (bookId <= 0L) return null
         val chapterId = prefs.getLong(bookKey(bookId, KEY_CHAPTER_ID), 0L)
         if (chapterId <= 0L) return loadLegacyProgress(bookId)
-        return ReaderProgress(
+        val progress = ReaderProgress(
             bookId = bookId,
             chapterId = chapterId,
             chapterTitle = prefs.getString(bookKey(bookId, KEY_CHAPTER_TITLE), null)?.takeIf { it.isNotBlank() },
@@ -38,6 +38,8 @@ class ReaderProgressStore(context: Context) {
             viewportItemIndex = prefs.getInt(bookKey(bookId, KEY_VIEWPORT_ITEM_INDEX), -1).takeIf { it >= 0 },
             viewportItemScrollOffsetPx = prefs.getInt(bookKey(bookId, KEY_VIEWPORT_ITEM_OFFSET), -1).takeIf { it >= 0 },
         )
+        return progress.copy(completedCatalogueSize = prefs.getInt(bookKey(bookId, KEY_COMPLETED_CATALOGUE), 0)
+            .takeIf { it > 0 } ?: progress.completedCatalogueSize)
     }
 
     fun loadRecent(limit: Int = DEFAULT_RECENT_LIMIT): List<ReaderProgress> {
@@ -66,11 +68,13 @@ class ReaderProgressStore(context: Context) {
         // same chapter; a different chapter with no known position must not reuse stale progress.
         val normalizedChapterNumber = chapterNumber?.takeIf { it > 0 }
             ?: existing?.takeIf { it.chapterId == chapterId }?.chapterNumber
-        // A catalogue total belongs to one concrete read position. If a caller moves to another
-        // chapter without a verified catalogue, do not carry an old completed-state baseline over
-        // and accidentally label an ordinary paused chapter as an update.
+        // The observed total belongs to this read position. Do not copy it to an unverified new
+        // chapter. Proven completion is tracked independently and survives partial continuation.
         val normalizedChapterCount = chapterCountAtLastRead?.takeIf { it > 0 }
             ?: existing?.takeIf { it.chapterId == chapterId }?.chapterCountAtLastRead
+        val completedCatalogue = normalizedChapterCount?.takeIf {
+            normalizedChapterNumber != null && normalizedChapterNumber >= it
+        } ?: existing?.completedCatalogueSize
         val normalizedViewportItemIndex = viewportItemIndex?.takeIf { it >= 0 }
             ?: existing?.takeIf { it.chapterId == chapterId }?.viewportItemIndex
         val normalizedViewportItemOffset = viewportItemScrollOffsetPx?.takeIf { it >= 0 }
@@ -89,6 +93,8 @@ class ReaderProgressStore(context: Context) {
             .putString(bookKey(bookId, KEY_BOOK_TITLE), normalizedBookTitle)
             .putLong(bookKey(bookId, KEY_UPDATED_AT), updatedAt)
             .putString(KEY_RECENT_BOOK_IDS, recentBookIds.joinToString(","))
+        putNullableInt(editor, KEY_COMPLETED_CATALOGUE, completedCatalogue)
+        putNullableInt(editor, bookKey(bookId, KEY_COMPLETED_CATALOGUE), completedCatalogue)
         if (normalizedChapterNumber == null) {
             editor.remove(KEY_CHAPTER_NUMBER)
             editor.remove(bookKey(bookId, KEY_CHAPTER_NUMBER))
@@ -130,6 +136,7 @@ class ReaderProgressStore(context: Context) {
         if (existing == progress) return false
         val stableProgress = progress.copy(
             updatedAtMillis = existing?.updatedAtMillis ?: progress.updatedAtMillis,
+            completedCatalogueSize = progress.completedCatalogueSize ?: existing?.completedCatalogueSize,
         )
         val existingRecentBookIds = loadRecentBookIds()
         val reconciledRecentBookIds = if (progress.bookId in existingRecentBookIds) {
@@ -141,6 +148,7 @@ class ReaderProgressStore(context: Context) {
             .putLong(bookKey(progress.bookId, KEY_CHAPTER_ID), stableProgress.chapterId)
             .putLong(bookKey(progress.bookId, KEY_UPDATED_AT), stableProgress.updatedAtMillis)
             .putString(KEY_RECENT_BOOK_IDS, reconciledRecentBookIds.joinToString(","))
+        putNullableInt(editor, bookKey(progress.bookId, KEY_COMPLETED_CATALOGUE), stableProgress.completedCatalogueSize)
         putNullableString(editor, bookKey(progress.bookId, KEY_CHAPTER_TITLE), stableProgress.chapterTitle)
         putNullableString(editor, bookKey(progress.bookId, KEY_BOOK_TITLE), stableProgress.bookTitle)
         putNullableInt(editor, bookKey(progress.bookId, KEY_CHAPTER_NUMBER), stableProgress.chapterNumber)
@@ -166,6 +174,7 @@ class ReaderProgressStore(context: Context) {
             putNullableString(editor, KEY_BOOK_TITLE, stableProgress.bookTitle)
             putNullableInt(editor, KEY_CHAPTER_NUMBER, stableProgress.chapterNumber)
             putNullableInt(editor, KEY_CHAPTER_COUNT_AT_LAST_READ, stableProgress.chapterCountAtLastRead)
+            putNullableInt(editor, KEY_COMPLETED_CATALOGUE, stableProgress.completedCatalogueSize)
             putNullableInt(editor, KEY_VIEWPORT_ITEM_INDEX, stableProgress.viewportItemIndex)
             putNullableInt(editor, KEY_VIEWPORT_ITEM_OFFSET, stableProgress.viewportItemScrollOffsetPx)
         }
@@ -186,6 +195,7 @@ class ReaderProgressStore(context: Context) {
             .remove(bookKey(bookId, KEY_CHAPTER_ID))
             .remove(bookKey(bookId, KEY_CHAPTER_NUMBER))
             .remove(bookKey(bookId, KEY_CHAPTER_COUNT_AT_LAST_READ))
+            .remove(bookKey(bookId, KEY_COMPLETED_CATALOGUE))
             .remove(bookKey(bookId, KEY_CHAPTER_TITLE))
             .remove(bookKey(bookId, KEY_BOOK_TITLE))
             .remove(bookKey(bookId, KEY_UPDATED_AT))
@@ -199,6 +209,7 @@ class ReaderProgressStore(context: Context) {
                     .remove(KEY_CHAPTER_ID)
                     .remove(KEY_CHAPTER_NUMBER)
                     .remove(KEY_CHAPTER_COUNT_AT_LAST_READ)
+                    .remove(KEY_COMPLETED_CATALOGUE)
                     .remove(KEY_CHAPTER_TITLE)
                     .remove(KEY_BOOK_TITLE)
                     .remove(KEY_UPDATED_AT)
@@ -207,6 +218,7 @@ class ReaderProgressStore(context: Context) {
                     .putLong(KEY_BOOK_ID, replacement.bookId)
                     .putLong(KEY_CHAPTER_ID, replacement.chapterId)
                     .putLong(KEY_UPDATED_AT, replacement.updatedAtMillis)
+                putNullableInt(editor, KEY_COMPLETED_CATALOGUE, replacement.completedCatalogueSize)
                 putNullableString(editor, KEY_CHAPTER_TITLE, replacement.chapterTitle)
                 putNullableString(editor, KEY_BOOK_TITLE, replacement.bookTitle)
                 if (replacement.chapterNumber == null) {
@@ -272,8 +284,10 @@ class ReaderProgressStore(context: Context) {
             }
             if (skipReason != null) return@forEach
             editor.putInt(bookKey(bookId, KEY_CHAPTER_COUNT_AT_LAST_READ), currentTotal)
+            editor.putInt(bookKey(bookId, KEY_COMPLETED_CATALOGUE), currentTotal)
             if (prefs.getLong(KEY_BOOK_ID, 0L) == bookId) {
                 editor.putInt(KEY_CHAPTER_COUNT_AT_LAST_READ, currentTotal)
+                editor.putInt(KEY_COMPLETED_CATALOGUE, currentTotal)
             }
             changed += 1
         }
@@ -285,7 +299,7 @@ class ReaderProgressStore(context: Context) {
         val lastBookId = prefs.getLong(KEY_BOOK_ID, 0L)
         val chapterId = prefs.getLong(KEY_CHAPTER_ID, 0L)
         if (lastBookId != bookId || chapterId <= 0L) return null
-        return ReaderProgress(
+        val progress = ReaderProgress(
             bookId = bookId,
             chapterId = chapterId,
             chapterTitle = prefs.getString(KEY_CHAPTER_TITLE, null)?.takeIf { it.isNotBlank() },
@@ -296,6 +310,8 @@ class ReaderProgressStore(context: Context) {
             viewportItemIndex = prefs.getInt(KEY_VIEWPORT_ITEM_INDEX, -1).takeIf { it >= 0 },
             viewportItemScrollOffsetPx = prefs.getInt(KEY_VIEWPORT_ITEM_OFFSET, -1).takeIf { it >= 0 },
         )
+        return progress.copy(completedCatalogueSize = prefs.getInt(KEY_COMPLETED_CATALOGUE, 0)
+            .takeIf { it > 0 } ?: progress.completedCatalogueSize)
     }
 
     private fun loadRecentBookIds(): List<Long> =
@@ -329,6 +345,7 @@ class ReaderProgressStore(context: Context) {
         private const val KEY_CHAPTER_ID = "chapter_id"
         private const val KEY_CHAPTER_NUMBER = "chapter_number"
         private const val KEY_CHAPTER_COUNT_AT_LAST_READ = "chapter_count_at_last_read"
+        private const val KEY_COMPLETED_CATALOGUE = "completed_catalogue_size"
         private const val KEY_CHAPTER_TITLE = "chapter_title"
         private const val KEY_BOOK_TITLE = "book_title"
         private const val KEY_UPDATED_AT = "updated_at"

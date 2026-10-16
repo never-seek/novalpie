@@ -2048,10 +2048,10 @@ private fun ProfileDownloadSettingsCard(
                         Text("ZIP 压缩等级", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                         Text(
                             when (zipCompressionLevel) {
-                                0 -> "仅存储不压缩，ZIP 文件体积最大"
-                                in 1..4 -> "轻度压缩，ZIP 文件体积较大"
-                                in 5..8 -> "标准压缩，ZIP 文件体积适中"
-                                else -> "极限压缩，ZIP 文件体积最小"
+                                0 -> "仅存储，不进行 ZIP 压缩"
+                                in 1..4 -> "轻度无损压缩，不改变图片画质"
+                                in 5..8 -> "标准无损压缩，不改变图片画质"
+                                else -> "最高无损压缩；已压缩图片可能几乎不变"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2059,10 +2059,10 @@ private fun ProfileDownloadSettingsCard(
                     }
                     Text(
                         when (zipCompressionLevel) {
-                            0 -> "0 (仅存储 · 体积最大)"
-                            in 1..4 -> "$zipCompressionLevel (体积较大)"
-                            in 5..8 -> "$zipCompressionLevel (体积适中)"
-                            else -> "9 (极限压缩 · 体积最小)"
+                            0 -> "0 (仅存储)"
+                            in 1..4 -> "$zipCompressionLevel (速度优先)"
+                            in 5..8 -> "$zipCompressionLevel (均衡)"
+                            else -> "9 (最高无损压缩)"
                         },
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
@@ -2078,10 +2078,10 @@ private fun ProfileDownloadSettingsCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     listOf(
-                        0 to "0 (仅存储/体积最大)",
-                        1 to "1 (轻度压缩/体积较大)",
-                        6 to "6 (标准压缩/体积适中)",
-                        9 to "9 (极限压缩/体积最小)"
+                        0 to "0 (仅存储)",
+                        1 to "1 (速度优先)",
+                        6 to "6 (均衡)",
+                        9 to "9 (最高无损压缩)"
                     ).forEach { (lvl, label) ->
                         FilterChip(
                             selected = zipCompressionLevel == lvl,

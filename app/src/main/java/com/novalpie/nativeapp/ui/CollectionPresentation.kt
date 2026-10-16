@@ -22,6 +22,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.automirrored.filled.ViewList
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.IconButton
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.filled.Cached
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
@@ -93,6 +97,7 @@ internal fun FavoritesControlPanel(
     onRetry: () -> Unit
 ) {
     var showGroupManager by remember { mutableStateOf(false) }
+    var showQuickCreate by remember { mutableStateOf(false) }
     var showSortPicker by remember { mutableStateOf(false) }
     var showMovePicker by remember { mutableStateOf(false) }
     var confirmRemove by remember { mutableStateOf(false) }
@@ -182,30 +187,18 @@ internal fun FavoritesControlPanel(
         }
 
         if (state.options.tab == FavoritesContentTab.Favorites) {
-            when (val groups = state.groups) {
-                is LoadResult.Success -> NpChipRow(modifier = Modifier.fillMaxWidth()) {
-                    FilterChip(
-                        selected = state.selectedFavoriteGroupId == null,
-                        onClick = { onSelectGroup(null) },
-                        label = { Text("全部") }
-                    )
-                    groups.value.take(8).forEach { group ->
-                        val groupId = group.id
-                        FilterChip(
-                            selected = groupId != null && state.selectedFavoriteGroupId == groupId,
-                            enabled = groupId != null && !state.actionLoading,
-                            onClick = { groupId?.let(onSelectGroup) },
-                            label = {
-                                Text(
-                                    "${group.name}${group.count?.let { " $it" } ?: ""}",
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        )
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = state.selectedFavoriteGroupId == null, onClick = { onSelectGroup(null) }, label = { Text("全部") })
+                    (state.groups as? LoadResult.Success)?.value.orEmpty().forEach { group ->
+                        FilterChip(selected = group.id != null && state.selectedFavoriteGroupId == group.id,
+                            enabled = group.id != null && !state.actionLoading,
+                            onClick = { group.id?.let(onSelectGroup) }, label = { Text("${group.name}${group.count?.let { " $it" } ?: ""}", maxLines = 1) })
                     }
                 }
-                else -> Unit
+                IconButton(onClick = { showQuickCreate = true }, enabled = !state.actionLoading) {
+                    Icon(Icons.Filled.Add, contentDescription = "新建收藏夹", tint = MaterialTheme.colorScheme.primary)
+                }
             }
         }
 
@@ -238,6 +231,10 @@ internal fun FavoritesControlPanel(
         }
     }
 
+    if (showQuickCreate) {
+        FavoriteGroupCreateDialog(busy = state.actionLoading, message = state.actionMessage,
+            onDismiss = { showQuickCreate = false }, onCreate = onCreateGroup)
+    }
     if (showGroupManager) {
         FavoritesGroupManagerDialog(
             groups = state.groups,
