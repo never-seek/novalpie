@@ -2,7 +2,7 @@
 
 ## 结论与口径
 
-本轮重新执行当前源码门禁，不借用历史“已修好”的结论。**1492项仓库测试/213套、18项审计工具测试全部通过；MuMu共70个不同设备用例最终通过**。Debug与AndroidTest构建成功；完整Lint为0错误、19警告、1条信息。
+本轮重新执行当前源码门禁，不借用历史“已修好”的结论。**1492项仓库测试/213套、18项审计工具测试全部通过；MuMu共71个不同设备用例最终通过**。Debug与AndroidTest构建成功；完整Lint为0错误、19警告、1条信息。
 
 这是全模块回归，不是所有生产数据、所有线上写入和所有Android设备穷举证明。70项为同业务源码的Debug设备用例；**优化R8包必须另行覆盖安装、无损升级和界面冒烟后才允许发布**。最终APK、源码提交、安装哈希与远端资产收据记录在本轮发布报告及GitHub Release，不能用Debug结论替代。
 
@@ -14,6 +14,8 @@
 2. 历史页同步状态、记录数和总页数使用历史接口自己的结果，不再借用未加载的收藏状态。
 3. 新增独立追平目录证据；部分续读不覆盖它，更新数与实际本机/远端最大已读一致。`141/147`为更新6章，`145/147`为2章，`147/147`消失，`147/148`再次提示1章。旧断点、原最近顺序保留。
 4. EPUB ZIP等级0真实STORED，1–9对正文、元数据和图片条目无损Deflate；首个mimetype仍符合EPUB要求。原图解包字节不改，和可选图片画质压缩完全分开。去掉“9级一定最小”等误导文案。
+
+5. 全量实机检查追加发现：连续阅读插图错误仅显示文字、没有本项重试。新增“重试插图”，重建当前Coil painter并保留URL/缓存身份与章节滚动key，不重载整章；真实HTTP先503后PNG的设备用例先红后绿，且确认不再加载中、不弹工具栏。
 
 ## 当前模块验收矩阵
 
@@ -46,7 +48,7 @@
 
 - 2107“收藏时直接分类”已经实现，并真实QA创建、指定夹收藏及清理验证。
 - 2007“싸늘한감자튀김作品搜不到”：原生API无额外筛选、author范围搜索实际返回书355673；未通过清除用户tag/来源来规避。若有保存的筛选，应按具体条件继续定位，不能由此声称所有搜索反馈都已消失。
-- 2072间歇TLS/1–2分钟连接问题：本轮真实请求成功，但未复现报告时段的断连，不宣称已根治网络/CDN问题。
+- 2072间歇TLS/1–2分钟连接问题：本轮多数真实请求成功；额外插图诊断有读取超时，已补本项重试，但未复现报告时段的TLS故障，不宣称已根治网络/CDN问题。
 - 原App帖1871返回404；已保存失败状态，不能把其他帖子当作该帖最新回复或凭空总结。
 
 ## 仍须明确的限制和风险
@@ -56,12 +58,18 @@
 - 服务端不提供的缺图/缺章/权限不能由App伪造。已压缩图片用ZIP9可能与0级大小接近；不等于有损图片压缩开关被强制开启。
 - 正文复制/全选、已移除轮盘、无效网页正文按钮不恢复；不新增外部书源、爬虫或收费云TTS。
 
+## 插图追加检查与最终同源码回归
+
+初始R8 `f9539d...`只作为阶段证据，已被追加修复取代，禁止当最终发布包。当前主代码再次完整1492测试/213套、Lint0错误19警告1信息通过；最终`final-pass/`下46组共71个不同设备用例全部通过，含新的HTTP503→PNG原地重试。随后加强断言等待图片不再加载中，单独重跑也通过。
+
+真实11737633插图的部分只读诊断：前三个URL用生产Coil配置均能成功解码；同一资源直接读取有一次超时。其余请求因耗时主动停止，不能算成完整图源成功、不能当自然App崩溃，也不因此宣称TLS根治。未导出URL查询串、正文或会话。
+
 ## 可复核材料
 
 本地证据根：`D:/NovalPie/agent-bridge/artifacts/full-verification-20261016/`。
 
-- `full-gate.log`/`full-gate-exit.txt`、`unit-counts.json`、`audit-node-tests.log`。
-- `device-results.json`保留首轮；`updated-driver-regressions.log`与`upload-process-verified.log`完成更正；`device-result-consolidated.json`汇总70例。
+- 最终`final-pass/full-gate.log`/`full-gate-exit.txt`、`unit-counts.json`、`audit-node-tests.log`。
+- `final-pass/device-results.json`/`device-summary.json`为最终71例零失败；父目录`device-results.json`保留首轮；`updated-driver-regressions.log`与`upload-process-verified.log`完成更正；`device-result-consolidated.json`汇总首轮70例，最终`final-pass/device-summary.json`为71例零失败。
 - `public-replacement.json`确认真实规则已清；`favorite-live-cleanup.json`确认自有QA收藏夹/收藏已清。
 - `live-export-host-validation.json`：4真实导出文件；EPUB CRC、首条mimetype、每个XML和资源数二次校验。
 - 最终R8安装/签名/哈希、无损升级、界面适配及远端资产结果按后续发布收据记录，不把此处Debug设备结果冒充R8全矩阵。

@@ -12111,6 +12111,7 @@ private fun ReaderIllustration(
     onPreview: () -> Unit,
 ) {
     val label = readerIllustrationLabel(image.alt, ordinal)
+    var retryGeneration by remember(image.url) { mutableIntStateOf(0) }
     val touchSlop = LocalViewConfiguration.current.touchSlop
     val context = LocalContext.current
     val imagePreviewActive = LocalImagePreviewActive.current
@@ -12144,14 +12145,18 @@ private fun ReaderIllustration(
         tonalElevation = NovalPieElevation.none,
     ) {
         Column {
-            SubcomposeAsyncImage(
-                model = imageRequest,
-                contentDescription = readerIllustrationContentDescription(label),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 720.dp),
-                contentScale = ContentScale.Fit,
-                loading = { LoadingBlock(readerIllustrationLoadingLabel()) },
-                error = { ErrorBlock(readerIllustrationErrorLabel()) }
-            )
+            // A failed Coil painter is otherwise retained for the lifetime of this lazy item.
+            // Restart only this request; keep its URL/cache identity and the chapter scroll key.
+            androidx.compose.runtime.key(image.url, retryGeneration) {
+                SubcomposeAsyncImage(
+                    model = imageRequest,
+                    contentDescription = readerIllustrationContentDescription(label),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp, max = 720.dp),
+                    contentScale = ContentScale.Fit,
+                    loading = { LoadingBlock(readerIllustrationLoadingLabel()) },
+                    error = { ErrorBlock(readerIllustrationErrorLabel(), retryLabel = "重试插图", onRetry = { retryGeneration++ }) },
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
